@@ -13,7 +13,10 @@ _ALLOWED: dict[State, frozenset[State]] = {
         {(RunStatus.RUNNING, WorkflowStage.SCOPING)}
     ),
     (RunStatus.RUNNING, WorkflowStage.SCOPING): frozenset(
-        {(RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)}
+        {
+            (RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION),
+            (RunStatus.RUNNING, WorkflowStage.PRESENTING),
+        }
     ),
     (RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION): frozenset(
         {(RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)}
@@ -22,6 +25,7 @@ _ALLOWED: dict[State, frozenset[State]] = {
         {
             (RunStatus.PAUSED_FOR_APPROVAL, WorkflowStage.IMPLEMENTING),
             (RunStatus.RUNNING, WorkflowStage.VERIFYING),
+            (RunStatus.RUNNING, WorkflowStage.PRESENTING),
         }
     ),
     (RunStatus.PAUSED_FOR_APPROVAL, WorkflowStage.IMPLEMENTING): frozenset(
@@ -44,7 +48,10 @@ _ALLOWED: dict[State, frozenset[State]] = {
         {(RunStatus.RUNNING, WorkflowStage.REPAIRING)}
     ),
     (RunStatus.RUNNING, WorkflowStage.PRESENTING): frozenset(
-        {(RunStatus.READY_FOR_REVIEW, WorkflowStage.PRESENTING)}
+        {
+            (RunStatus.READY_FOR_REVIEW, WorkflowStage.PRESENTING),
+            (RunStatus.COMPLETED, WorkflowStage.PRESENTING),
+        }
     ),
     (RunStatus.READY_FOR_REVIEW, WorkflowStage.PRESENTING): frozenset(
         {(RunStatus.APPLYING, WorkflowStage.APPLYING)}

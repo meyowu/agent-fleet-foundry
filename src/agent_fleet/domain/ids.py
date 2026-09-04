@@ -20,6 +20,8 @@ class IdPrefix(StrEnum):
     CORRELATION = "corr"
     SANDBOX = "sandbox"
     WORKSPACE = "ws"
+    FLEET_PLAN = "plan"
+    FLEET_PATCH = "fpatch"
 
 
 def new_id(prefix: IdPrefix) -> str:

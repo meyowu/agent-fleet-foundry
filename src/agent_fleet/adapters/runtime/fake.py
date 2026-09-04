@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from agent_fleet.adapters.repository.git import FIXED_CANARY, INCORRECT_CANARY
 from agent_fleet.domain.models import (
     AgentInvocation,
     AgentInvocationResult,
@@ -19,6 +16,7 @@ from agent_fleet.domain.models import (
     VerifierVerdict,
     WorkflowStage,
 )
+from agent_fleet.domain.offline_canary import FIXED_CANARY, INCORRECT_CANARY
 
 
 class FakeRuntimeAdapter:
@@ -30,31 +28,49 @@ class FakeRuntimeAdapter:
 
     async def invoke(self, request: AgentInvocation) -> AgentInvocationResult:
         scenario = FakeScenario(str(request.input["fake_scenario"]))
-        if request.role is AgentRole.COS:
+        if request.role == AgentRole.COS:
+            direct = scenario is FakeScenario.DIRECT
+            single_engineer = scenario is FakeScenario.SINGLE_ENGINEER
             output = {
                 "normalized_goal": request.input["goal"],
                 "workflow": "code-change",
-                "allowed_paths": ["src/canary_calc/core.py"],
+                "change_kind": "read_only" if direct else "code_change",
+                "fleet_strategy": (
+                    "direct"
+                    if direct
+                    else "single_engineer"
+                    if single_engineer
+                    else "engineer_verifier"
+                ),
+                "allowed_paths": [] if direct else ["src/canary_calc/core.py"],
                 "forbidden_paths": [".git", ".fleet"],
                 "acceptance_criteria": [
                     {
-                        "criterion_id": "canary-zero-division",
-                        "description": "divide(1, 0) raises ValueError with the stable message",
+                        "criterion_id": (
+                            "read-only-response" if direct else "canary-zero-division"
+                        ),
+                        "description": (
+                            "Return a scoped read-only response without side effects"
+                            if direct
+                            else "divide(1, 0) raises ValueError with the stable message"
+                        ),
                     }
                 ],
-                "required_evidence": ["canonical patch", "independent fake verifier verdict"],
+                "required_evidence": (
+                    ["control_plane_plan"]
+                    if direct
+                    else ["canonical_patch", "command_evidence"]
+                    + ([] if single_engineer else ["independent_verifier_verdict"])
+                ),
             }
             return AgentInvocationResult(output=output)
-        if request.role is AgentRole.ENGINEER:
+        if request.role == AgentRole.ENGINEER:
             engineer_script = self._engineer_script(request, scenario)
             return AgentInvocationResult(output=engineer_script.model_dump(mode="json"))
-        verifier_script = self._verifier_script(request, scenario)
-        if verifier_script.simulate_workspace_mutation:
-            workspace = Path(str(request.input["verification_workspace_path"]))
-            (workspace / "verifier-untrusted-note.txt").write_text(
-                "This verifier mutation must be discarded.\n", encoding="utf-8"
-            )
-        return AgentInvocationResult(output=verifier_script.model_dump(mode="json"))
+        if request.role == AgentRole.VERIFIER:
+            verifier_script = self._verifier_script(request, scenario)
+            return AgentInvocationResult(output=verifier_script.model_dump(mode="json"))
+        raise ValueError(f"FakeRuntimeAdapter does not implement role {request.role!r}")
 
     @staticmethod
     def _engineer_script(request: AgentInvocation, scenario: FakeScenario) -> EngineerScript:
@@ -133,23 +149,38 @@ class FakeRuntimeAdapter:
             verdict = Verdict.INCONCLUSIVE
         else:
             verdict = Verdict.FAIL if should_fail else Verdict.PASS
-        return VerifierScript(
-            actions=[
+        actions: list[ScriptedAction] = []
+        if scenario is FakeScenario.VERIFIER_MUTATION:
+            actions.append(
                 ScriptedAction(
-                    action="command.run",
+                    action="workspace.write_file",
                     resource=CanonicalResource(
-                        kind="fake_command", identifier="verification://offline-canary"
+                        kind="workspace_path", identifier="verifier-untrusted-note.txt"
                     ),
-                    parameters={
-                        "executable": "python",
-                        "argv": ["-m", "pytest", "-q"],
-                        "cwd": ".",
-                    },
-                    reason="Record independent deterministic fake verifier evidence.",
-                    side_effect=False,
-                    idempotency_key=f"{request.run_id}:verifier-check:{repair_iterations}",
+                    parameters={"content": "This verifier mutation must be denied.\n"},
+                    reason="Adversarial verifier attempts to mutate its workspace.",
+                    side_effect=True,
+                    idempotency_key=f"{request.run_id}:verifier-mutation:{repair_iterations}",
                 )
-            ],
+            )
+        actions.append(
+            ScriptedAction(
+                action="command.run",
+                resource=CanonicalResource(
+                    kind="fake_command", identifier="verification://offline-canary"
+                ),
+                parameters={
+                    "executable": "python",
+                    "argv": ["-m", "pytest", "-q"],
+                    "cwd": ".",
+                },
+                reason="Record independent deterministic fake verifier evidence.",
+                side_effect=False,
+                idempotency_key=f"{request.run_id}:verifier-check:{repair_iterations}",
+            )
+        )
+        return VerifierScript(
+            actions=actions,
             verdict=VerifierVerdict(
                 verdict=verdict,
                 criterion_results=[
@@ -172,5 +203,4 @@ class FakeRuntimeAdapter:
                     )
                 ),
             ),
-            simulate_workspace_mutation=scenario is FakeScenario.VERIFIER_MUTATION,
         )

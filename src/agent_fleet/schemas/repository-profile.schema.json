@@ -1,0 +1,292 @@
+{
+  "$defs": {
+    "CommandProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "pointer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pointer"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "source"
+      ],
+      "title": "CommandProvenance",
+      "type": "object"
+    },
+    "RepositoryAmbiguity": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "RepositoryAmbiguity",
+      "type": "object"
+    },
+    "RepositoryBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "ecosystems": {
+          "items": {
+            "enum": [
+              "python",
+              "node",
+              "go",
+              "rust",
+              "maven",
+              "gradle",
+              "make",
+              "github-actions"
+            ],
+            "type": "string"
+          },
+          "title": "Ecosystems",
+          "type": "array"
+        },
+        "manifests": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Manifests",
+          "type": "array"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "ecosystems",
+        "manifests"
+      ],
+      "title": "RepositoryBoundary",
+      "type": "object"
+    },
+    "RepositoryCommand": {
+      "additionalProperties": false,
+      "description": "An untrusted command candidate; detection is never authorization.",
+      "properties": {
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Argv",
+          "type": "array"
+        },
+        "confidence": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "cwd": {
+          "title": "Cwd",
+          "type": "string"
+        },
+        "executable": {
+          "title": "Executable",
+          "type": "string"
+        },
+        "execution_authorized": {
+          "const": false,
+          "default": false,
+          "title": "Execution Authorized",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/CommandProvenance"
+        },
+        "purpose": {
+          "enum": [
+            "test",
+            "lint",
+            "build",
+            "check",
+            "other"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "purpose",
+        "executable",
+        "argv",
+        "cwd",
+        "provenance",
+        "confidence"
+      ],
+      "title": "RepositoryCommand",
+      "type": "object"
+    },
+    "RepositorySignal": {
+      "additionalProperties": false,
+      "properties": {
+        "ecosystem": {
+          "enum": [
+            "python",
+            "node",
+            "go",
+            "rust",
+            "maven",
+            "gradle",
+            "make",
+            "github-actions"
+          ],
+          "title": "Ecosystem",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "signal": {
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ecosystem",
+        "path",
+        "signal"
+      ],
+      "title": "RepositorySignal",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "ambiguities": {
+      "items": {
+        "$ref": "#/$defs/RepositoryAmbiguity"
+      },
+      "title": "Ambiguities",
+      "type": "array"
+    },
+    "boundaries": {
+      "items": {
+        "$ref": "#/$defs/RepositoryBoundary"
+      },
+      "title": "Boundaries",
+      "type": "array"
+    },
+    "build_systems": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Build Systems",
+      "type": "array"
+    },
+    "bytes_read": {
+      "maximum": 512000,
+      "minimum": 0,
+      "title": "Bytes Read",
+      "type": "integer"
+    },
+    "commands": {
+      "items": {
+        "$ref": "#/$defs/RepositoryCommand"
+      },
+      "title": "Commands",
+      "type": "array"
+    },
+    "ecosystems": {
+      "items": {
+        "enum": [
+          "python",
+          "node",
+          "go",
+          "rust",
+          "maven",
+          "gradle",
+          "make",
+          "github-actions"
+        ],
+        "type": "string"
+      },
+      "title": "Ecosystems",
+      "type": "array"
+    },
+    "files_read": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Files Read",
+      "type": "array"
+    },
+    "root": {
+      "const": ".",
+      "default": ".",
+      "title": "Root",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "signals": {
+      "items": {
+        "$ref": "#/$defs/RepositorySignal"
+      },
+      "title": "Signals",
+      "type": "array"
+    }
+  },
+  "required": [
+    "ecosystems",
+    "build_systems",
+    "boundaries",
+    "signals",
+    "commands",
+    "ambiguities",
+    "files_read",
+    "bytes_read"
+  ],
+  "title": "RepositoryProfile",
+  "type": "object"
+}

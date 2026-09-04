@@ -11,7 +11,7 @@ from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
-from agent_fleet.domain.models import Run, RunStatus, WorkflowStage
+from agent_fleet.domain.models import Project, Run, RunStatus, WorkflowStage
 from agent_fleet.domain.security import Redactor, status_fingerprint
 
 
@@ -40,6 +40,26 @@ def test_newer_schema_is_refused(tmp_path: Path) -> None:
     with pytest.raises(FleetError) as captured:
         state.migrate()
     assert captured.value.code is ErrorCode.STATE_SCHEMA_INCOMPATIBLE
+
+
+def test_project_reopens_legacy_semantic_hash_field_names() -> None:
+    now = datetime.now(UTC)
+    project = Project.model_validate(
+        {
+            "project_id": "prj_" + "1" * 32,
+            "canonical_root": "/portable/repository",
+            "identity_hash": "a" * 64,
+            "repository_profile_hash": "b" * 64,
+            "project_knowledge_hash": "c" * 64,
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+    assert project.repository_profile_semantic_hash == "b" * 64
+    assert project.project_knowledge_semantic_hash == "c" * 64
+    assert "repository_profile_semantic_hash" in project.model_dump()
+    assert "repository_profile_hash" not in project.model_dump()
 
 
 def test_transition_and_event_sequence_are_committed_together(harness: FleetHarness) -> None:

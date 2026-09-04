@@ -4,10 +4,14 @@
       "additionalProperties": false,
       "properties": {
         "criterion_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
           "title": "Criterion Id",
           "type": "string"
         },
         "description": {
+          "minLength": 1,
           "title": "Description",
           "type": "string"
         }
@@ -26,6 +30,8 @@
       "items": {
         "$ref": "#/$defs/AcceptanceCriterion"
       },
+      "maxItems": 128,
+      "minItems": 1,
       "title": "Acceptance Criteria",
       "type": "array"
     },
@@ -38,6 +44,15 @@
     },
     "base_revision": {
       "title": "Base Revision",
+      "type": "string"
+    },
+    "change_kind": {
+      "default": "code_change",
+      "enum": [
+        "read_only",
+        "code_change"
+      ],
+      "title": "Change Kind",
       "type": "string"
     },
     "config_snapshot_hash": {
@@ -73,24 +88,34 @@
     },
     "required_evidence": {
       "items": {
+        "enum": [
+          "canonical_patch",
+          "command_evidence",
+          "control_plane_plan",
+          "independent_verifier_verdict"
+        ],
         "type": "string"
       },
+      "maxItems": 32,
+      "minItems": 1,
       "title": "Required Evidence",
       "type": "array"
     },
     "run_id": {
-      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "pattern": "^run_[0-9a-f]{32}$",
       "title": "Run Id",
       "type": "string"
     },
     "task_id": {
-      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "pattern": "^task_[0-9a-f]{32}$",
       "title": "Task Id",
       "type": "string"
     },
     "workflow": {
-      "const": "code-change",
       "default": "code-change",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
       "title": "Workflow",
       "type": "string"
     }

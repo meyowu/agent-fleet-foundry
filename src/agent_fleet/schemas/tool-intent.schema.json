@@ -1,14 +1,5 @@
 {
   "$defs": {
-    "AgentRole": {
-      "enum": [
-        "cos",
-        "engineer",
-        "verifier"
-      ],
-      "title": "AgentRole",
-      "type": "string"
-    },
     "CanonicalResource": {
       "additionalProperties": false,
       "properties": {
@@ -17,11 +8,9 @@
           "type": "string"
         },
         "kind": {
-          "enum": [
-            "workspace_path",
-            "fake_command",
-            "fake_side_effect"
-          ],
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
           "title": "Kind",
           "type": "string"
         }
@@ -53,16 +42,14 @@
   "additionalProperties": false,
   "properties": {
     "action": {
-      "enum": [
-        "workspace.write_file",
-        "command.run",
-        "fixture.record_side_effect"
-      ],
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_.-]*$",
       "title": "Action",
       "type": "string"
     },
     "agent_instance_id": {
-      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "pattern": "^agent_[0-9a-f]{32}$",
       "title": "Agent Instance Id",
       "type": "string"
     },
@@ -71,7 +58,7 @@
       "type": "string"
     },
     "intent_id": {
-      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "pattern": "^intent_[0-9a-f]{32}$",
       "title": "Intent Id",
       "type": "string"
     },
@@ -83,7 +70,11 @@
       "type": "object"
     },
     "principal_role": {
-      "$ref": "#/$defs/AgentRole"
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Principal Role",
+      "type": "string"
     },
     "reason": {
       "title": "Reason",
@@ -121,7 +112,7 @@
       "$ref": "#/$defs/CanonicalResource"
     },
     "run_id": {
-      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "pattern": "^run_[0-9a-f]{32}$",
       "title": "Run Id",
       "type": "string"
     },
@@ -133,12 +124,14 @@
       "$ref": "#/$defs/WorkflowStage"
     },
     "task_id": {
-      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "pattern": "^task_[0-9a-f]{32}$",
       "title": "Task Id",
       "type": "string"
     },
     "workflow": {
-      "const": "code-change",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
       "title": "Workflow",
       "type": "string"
     }

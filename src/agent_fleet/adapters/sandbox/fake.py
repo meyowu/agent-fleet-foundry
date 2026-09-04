@@ -8,6 +8,7 @@ from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     ExecRequest,
     ExecResult,
+    SandboxCapabilities,
     SandboxHandle,
     SandboxSecurityLevel,
     SandboxSpec,
@@ -22,6 +23,13 @@ class FakeExecScript:
     stdout: str = "deterministic fake command: PASS\n"
     stderr: str = ""
     timed_out: bool = False
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> tuple[str, bool]:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value, False
+    return encoded[:max_bytes].decode("utf-8", errors="ignore"), True
 
 
 class FakeSandboxProvider:
@@ -39,8 +47,12 @@ class FakeSandboxProvider:
         self.terminated: set[str] = set()
 
     @property
+    def capabilities(self) -> SandboxCapabilities:
+        return SandboxCapabilities.phase1_fake()
+
+    @property
     def security_level(self) -> SandboxSecurityLevel:
-        return SandboxSecurityLevel.FAKE
+        return self.capabilities.security_level
 
     async def create(self, run_id: str, spec: SandboxSpec) -> SandboxHandle:
         handle = SandboxHandle(
@@ -56,8 +68,14 @@ class FakeSandboxProvider:
         self.requests.append(request)
         script = self.scripts.pop(0) if self.scripts else FakeExecScript()
         start = self.clock.now()
-        stdout = script.stdout[: request.max_output_bytes]
-        stderr = script.stderr[: request.max_output_bytes]
+        stdout, stdout_truncated = _truncate_utf8(
+            script.stdout,
+            request.max_output_bytes,
+        )
+        stderr, stderr_truncated = _truncate_utf8(
+            script.stderr,
+            request.max_output_bytes,
+        )
         return ExecResult(
             exit_code=script.exit_code,
             stdout=stdout,
@@ -65,6 +83,7 @@ class FakeSandboxProvider:
             started_at=start,
             completed_at=self.clock.now(),
             timed_out=script.timed_out,
+            output_truncated=stdout_truncated or stderr_truncated,
         )
 
     async def terminate(self, handle: SandboxHandle) -> None:

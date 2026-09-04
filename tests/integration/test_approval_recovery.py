@@ -54,6 +54,8 @@ async def test_denial_rejects_without_executing_side_effect(harness: FleetHarnes
     reconstructed.approvals.deny(paused.pending_approval_id, "Use no side effect")
     rejected = await reconstructed.workflow.resume(paused.run_id)
     assert rejected.status is RunStatus.REJECTED
+    assert rejected.evidence_bundle_artifact_id is not None
+    assert rejected.verified_complete is False
     assert (
         reconstructed.state.count_executed_intents(paused.run_id, "fixture.record_side_effect") == 0
     )

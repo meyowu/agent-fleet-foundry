@@ -7,6 +7,7 @@ from pathlib import Path
 from agent_fleet import __version__
 from agent_fleet.domain.errors import FleetError
 from agent_fleet.domain.models import DoctorCheck, DoctorReport
+from agent_fleet.domain.security import MINIMUM_GIT_VERSION, git_version_is_supported
 from agent_fleet.ports.diagnostics import SystemDiagnostics
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.state_store import StateStore
@@ -36,13 +37,19 @@ class DoctorService:
                 detail=f"Python {python_version}; agent-fleet {__version__}",
             )
         )
-        git_version = self.system.git_version()
+        git_version = self.system.git_version(current_path)
+        git_ok = git_version is not None and git_version_is_supported(git_version)
+        minimum_git = ".".join(str(item) for item in MINIMUM_GIT_VERSION)
         checks.append(
             DoctorCheck(
                 name="git",
-                ok=git_version is not None,
+                ok=git_ok,
                 required=True,
-                detail=git_version or "not found",
+                detail=(
+                    git_version
+                    if git_ok
+                    else f"{git_version or 'not found'}; Git >= {minimum_git} is required"
+                ),
             )
         )
         try:
@@ -72,7 +79,7 @@ class DoctorService:
             sqlite_detail = f"SQLite migration failed: {error}"
             sqlite_ok = False
         checks.append(DoctorCheck(name="sqlite", ok=sqlite_ok, required=True, detail=sqlite_detail))
-        docker_version = self.system.docker_version()
+        docker_version = self.system.docker_version(current_path)
         docker_detail = "Docker CLI not found; optional until Phase 3."
         if docker_version:
             docker_detail = docker_version

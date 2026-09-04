@@ -24,7 +24,7 @@ from agent_fleet.domain.security import Redactor
 
 app = typer.Typer(
     name="fleet",
-    help="Local deterministic Agent Fleet control plane (Phase 0/1: fake adapters only).",
+    help="Local deterministic Agent Fleet control plane (Phase 0/1.5: fake adapters only).",
     no_args_is_help=True,
 )
 patch_app = typer.Typer(help="Inspect or explicitly apply candidate patches.")
@@ -42,7 +42,7 @@ def version(json_output: JsonFlag = False) -> None:
     _present(
         "fleet version",
         json_output,
-        lambda: {"version": __version__, "phase": "0/1", "runtime": "fake"},
+        lambda: {"version": __version__, "phase": "0/1.5", "runtime": "fake"},
     )
 
 
@@ -70,12 +70,21 @@ def init_command(
     yes: Annotated[
         bool, typer.Option("--yes", help="Apply only the displayed .fleet proposal.")
     ] = False,
+    preview: Annotated[
+        bool,
+        typer.Option(
+            "--preview", help="Profile and show the complete proposal without writing state."
+        ),
+    ] = False,
     json_output: JsonFlag = False,
 ) -> None:
     """Register a Git repository and apply a validated minimal `.fleet/` tree."""
 
     def operation() -> JsonValue:
         container = build_container(migrate=False)
+        preview_data = container.projects.preview(path)
+        if preview:
+            return jsonable(preview_data)
         if json_output and not yes:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
@@ -83,7 +92,11 @@ def init_command(
                 "Review the proposed files in human mode, then retry JSON mode with --yes.",
             )
         if not yes:
-            proposed = container.projects.preview(path)
+            proposed = preview_data["proposed_paths"]
+            if not isinstance(proposed, list) or any(
+                not isinstance(item, str) for item in proposed
+            ):
+                raise RuntimeError("invalid project preview")
             console.print(Panel.fit("\n".join(proposed), title="Proposed files"))
             if not typer.confirm("Apply this validated .fleet configuration?"):
                 raise typer.Abort()
@@ -106,7 +119,7 @@ def run(
             "--fake-scenario",
             help=(
                 "Deterministic Phase 1 script: success, fail, repair, approval, "
-                "inconclusive, or verifier_mutation."
+                "inconclusive, verifier_mutation, direct, or single_engineer."
             ),
         ),
     ] = FakeScenario.SUCCESS,
