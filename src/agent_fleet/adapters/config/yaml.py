@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import stat
-import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -24,12 +24,12 @@ from agent_fleet.domain.repository_profile import RepositoryProfile
 from agent_fleet.domain.security import (
     Redactor,
     canonical_json_hash,
-    resolve_logical_path,
     sha256_bytes,
 )
 
 MAX_CONFIG_BYTES = 512_000
 MAX_CONFIG_SNAPSHOT_BYTES = 4_000_000
+MAX_AGENT_GUIDANCE_BYTES = 32_768
 
 
 class YamlConfigurationAdapter:
@@ -37,9 +37,19 @@ class YamlConfigurationAdapter:
         self.redactor = redactor or Redactor()
 
     def default_files(
-        self, repository_name: str, profile: RepositoryProfile | None = None
+        self,
+        repository_name: str,
+        profile: RepositoryProfile | None = None,
+        *,
+        runtime_name: str = "fake",
+        provider_model: str | None = None,
     ) -> dict[str, str]:
-        return default_fleet_files(repository_name, profile)
+        return default_fleet_files(
+            repository_name,
+            profile,
+            runtime_name=runtime_name,
+            provider_model=provider_model,
+        )
 
     def validate_files(self, files: dict[str, str]) -> FleetSpec:
         return validate_fleet_files(files, redactor=self.redactor)
@@ -56,14 +66,23 @@ class YamlConfigurationAdapter:
     def snapshot_hash(self, snapshot: ConfigSnapshot) -> str:
         return sha256_bytes(snapshot.model_dump_json(indent=2).encode("utf-8"))
 
+    def check_apply(self, root: Path, files: dict[str, str]) -> FleetSpec:
+        spec = self.validate_files(files)
+        try:
+            _assert_safe_target(root, files)
+        except FleetError:
+            raise
+        except (OSError, UnicodeError) as error:
+            raise _config_error("the target tree could not be inspected safely") from error
+        return spec
+
     def stage(self, root: Path, files: dict[str, str]) -> FleetSpec:
-        self.validate_files(files)
+        self.check_apply(root, files)
         _write_tree(root, files, allow_existing_same=True)
         return self.load(root / "fleet.yaml")
 
     def apply(self, root: Path, files: dict[str, str]) -> FleetSpec:
-        self.validate_files(files)
-        _assert_safe_target(root, files)
+        self.check_apply(root, files)
         _write_tree(root, files, allow_existing_same=True)
         return self.load(root / "fleet.yaml")
 
@@ -76,24 +95,38 @@ def load_fleet_snapshot(
     path: Path, *, redactor: Redactor | None = None
 ) -> tuple[FleetSpec, ConfigSnapshot]:
     active_redactor = redactor or Redactor()
+    repository_fd: int | None = None
+    fleet_fd: int | None = None
     try:
-        lexical_fleet_root = Path(os.path.abspath(path.parent))
-        root_stat = lexical_fleet_root.lstat()
+        lexical_path = Path(os.path.abspath(path))
+        lexical_fleet_root = lexical_path.parent
+        repository_fd = _open_directory(lexical_fleet_root.parent)
+        root_stat = os.stat(
+            lexical_fleet_root.name,
+            dir_fd=repository_fd,
+            follow_symlinks=False,
+        )
         if not stat.S_ISDIR(root_stat.st_mode):
             raise _unsafe_config_path("the .fleet root must be a real directory")
-        fleet_root = lexical_fleet_root.resolve(strict=True)
-        _reject_symlink_components(lexical_fleet_root, path.name)
-        safe_fleet_path = resolve_logical_path(fleet_root, path.name, allow_missing=False)
-        fleet_content = _read_bounded_regular_file(safe_fleet_path, MAX_CONFIG_BYTES)
+        fleet_fd = os.open(
+            lexical_fleet_root.name,
+            _directory_open_flags(),
+            dir_fd=repository_fd,
+        )
+        _validate_directory_binding(repository_fd, lexical_fleet_root.name, fleet_fd)
+        _validate_logical_reference(lexical_path.name)
+        fleet_content = _read_bounded_logical_at(
+            fleet_fd,
+            lexical_path.name,
+            MAX_CONFIG_BYTES,
+        )
         _reject_registered_secret(fleet_content, active_redactor)
         spec = parse_fleet_spec(fleet_content, redactor=active_redactor)
-        contents: dict[str, bytes] = {path.name: fleet_content}
+        contents: dict[str, bytes] = {lexical_path.name: fleet_content}
         total_bytes = len(fleet_content)
         for reference in sorted(set(_fleet_references(spec))):
             _validate_logical_reference(reference)
-            _reject_symlink_components(lexical_fleet_root, reference)
-            reference_path = resolve_logical_path(fleet_root, reference, allow_missing=False)
-            content = _read_bounded_regular_file(reference_path, MAX_CONFIG_BYTES)
+            content = _read_bounded_logical_at(fleet_fd, reference, MAX_CONFIG_BYTES)
             _reject_registered_secret(content, active_redactor)
             total_bytes += len(content)
             if total_bytes > MAX_CONFIG_SNAPSHOT_BYTES:
@@ -112,61 +145,17 @@ def load_fleet_snapshot(
             )
             for logical_path, content in sorted(contents.items())
         ]
+        _validate_directory_binding(repository_fd, lexical_fleet_root.name, fleet_fd)
     except FleetError:
         raise
-    except (OSError, UnicodeDecodeError, ValidationError) as error:
+    except (OSError, UnicodeError, ValidationError, ValueError) as error:
         raise _config_error(str(error)) from error
-    return spec, ConfigSnapshot(files=snapshot_files)
-
-
-def _read_bounded_regular_file(path: Path, limit: int) -> bytes:
-    """Read one stable regular file without allocating beyond the configured ceiling."""
-
-    before = path.stat()
-    if not stat.S_ISREG(before.st_mode):
-        raise _config_error(f"configuration path is not a regular file: {path.name}")
-    if before.st_size > limit:
-        raise _config_error(f"configuration exceeds {limit} bytes")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    flags |= getattr(os, "O_NONBLOCK", 0)
-    descriptor = os.open(path, flags)
-    try:
-        opened = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
-            or opened.st_size > limit
-        ):
-            raise _config_error("configuration file changed or became unsafe before reading")
-        chunks: list[bytes] = []
-        remaining = limit + 1
-        while remaining:
-            chunk = os.read(descriptor, min(65_536, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        content = b"".join(chunks)
-        after = os.fstat(descriptor)
     finally:
-        os.close(descriptor)
-    if len(content) > limit:
-        raise _config_error(f"configuration exceeds {limit} bytes")
-    if (
-        after.st_size != opened.st_size
-        or after.st_mtime_ns != opened.st_mtime_ns
-        or len(content) != after.st_size
-    ):
-        raise _config_error("configuration file changed while it was being read")
-    return content
-
-
-def _reject_symlink_components(root: Path, reference: str) -> None:
-    current = root
-    for component in PurePosixPath(reference).parts:
-        current = current / component
-        if stat.S_ISLNK(current.lstat().st_mode):
-            raise _unsafe_config_path(f"configuration reference uses a symlink: {reference!r}")
+        if fleet_fd is not None:
+            os.close(fleet_fd)
+        if repository_fd is not None:
+            os.close(repository_fd)
+    return spec, ConfigSnapshot(files=snapshot_files)
 
 
 def parse_fleet_spec(content: bytes, *, redactor: Redactor | None = None) -> FleetSpec:
@@ -184,18 +173,31 @@ def fleet_spec_hash(spec: FleetSpec) -> str:
 
 
 def default_fleet_files(
-    repository_name: str, profile: RepositoryProfile | None = None
+    repository_name: str,
+    profile: RepositoryProfile | None = None,
+    *,
+    runtime_name: str = "fake",
+    provider_model: str | None = None,
 ) -> dict[str, str]:
+    if runtime_name not in {"fake", "pydantic-ai"}:
+        raise _config_error(f"unsupported runtime adapter: {runtime_name!r}")
+    if runtime_name == "fake" and provider_model is not None:
+        raise _config_error("fake runtime cannot declare a provider model")
+    if runtime_name == "pydantic-ai" and provider_model is None:
+        raise _config_error("pydantic-ai runtime requires an explicit provider model")
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", repository_name).strip("-") or "project"
+    runtime_data: dict[str, object] = {
+        "adapter": runtime_name,
+        "requiredCapabilities": ["structured_output", "tool_calling"],
+    }
+    if provider_model is not None:
+        runtime_data["providerModel"] = provider_model
     fleet_data: dict[str, Any] = {
         "apiVersion": "agentfleet.dev/v1alpha1",
         "kind": "Fleet",
         "metadata": {"name": safe_name},
         "spec": {
-            "runtime": {
-                "adapter": "fake",
-                "requiredCapabilities": ["structured_output", "tool_calling"],
-            },
+            "runtime": runtime_data,
             "sandbox": {"provider": "fake", "networkMode": "none"},
             "agents": {
                 "cos": {
@@ -296,8 +298,8 @@ def default_fleet_files(
         "project/verification.yaml": yaml.safe_dump(verification_data, sort_keys=False),
         "README.md": (
             "# Agent Fleet configuration\n\n"
-            "This directory requests fake Phase 1 roles and workflow behavior. "
-            "It does not grant authority.\n"
+            f"This directory requests the {runtime_name} runtime with fake sandbox behavior. "
+            "It does not grant authority or contain provider credentials.\n"
         ),
     }
     validate_fleet_files(files)
@@ -358,15 +360,33 @@ def _project_architecture(profile: RepositoryProfile | None) -> str:
 def validate_fleet_files(files: dict[str, str], *, redactor: Redactor | None = None) -> FleetSpec:
     active_redactor = redactor or Redactor()
     _reject_registered_secret(files, active_redactor)
+    encoded_files: dict[str, bytes] = {}
+    total_bytes = 0
+    for logical_path, content in files.items():
+        _validate_logical_reference(logical_path)
+        encoded = content.encode("utf-8")
+        if len(encoded) > MAX_CONFIG_BYTES:
+            raise _config_error(
+                f"configuration file exceeds {MAX_CONFIG_BYTES} bytes: {logical_path}"
+            )
+        total_bytes += len(encoded)
+        if total_bytes > MAX_CONFIG_SNAPSHOT_BYTES:
+            raise _config_error(f"configuration snapshot exceeds {MAX_CONFIG_SNAPSHOT_BYTES} bytes")
+        encoded_files[logical_path] = encoded
     if "fleet.yaml" not in files:
         raise _config_error("fleet.yaml is required")
-    spec = parse_fleet_spec(files["fleet.yaml"].encode(), redactor=active_redactor)
+    spec = parse_fleet_spec(encoded_files["fleet.yaml"], redactor=active_redactor)
     for reference in _fleet_references(spec):
         _validate_logical_reference(reference)
         if reference not in files:
             raise _config_error(f"referenced file is missing: {reference}")
+    for agent in spec.spec.agents.values():
+        if len(encoded_files[agent.instructions]) > MAX_AGENT_GUIDANCE_BYTES:
+            raise _config_error(
+                f"agent guidance exceeds {MAX_AGENT_GUIDANCE_BYTES} bytes: {agent.instructions}"
+            )
     verification = spec.spec.project.verification
-    parse_verification_profile(files[verification].encode(), redactor=active_redactor)
+    parse_verification_profile(encoded_files[verification], redactor=active_redactor)
     return spec
 
 
@@ -390,7 +410,7 @@ def _parse[ConfigType: (FleetSpec, VerificationProfile)](
         return model.model_validate(value)
     except FleetError:
         raise
-    except (RecursionError, UnicodeDecodeError, yaml.YAMLError, ValidationError) as error:
+    except (RecursionError, UnicodeError, yaml.YAMLError, ValidationError) as error:
         raise _config_error(str(error)) from error
 
 
@@ -419,7 +439,15 @@ def _fleet_references(spec: FleetSpec) -> list[str]:
 
 def _validate_logical_reference(reference: str) -> None:
     path = PurePosixPath(reference)
-    if not reference or path.is_absolute() or ".." in path.parts or "\\" in reference:
+    if (
+        not reference
+        or reference == "."
+        or path.as_posix() != reference
+        or path.is_absolute()
+        or ".." in path.parts
+        or "\\" in reference
+        or any(ord(character) < 32 or ord(character) == 127 for character in reference)
+    ):
         raise _config_error(f"invalid .fleet reference: {reference!r}")
 
 
@@ -440,55 +468,358 @@ def _unsafe_config_path(detail: str) -> FleetError:
 
 
 def _assert_safe_target(root: Path, files: dict[str, str]) -> None:
-    if root.is_symlink():
-        raise FleetError(
-            ErrorCode.PATH_OUTSIDE_SCOPE,
-            "The target .fleet path is a symlink.",
-            "Replace it with a real repository directory after reviewing its contents.",
-        )
-    for relative, content in files.items():
-        destination = root / relative
-        if destination.is_symlink():
+    lexical_root = Path(os.path.abspath(root))
+    try:
+        root_parent_fd = _open_directory(lexical_root.parent)
+    except FileNotFoundError:
+        return
+    root_fd: int | None = None
+    try:
+        try:
+            root_stat = os.stat(
+                lexical_root.name,
+                dir_fd=root_parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return
+        if not stat.S_ISDIR(root_stat.st_mode):
             raise FleetError(
                 ErrorCode.PATH_OUTSIDE_SCOPE,
-                f"A .fleet target path is a symlink: {relative}.",
-                "Use real files beneath .fleet.",
+                "The target .fleet path is a symlink or non-directory.",
+                "Replace it with a real repository directory after reviewing its contents.",
             )
-        parent = destination.parent
-        while parent != root.parent and parent.exists():
-            if parent.is_symlink():
+        root_fd = os.open(lexical_root.name, _directory_open_flags(), dir_fd=root_parent_fd)
+        _validate_directory_binding(root_parent_fd, lexical_root.name, root_fd)
+        for relative, content in files.items():
+            try:
+                existing = _read_bounded_logical_at(root_fd, relative, MAX_CONFIG_BYTES)
+            except FileNotFoundError:
+                continue
+            if existing.decode("utf-8") != content:
                 raise FleetError(
-                    ErrorCode.PATH_OUTSIDE_SCOPE,
-                    f"A .fleet parent path is a symlink: {parent.name}.",
-                    "Use real directories beneath .fleet.",
+                    ErrorCode.CONFIG_INVALID,
+                    f"Refusing to overwrite existing configuration: .fleet/{relative}.",
+                    "Review or move the existing file, then retry initialization.",
                 )
-            if parent == root:
-                break
-            parent = parent.parent
-        if destination.exists() and destination.read_text(encoding="utf-8") != content:
-            raise FleetError(
-                ErrorCode.CONFIG_INVALID,
-                f"Refusing to overwrite existing configuration: .fleet/{relative}.",
-                "Review or move the existing file, then retry initialization.",
-            )
+        _validate_directory_binding(root_parent_fd, lexical_root.name, root_fd)
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
+        os.close(root_parent_fd)
 
 
 def _write_tree(root: Path, files: dict[str, str], *, allow_existing_same: bool) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    for relative, content in files.items():
-        destination = root / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if destination.exists():
-            if allow_existing_same and destination.read_text(encoding="utf-8") == content:
-                continue
-            raise FileExistsError(destination)
-        descriptor, temporary_name = tempfile.mkstemp(prefix=".fleet-init-", dir=destination.parent)
-        temporary = Path(temporary_name)
+    created_files: list[tuple[int, str, int, int]] = []
+    created_directories: list[tuple[int, str, int, int]] = []
+    root_parent_fd: int | None = None
+    root_fd: int | None = None
+    try:
+        root.parent.mkdir(parents=True, exist_ok=True)
+        root_parent_fd = _open_directory(root.parent)
         try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                stream.write(content)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, destination)
-        finally:
-            temporary.unlink(missing_ok=True)
+            root_stat = os.stat(root.name, dir_fd=root_parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            os.mkdir(root.name, mode=0o700, dir_fd=root_parent_fd)
+            root_stat = os.stat(root.name, dir_fd=root_parent_fd, follow_symlinks=False)
+            created_directories.append(
+                (os.dup(root_parent_fd), root.name, root_stat.st_dev, root_stat.st_ino)
+            )
+        root_fd = os.open(root.name, _directory_open_flags(), dir_fd=root_parent_fd)
+        _validate_directory_binding(root_parent_fd, root.name, root_fd)
+
+        for relative, content in files.items():
+            parts = PurePosixPath(relative).parts
+            parent_fd = os.dup(root_fd)
+            opened_fds = [parent_fd]
+            bindings: list[tuple[int, str, int]] = [(root_parent_fd, root.name, root_fd)]
+            try:
+                for component in parts[:-1]:
+                    try:
+                        child_fd = os.open(component, _directory_open_flags(), dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        os.mkdir(component, mode=0o700, dir_fd=parent_fd)
+                        child_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+                        created_directories.append(
+                            (
+                                os.dup(parent_fd),
+                                component,
+                                child_stat.st_dev,
+                                child_stat.st_ino,
+                            )
+                        )
+                        child_fd = os.open(component, _directory_open_flags(), dir_fd=parent_fd)
+                    bindings.append((parent_fd, component, child_fd))
+                    opened_fds.append(child_fd)
+                    parent_fd = child_fd
+
+                destination_name = parts[-1]
+                try:
+                    existing = _read_bounded_regular_at(
+                        parent_fd, destination_name, MAX_CONFIG_BYTES
+                    ).decode("utf-8")
+                except FileNotFoundError:
+                    existing = None
+                if existing is not None:
+                    if allow_existing_same and existing == content:
+                        _validate_directory_bindings(bindings)
+                        continue
+                    raise _config_error(
+                        f"refusing to overwrite an existing configuration path: {relative}"
+                    )
+
+                temporary_name, temporary_fd = _create_temporary_at(parent_fd)
+                temporary_stat = os.fstat(temporary_fd)
+                try:
+                    _write_all(temporary_fd, content.encode("utf-8"))
+                    os.fsync(temporary_fd)
+                    os.link(
+                        temporary_name,
+                        destination_name,
+                        src_dir_fd=parent_fd,
+                        dst_dir_fd=parent_fd,
+                        follow_symlinks=False,
+                    )
+                    created_files.append(
+                        (
+                            os.dup(parent_fd),
+                            destination_name,
+                            temporary_stat.st_dev,
+                            temporary_stat.st_ino,
+                        )
+                    )
+                    destination_stat = os.stat(
+                        destination_name, dir_fd=parent_fd, follow_symlinks=False
+                    )
+                    if not stat.S_ISREG(destination_stat.st_mode) or (
+                        destination_stat.st_dev,
+                        destination_stat.st_ino,
+                    ) != (temporary_stat.st_dev, temporary_stat.st_ino):
+                        raise FleetError(
+                            ErrorCode.RECOVERY_REQUIRED,
+                            "A Fleet configuration file changed during atomic publication.",
+                            "Do not run the project; inspect the .fleet tree before retrying.",
+                        )
+                finally:
+                    os.close(temporary_fd)
+                    _unlink_owned_temporary(
+                        parent_fd,
+                        temporary_name,
+                        temporary_stat.st_dev,
+                        temporary_stat.st_ino,
+                    )
+                _validate_directory_bindings(bindings)
+            finally:
+                for descriptor in reversed(opened_fds):
+                    os.close(descriptor)
+
+        _validate_directory_binding(root_parent_fd, root.name, root_fd)
+    except FleetError:
+        _rollback_created_tree(created_files, created_directories)
+        raise
+    except (OSError, UnicodeError, ValueError) as error:
+        _rollback_created_tree(created_files, created_directories)
+        raise _config_error("the configuration tree could not be written atomically") from error
+    finally:
+        _close_tracked_descriptors(created_files, created_directories)
+        if root_fd is not None:
+            os.close(root_fd)
+        if root_parent_fd is not None:
+            os.close(root_parent_fd)
+
+
+def _directory_open_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | _required_config_open_flag("O_DIRECTORY")
+        | _required_config_open_flag("O_NOFOLLOW")
+    )
+
+
+def _required_config_open_flag(name: str) -> int:
+    flag = getattr(os, name, None)
+    if not isinstance(flag, int):
+        raise _config_error("secure descriptor-relative file access is unavailable")
+    return flag
+
+
+def _open_directory(path: Path) -> int:
+    return os.open(path, _directory_open_flags())
+
+
+def _validate_directory_bindings(bindings: list[tuple[int, str, int]]) -> None:
+    for parent_fd, name, child_fd in bindings:
+        _validate_directory_binding(parent_fd, name, child_fd)
+
+
+def _validate_directory_binding(parent_fd: int, name: str, child_fd: int) -> None:
+    path_stat = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    opened_stat = os.fstat(child_fd)
+    if (
+        not stat.S_ISDIR(path_stat.st_mode)
+        or not stat.S_ISDIR(opened_stat.st_mode)
+        or (path_stat.st_dev, path_stat.st_ino) != (opened_stat.st_dev, opened_stat.st_ino)
+    ):
+        raise FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "A Fleet configuration directory changed during atomic publication.",
+            "Do not run the project; inspect the .fleet tree before retrying.",
+        )
+
+
+def _read_bounded_regular_at(parent_fd: int, name: str, limit: int) -> bytes:
+    before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if stat.S_ISLNK(before.st_mode):
+        raise _unsafe_config_path(f"configuration reference uses a symlink: {name!r}")
+    if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+        raise _config_error(f"configuration path is not a bounded regular file: {name}")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= _required_config_open_flag("O_NOFOLLOW")
+    flags |= _required_config_open_flag("O_NONBLOCK")
+    descriptor = os.open(name, flags, dir_fd=parent_fd)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            or opened.st_size > limit
+        ):
+            raise _config_error("configuration changed before its bounded read")
+        chunks: list[bytes] = []
+        remaining = limit + 1
+        while remaining:
+            chunk = os.read(descriptor, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        content = b"".join(chunks)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if len(content) > limit:
+        raise _config_error(f"configuration exceeds {limit} bytes")
+    if (
+        after.st_size != opened.st_size
+        or after.st_mtime_ns != opened.st_mtime_ns
+        or after.st_ctime_ns != opened.st_ctime_ns
+        or len(content) != after.st_size
+    ):
+        raise _config_error("configuration changed during its bounded read")
+    return content
+
+
+def _read_bounded_logical_at(root_fd: int, reference: str, limit: int) -> bytes:
+    """Read a logical descendant through pinned no-follow directory descriptors."""
+
+    _validate_logical_reference(reference)
+    parts = PurePosixPath(reference).parts
+    parent_fd = os.dup(root_fd)
+    opened_fds = [parent_fd]
+    bindings: list[tuple[int, str, int]] = []
+    try:
+        for component in parts[:-1]:
+            child_fd = os.open(component, _directory_open_flags(), dir_fd=parent_fd)
+            bindings.append((parent_fd, component, child_fd))
+            opened_fds.append(child_fd)
+            parent_fd = child_fd
+        content = _read_bounded_regular_at(parent_fd, parts[-1], limit)
+        _validate_directory_bindings(bindings)
+        return content
+    finally:
+        for descriptor in reversed(opened_fds):
+            os.close(descriptor)
+
+
+def _create_temporary_at(parent_fd: int) -> tuple[str, int]:
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | _required_config_open_flag("O_NOFOLLOW")
+    )
+    for _ in range(128):
+        name = f".fleet-init-{secrets.token_hex(12)}"
+        try:
+            return name, os.open(name, flags, 0o600, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+    raise _config_error("could not allocate a collision-free temporary file")
+
+
+def _write_all(descriptor: int, content: bytes) -> None:
+    remaining = memoryview(content)
+    while remaining:
+        written = os.write(descriptor, remaining)
+        if written <= 0:
+            raise OSError("configuration write made no progress")
+        remaining = remaining[written:]
+
+
+def _unlink_owned_temporary(
+    parent_fd: int,
+    name: str,
+    expected_device: int,
+    expected_inode: int,
+) -> None:
+    try:
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if (current.st_dev, current.st_ino) != (expected_device, expected_inode):
+        raise FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "A Fleet temporary file changed during atomic publication.",
+            "Do not run the project; inspect the .fleet tree before retrying.",
+        )
+    os.unlink(name, dir_fd=parent_fd)
+
+
+def _rollback_created_tree(
+    created_files: list[tuple[int, str, int, int]],
+    created_directories: list[tuple[int, str, int, int]],
+) -> None:
+    incomplete = False
+    for parent_fd, name, expected_device, expected_inode in reversed(created_files):
+        try:
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if (current.st_dev, current.st_ino) != (expected_device, expected_inode):
+            incomplete = True
+            continue
+        try:
+            os.unlink(name, dir_fd=parent_fd)
+        except OSError:
+            incomplete = True
+    for parent_fd, name, expected_device, expected_inode in reversed(created_directories):
+        try:
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (
+            expected_device,
+            expected_inode,
+        ):
+            incomplete = True
+            continue
+        try:
+            os.rmdir(name, dir_fd=parent_fd)
+        except OSError:
+            incomplete = True
+    if incomplete:
+        raise FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "A failed configuration write could not be rolled back completely.",
+            "Do not run the project; inspect the repository .fleet tree before retrying.",
+        )
+
+
+def _close_tracked_descriptors(
+    created_files: list[tuple[int, str, int, int]],
+    created_directories: list[tuple[int, str, int, int]],
+) -> None:
+    for descriptor, *_rest in [*created_files, *created_directories]:
+        os.close(descriptor)

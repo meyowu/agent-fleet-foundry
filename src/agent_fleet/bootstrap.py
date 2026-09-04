@@ -15,7 +15,9 @@ from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.repository.profile import StaticRepositoryProfiler
 from agent_fleet.adapters.runtime.fake import FakeRuntimeAdapter
+from agent_fleet.adapters.runtime.pydantic_ai import PydanticAIRuntimeAdapter
 from agent_fleet.adapters.sandbox.fake import FakeSandboxProvider
+from agent_fleet.adapters.secrets.environment import EnvironmentSecretStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.application.approvals import ApprovalService
 from agent_fleet.application.artifacts import ArtifactService
@@ -28,6 +30,7 @@ from agent_fleet.application.permissions import BaselinePermissionBroker
 from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.projects import ProjectService
 from agent_fleet.application.resources import CancellationService, RecoveryService, ResourceService
+from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.application.workflow import WorkflowEngine
 from agent_fleet.domain.security import Redactor
 
@@ -48,6 +51,9 @@ class ApplicationContainer:
     sandbox: FakeSandboxProvider
     repository: GitRepositoryAdapter
     profiler: StaticRepositoryProfiler
+    runtimes: RuntimeRegistry
+    secrets: EnvironmentSecretStore
+    redactor: Redactor
 
 
 def resolve_state_root() -> Path:
@@ -58,7 +64,10 @@ def resolve_state_root() -> Path:
 
 
 def build_container(
-    state_root: Path | None = None, *, migrate: bool = True
+    state_root: Path | None = None,
+    *,
+    migrate: bool = True,
+    redactor: Redactor | None = None,
 ) -> ApplicationContainer:
     root = (state_root or resolve_state_root()).resolve()
     clock = SystemClock()
@@ -66,27 +75,35 @@ def build_container(
     redaction_values = [
         item for item in os.environ.get("AGENT_FLEET_REDACT_VALUES", "").split(",") if item
     ]
-    redactor = Redactor(redaction_values)
-    state = SqliteStateStore(root / "state.db", clock, ids, redactor)
+    active_redactor = redactor or Redactor(redaction_values)
+    if redactor is not None:
+        active_redactor.register_secrets(redaction_values)
+    state = SqliteStateStore(root / "state.db", clock, ids, active_redactor)
     if migrate:
         state.migrate()
     local_artifacts = LocalArtifactStore(root / "artifacts")
-    artifacts = ArtifactService(local_artifacts, state, clock, ids, redactor)
+    artifacts = ArtifactService(local_artifacts, state, clock, ids, active_redactor)
     repository = GitRepositoryAdapter(root, ids)
     profiler = StaticRepositoryProfiler()
-    config = YamlConfigurationAdapter(redactor)
+    config = YamlConfigurationAdapter(active_redactor)
     system = LocalSystemDiagnostics(root)
-    runtime = FakeRuntimeAdapter()
+    secrets = EnvironmentSecretStore(active_redactor)
+    runtimes = RuntimeRegistry(
+        {
+            "fake": FakeRuntimeAdapter(),
+            "pydantic-ai": PydanticAIRuntimeAdapter(secrets, active_redactor),
+        }
+    )
     sandbox = FakeSandboxProvider(clock, ids)
     resources = ResourceService(state, repository, sandbox, clock, ids)
     permission_broker = BaselinePermissionBroker()
     planner = FleetPlanner(clock, ids)
     evidence = EvidenceAssembler(state, artifacts, clock)
-    gateway = ToolGateway(state, artifacts, sandbox, permission_broker, clock, ids, redactor)
+    gateway = ToolGateway(state, artifacts, sandbox, permission_broker, clock, ids, active_redactor)
     workflow = WorkflowEngine(
         state,
         repository,
-        runtime,
+        runtimes,
         sandbox,
         artifacts,
         gateway,
@@ -96,7 +113,7 @@ def build_container(
         config,
         clock,
         ids,
-        redactor,
+        active_redactor,
     )
     projects = ProjectService(
         root,
@@ -107,8 +124,9 @@ def build_container(
         config,
         clock,
         ids,
-        redactor,
+        active_redactor,
         sandbox.capabilities,
+        runtimes,
     )
     return ApplicationContainer(
         state_root=root,
@@ -117,12 +135,15 @@ def build_container(
         projects=projects,
         workflow=workflow,
         approvals=ApprovalService(state),
-        patches=PatchService(state, artifacts, repository, config, clock),
+        patches=PatchService(state, artifacts, repository, config, secrets, clock),
         inspection=InspectionService(state, artifacts),
         cancellation=CancellationService(state, resources, clock),
         recovery=RecoveryService(state, resources),
-        doctor=DoctorService(root, state, repository, system),
+        doctor=DoctorService(root, state, repository, system, runtimes),
         sandbox=sandbox,
         repository=repository,
         profiler=profiler,
+        runtimes=runtimes,
+        secrets=secrets,
+        redactor=active_redactor,
     )

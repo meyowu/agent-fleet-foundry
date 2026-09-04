@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
+from importlib import resources
 from pathlib import Path
 
 import pytest
 from conftest import FleetHarness
 
-from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
+from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION, SqliteStateStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
@@ -18,12 +19,71 @@ from agent_fleet.domain.security import Redactor, status_fingerprint
 def test_empty_migration_is_idempotent_and_reopens(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     first = SqliteStateStore(path, SystemClock(), UuidIdGenerator(), Redactor())
-    assert first.migrate() == 1
+    assert first.migrate() == SUPPORTED_SCHEMA_VERSION
     reopened = SqliteStateStore(path, SystemClock(), UuidIdGenerator(), Redactor())
-    assert reopened.migrate() == 1
+    assert reopened.migrate() == SUPPORTED_SCHEMA_VERSION
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (0,)
-        assert connection.execute("SELECT version FROM schema_migrations").fetchall() == [(1,)]
+        assert connection.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall() == [(1,), (2,)]
+
+
+def test_v1_migration_preserves_agents_and_allows_only_unbound_cos(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    migration_v1 = (
+        resources.files("agent_fleet.adapters.persistence.migrations")
+        .joinpath("0001.sql")
+        .read_text(encoding="utf-8")
+    )
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            "CREATE TABLE schema_migrations "
+            "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);\n" + migration_v1
+        )
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)",
+            (datetime.now(UTC).isoformat(),),
+        )
+        connection.execute(
+            "INSERT INTO projects(project_id, canonical_root, data_json) VALUES (?, ?, ?)",
+            ("prj_legacy", "/legacy", "{}"),
+        )
+        connection.execute(
+            "INSERT INTO runs(run_id, project_id, status, stage, data_json) VALUES (?, ?, ?, ?, ?)",
+            ("run_legacy", "prj_legacy", "running", "scoping", "{}"),
+        )
+        connection.execute(
+            "INSERT INTO tasks(task_id, run_id, data_json) VALUES (?, ?, ?)",
+            ("task_legacy", "run_legacy", "{}"),
+        )
+        connection.execute(
+            "INSERT INTO agent_instances(agent_instance_id, run_id, task_id, role, data_json) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("agent_legacy", "run_legacy", "task_legacy", "engineer", "{}"),
+        )
+
+    state = SqliteStateStore(path, SystemClock(), UuidIdGenerator(), Redactor())
+    assert state.migrate() == SUPPORTED_SCHEMA_VERSION
+
+    with state._connect() as connection:
+        row = connection.execute(
+            "SELECT run_id, task_id, role, data_json FROM agent_instances "
+            "WHERE agent_instance_id = 'agent_legacy'"
+        ).fetchone()
+        assert tuple(row) == ("run_legacy", "task_legacy", "engineer", "{}")
+        connection.execute(
+            "INSERT INTO agent_instances(agent_instance_id, run_id, task_id, role, data_json) "
+            "VALUES (?, ?, NULL, ?, ?)",
+            ("agent_cos", "run_legacy", "cos", "{}"),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO agent_instances"
+                "(agent_instance_id, run_id, task_id, role, data_json) "
+                "VALUES (?, ?, NULL, ?, ?)",
+                ("agent_invalid", "run_legacy", "engineer", "{}"),
+            )
 
 
 def test_newer_schema_is_refused(tmp_path: Path) -> None:

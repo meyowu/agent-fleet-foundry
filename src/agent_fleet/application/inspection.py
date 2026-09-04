@@ -41,6 +41,8 @@ class InspectionService:
             "verifier_workspace_mutated": run.verifier_workspace_mutated,
             "evidence": self._evidence_summary(run),
             "runtime": run.runtime_name,
+            "provider_model": run.provider_model,
+            "runtime_usage_artifact_ids": run.runtime_usage_artifact_ids,
             "sandbox": run.sandbox_name,
             "security_level": "fake",
         }

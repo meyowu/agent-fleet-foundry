@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
 import re
+from collections.abc import Iterable
 from pathlib import Path
+from threading import RLock
 from typing import Any
+from urllib.parse import quote, quote_plus
 
 from agent_fleet.domain.errors import ErrorCode, FleetError
 
@@ -68,50 +72,95 @@ def git_version_is_supported(version_output: str) -> bool:
 
 
 class Redactor:
-    """Small deterministic redactor for explicitly registered secret values."""
+    """Thread-safe deterministic redactor for explicitly registered secrets.
+
+    A resolved provider credential can become visible in a few common encoded
+    forms in URLs, protocol diagnostics, or third-party exceptions.  Registering
+    one value therefore registers a small, deterministic set of representations
+    as one redaction group.  The registry never exposes those representations.
+    """
 
     def __init__(self, secrets: list[str] | None = None) -> None:
-        self._secrets = tuple(
-            sorted({item for item in (secrets or []) if item}, key=len, reverse=True)
-        )
+        self._lock = RLock()
+        self._registered_values: set[str] = set()
+        self._forms: dict[str, int] = {}
+        self._next_group = 1
+        for secret in sorted({item for item in (secrets or []) if item}, key=len, reverse=True):
+            self.register_secret(secret)
+
+    def register_secret(self, secret: str) -> bool:
+        """Register a raw secret and common encodings, idempotently.
+
+        The return value is true only for the thread that first registers the
+        raw value.  Empty values are ignored because registering an empty string
+        would match every diagnostic.
+        """
+
+        if not isinstance(secret, str):
+            raise TypeError("registered secrets must be strings")
+        if not secret:
+            return False
+        forms = _secret_forms(secret)
+        with self._lock:
+            if secret in self._registered_values:
+                return False
+            group = self._next_group
+            self._next_group += 1
+            self._registered_values.add(secret)
+            for form in forms:
+                self._forms.setdefault(form, group)
+            return True
+
+    def register_secrets(self, secrets: Iterable[str]) -> int:
+        """Register several values and return the count of new raw values."""
+
+        return sum(self.register_secret(secret) for secret in secrets)
 
     def redact_text(self, value: str) -> tuple[str, list[str]]:
+        return self._redact_text(value, self._snapshot())
+
+    @staticmethod
+    def _redact_text(value: str, forms: tuple[tuple[str, int], ...]) -> tuple[str, list[str]]:
         redacted = value
         summary: list[str] = []
-        for index, secret in enumerate(self._secrets, start=1):
-            if secret in redacted:
-                redacted = redacted.replace(secret, f"<redacted:{index}>")
-                summary.append(f"registered_secret_{index}")
-        return redacted, summary
+        for form, group in forms:
+            if form in redacted:
+                redacted = redacted.replace(form, f"<redacted:{group}>")
+                summary.append(f"registered_secret_{group}")
+        return redacted, sorted(set(summary))
 
     def contains_secret(self, value: str | bytes) -> bool:
         text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
-        return any(secret in text for secret in self._secrets)
+        return any(form in text for form, _ in self._snapshot())
 
     def contains_secret_data(self, value: Any) -> bool:
-        if isinstance(value, str | bytes):
-            return self.contains_secret(value)
-        if isinstance(value, dict):
-            return any(
-                self.contains_secret(str(key)) or self.contains_secret_data(child)
-                for key, child in value.items()
-            )
-        if isinstance(value, list | tuple):
-            return any(self.contains_secret_data(child) for child in value)
-        return False
+        forms = self._snapshot()
+
+        def contains(item: Any) -> bool:
+            if isinstance(item, str | bytes):
+                text = item.decode("utf-8", errors="replace") if isinstance(item, bytes) else item
+                return any(form in text for form, _ in forms)
+            if isinstance(item, dict):
+                return any(contains(str(key)) or contains(child) for key, child in item.items())
+            if isinstance(item, list | tuple):
+                return any(contains(child) for child in item)
+            return False
+
+        return contains(value)
 
     def redact_data(self, value: Any) -> tuple[Any, list[str]]:
         summaries: list[str] = []
+        forms = self._snapshot()
 
         def visit(item: Any) -> Any:
             if isinstance(item, str):
-                cleaned, found = self.redact_text(item)
+                cleaned, found = self._redact_text(item, forms)
                 summaries.extend(found)
                 return cleaned
             if isinstance(item, dict):
                 cleaned_mapping: dict[str, Any] = {}
                 for key, child in item.items():
-                    cleaned_key, found = self.redact_text(str(key))
+                    cleaned_key, found = self._redact_text(str(key), forms)
                     summaries.extend(found)
                     unique_key = cleaned_key
                     suffix = 2
@@ -128,6 +177,32 @@ class Redactor:
 
         cleaned = visit(value)
         return cleaned, sorted(set(summaries))
+
+    def _snapshot(self) -> tuple[tuple[str, int], ...]:
+        with self._lock:
+            return tuple(sorted(self._forms.items(), key=lambda item: (-len(item[0]), item[0])))
+
+
+def _secret_forms(secret: str) -> frozenset[str]:
+    encoded = secret.encode("utf-8")
+    standard_base64 = base64.b64encode(encoded).decode("ascii")
+    urlsafe_base64 = base64.urlsafe_b64encode(encoded).decode("ascii")
+    json_escaped = json.dumps(secret, ensure_ascii=True)[1:-1]
+    return frozenset(
+        item
+        for item in {
+            secret,
+            quote(secret, safe=""),
+            quote_plus(secret, safe=""),
+            standard_base64,
+            standard_base64.rstrip("="),
+            urlsafe_base64,
+            urlsafe_base64.rstrip("="),
+            encoded.hex(),
+            json_escaped,
+        }
+        if item
+    )
 
 
 def resolve_logical_path(root: Path, logical_path: str, *, allow_missing: bool = True) -> Path:

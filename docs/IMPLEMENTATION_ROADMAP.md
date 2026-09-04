@@ -4,7 +4,7 @@
 
 Implement phases in order. Every phase must leave a runnable, tested repository and produce an updated ExecPlan outcome. Do not begin a later phase by creating empty placeholder abstractions across the whole system. Add only the contracts required by the current vertical slice, while preserving the specified architectural boundaries.
 
-Current boundary as of 2026-09-04: Phase 0/1 and the Phase 1.5 offline North-Star foundation are implemented. Phase 2–7 are roadmap and must not be described as implemented. Provider integration and Docker execution remain prohibited until the final Phase 1.5 quality gates recorded in its ExecPlan pass.
+Current boundary as of 2026-09-04: Phase 0/1, the Phase 1.5 North-Star foundation, and the Phase 2 BYOK PydanticAI vertical slice are implemented. Phase 2 release acceptance remains governed by its living ExecPlan and final quality evidence; Phase 3–7 are roadmap. Docker or other real worker execution must not begin until the Phase 2 acceptance gates pass.
 
 For each phase:
 
@@ -195,6 +195,8 @@ Phase 1.5 is a hard gate: Phase 2 and Phase 3 must not begin until these accepta
 
 ## Phase 2 — BYOK provider configuration and PydanticAI runtime adapter
 
+**Implementation status:** implementation present; the Phase 2 ExecPlan is authoritative for final acceptance evidence and must be complete before merge. The optional live-provider smoke was **not run** because no explicit test credential was supplied. Ordinary acceptance does not discover or reuse ambient credentials.
+
 ### Goal
 
 Replace scripted role output with a real model/harness adapter while preserving deterministic tests and system-owned orchestration.
@@ -205,10 +207,11 @@ Prerequisite: Phase 1.5 is complete. The adapter consumes validated RepositoryPr
 
 - `PydanticAIRuntimeAdapter` implementing the project `RuntimeAdapter` port.
 - Runtime capability declaration and preflight validation.
-- Provider/model strings treated as opaque configuration values.
+- Provider/model strings treated as opaque domain/configuration values, with an explicit live-adapter allowlist of `openai:<model>` and `openai-chat:<model>` and no fallback.
 - Secret references:
   - `env:NAME` required;
-  - OS keyring optional in this phase if implemented robustly.
+  - reference selected by explicit user input and persisted only in Fleet-owned state;
+  - OS keyring remains future work.
 - Secret redactor registry.
 - Typed PydanticAI outputs for:
   - `ScopeDecision`;
@@ -219,7 +222,14 @@ Prerequisite: Phase 1.5 is complete. The adapter consumes validated RepositoryPr
 - Usage metadata mapping when available, without assuming every provider exposes price.
 - Provider failures, invalid structured output, timeouts, and retry behavior mapped to typed errors.
 - `fleet init` interactive/provider flags and credential preflight.
+- Fail-closed reinitialization: differing generated `.fleet/` content is never merged or overwritten and fails before Project/artifact state mutation; credential-reference-only updates remain possible in Fleet-owned state.
+- `fleet run` exact registration matching and provider preflight; explicit mismatched overrides fail before Run creation.
+- `fleet doctor` inspect-only credential status. A successfully emitted report uses `healthy`/required checks for readiness even when the command exit is zero.
 - Optional manual live-model smoke test excluded from normal CI.
+
+Phase 2's provider HTTPS request originates in the trusted control plane. Preview validates shape only and performs no credential read, state/repository write, provider construction, or network. Init resolves the selected reference before writes but makes no model request. A run resolves it before provider construction, registers dynamic redaction, and passes the value explicitly without mutating global environment state.
+
+Every model-visible tool is a role/stage-bound wrapper around `GatewayRuntimeToolCatalog -> ToolGateway -> PermissionBroker`. The complete deferred batch is schema-validated before execution. Authorized candidate writes then use a narrow Fleet-owned candidate-worktree primitive; fake commands and approval fixtures use `FakeSandboxProvider`. PydanticAI-native shell, filesystem, code execution, MCP, provider-hosted tools, and arbitrary network tools are not exposed. FakeSandbox still executes no code, so a real Verifier output cannot set `verified_complete=true`.
 
 ### Test strategy
 
@@ -228,11 +238,12 @@ Prerequisite: Phase 1.5 is complete. The adapter consumes validated RepositoryPr
 - Assert structured outputs validate and provider-internal objects do not escape.
 - Assert raw secret is absent from events, logs, exceptions, tool contexts, and worker configuration.
 - Assert no live network/API call occurs in ordinary tests.
+- Deny socket creation in ordinary tests and keep PydanticAI's live-model request guard disabled.
 - Contract-test fake and PydanticAI adapters against common semantics.
 
 ### Acceptance criteria
 
-With an explicitly provided valid credential reference, a manual `fleet run` can obtain real CoS/Engineer/Verifier structured outputs against the disposable canary or a small repository. Without a credential, diagnostics are actionable and tests remain fully functional.
+Offline TestModel/FunctionModel contract, integration, and CLI tests must obtain strict CoS/Engineer/Verifier outputs through the real adapter code, exercise gateway/evidence/usage persistence, and prove no network, API key, or Docker dependency. Without a credential, diagnostics remain actionable and no Run is created. When an explicit disposable credential is supplied, the optional manual smoke may additionally demonstrate provider HTTPS; if it is not supplied, record **NOT RUN** rather than reusing ambient credentials or weakening the offline gate.
 
 Do not add multiple real harnesses yet.
 

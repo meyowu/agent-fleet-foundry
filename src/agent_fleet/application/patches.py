@@ -10,6 +10,7 @@ from agent_fleet.domain.models import ApplyResult, Run, RunStatus, WorkflowStage
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
 from agent_fleet.ports.repository import RepositoryPort
+from agent_fleet.ports.secret_store import SecretNotConfiguredError, SecretStore, SecretStoreError
 from agent_fleet.ports.state_store import StateStore
 
 
@@ -20,12 +21,14 @@ class PatchService:
         artifacts: ArtifactService,
         repository: RepositoryPort,
         config: ConfigurationPort,
+        secrets: SecretStore,
         clock: Clock,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
         self.repository = repository
         self.config = config
+        self.secrets = secrets
         self.clock = clock
 
     def show(self, run_id: str) -> str:
@@ -53,6 +56,10 @@ class PatchService:
                 "Wait for READY_FOR_REVIEW and inspect the patch first.",
             )
         project = self.state.get_project(run.project_id)
+        self._register_available_provider_secrets(
+            project.credential_ref,
+            run.credential_ref,
+        )
         if run.config_snapshot_hash is None:
             raise FleetError(
                 ErrorCode.ARTIFACT_INTEGRITY_FAILED,
@@ -138,3 +145,22 @@ class PatchService:
         )
         self.state.save_run(completed, "run.completed", {"patch_applied": True})
         return completed, result
+
+    def _register_available_provider_secrets(
+        self,
+        *credential_refs: str | None,
+    ) -> None:
+        for credential_ref in dict.fromkeys(credential_refs):
+            if credential_ref is None:
+                continue
+            try:
+                value = self.secrets.resolve(credential_ref)
+            except SecretNotConfiguredError:
+                continue
+            except SecretStoreError:
+                raise FleetError(
+                    ErrorCode.CREDENTIAL_INVALID,
+                    "A stored provider credential could not be registered for safe redaction.",
+                    "Correct the Fleet-owned credential binding before applying this patch.",
+                ) from None
+            del value

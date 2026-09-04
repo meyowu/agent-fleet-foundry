@@ -1,28 +1,48 @@
 from __future__ import annotations
 
-import copy
 import json
 
 import pytest
 from conftest import FleetHarness
 
 from agent_fleet.adapters.runtime.fake import FakeRuntimeAdapter
-from agent_fleet.domain.models import AgentInvocation, AgentInvocationResult, FakeScenario, Verdict
+from agent_fleet.application.runtime import RuntimeRegistry
+from agent_fleet.domain.models import (
+    AgentInvocation,
+    AgentInvocationResult,
+    AgentRole,
+    FakeScenario,
+    Verdict,
+    VerifierVerdict,
+)
+from agent_fleet.ports.runtime import RuntimeInvocationServices
 
 
 class ContradictoryPassRuntime(FakeRuntimeAdapter):
-    async def invoke(self, request: AgentInvocation) -> AgentInvocationResult:
-        result = await super().invoke(request)
-        if request.role != "verifier":
+    async def invoke(
+        self,
+        request: AgentInvocation,
+        services: RuntimeInvocationServices,
+    ) -> AgentInvocationResult:
+        result = await super().invoke(request, services)
+        if request.role != AgentRole.VERIFIER:
             return result
 
-        output = copy.deepcopy(result.output)
-        verdict = output["verdict"]
-        assert isinstance(verdict, dict)
-        verdict["proof_gaps"] = ["Required adversarial evidence is unavailable."]
-        verdict["required_repairs"] = ["Repair the verifier-detected defect."]
-        verdict["regressions"] = ["Existing behavior regressed."]
-        return AgentInvocationResult(output=output)
+        assert isinstance(result.output, VerifierVerdict)
+        output = VerifierVerdict.model_validate(
+            {
+                **result.output.model_dump(mode="json"),
+                "proof_gaps": ["Required adversarial evidence is unavailable."],
+                "required_repairs": ["Repair the verifier-detected defect."],
+                "regressions": ["Existing behavior regressed."],
+            }
+        )
+        return AgentInvocationResult(
+            output=output,
+            usage=result.usage,
+            checkpoint_ref=result.checkpoint_ref,
+            provider_metadata=result.provider_metadata,
+        )
 
 
 @pytest.mark.integration
@@ -30,7 +50,7 @@ class ContradictoryPassRuntime(FakeRuntimeAdapter):
 async def test_verifier_negative_findings_are_preserved_and_block_pass(
     harness: FleetHarness,
 ) -> None:
-    harness.container.workflow.runtime = ContradictoryPassRuntime()
+    harness.container.workflow.runtimes = RuntimeRegistry({"fake": ContradictoryPassRuntime()})
 
     run = await harness.start(FakeScenario.SUCCESS)
 

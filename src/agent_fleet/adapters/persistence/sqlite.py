@@ -37,7 +37,7 @@ from agent_fleet.domain.workflow import validate_transition
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
 
-SUPPORTED_SCHEMA_VERSION = 1
+SUPPORTED_SCHEMA_VERSION = 2
 
 
 class SqliteStateStore:
@@ -225,7 +225,8 @@ class SqliteStateStore:
             connection.execute(
                 "INSERT INTO agent_instances(agent_instance_id, run_id, task_id, role, data_json) "
                 "VALUES (?, ?, ?, ?, ?) ON CONFLICT(agent_instance_id) "
-                "DO UPDATE SET data_json=excluded.data_json",
+                "DO UPDATE SET task_id=excluded.task_id, role=excluded.role, "
+                "data_json=excluded.data_json",
                 (
                     instance.agent_instance_id,
                     instance.run_id,

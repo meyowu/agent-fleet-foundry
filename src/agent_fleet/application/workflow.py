@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import json
+from contextlib import suppress
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.application.evidence import EvidenceAssembler
 from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.resources import ResourceService
-from agent_fleet.domain.config import ConfigSnapshot
+from agent_fleet.application.runtime import RuntimeRegistry
+from agent_fleet.application.runtime_tools import GatewayRuntimeToolCatalog
+from agent_fleet.domain.config import ConfigSnapshot, FleetSpec
 from agent_fleet.domain.errors import (
     ApprovalDeniedError,
     ApprovalRequiredError,
@@ -23,22 +27,27 @@ from agent_fleet.domain.evidence import EvidenceBundle
 from agent_fleet.domain.fleet_plan import FleetStrategy
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
-    AcceptanceCriterion,
     AgentInstance,
     AgentInvocation,
+    AgentInvocationResult,
     AgentRole,
     AgentStatus,
     ArtifactKind,
-    EngineerScript,
     FakeScenario,
     FleetEvent,
+    ImplementationReport,
     Run,
     RunStatus,
+    RuntimeCapability,
+    RuntimeConfiguration,
+    RuntimeCredentialCheck,
+    RuntimeToolExecutionRecord,
     SandboxCapabilities,
     SandboxSpec,
+    ScopeDecision,
     TaskSpec,
     Verdict,
-    VerifierScript,
+    VerifierVerdict,
     WorkflowStage,
     WorkspaceKind,
 )
@@ -47,9 +56,21 @@ from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
-from agent_fleet.ports.runtime import RuntimeAdapter
+from agent_fleet.ports.runtime import (
+    EMPTY_RUNTIME_TOOL_CATALOG,
+    RuntimeAdapter,
+    RuntimeInvocationServices,
+)
 from agent_fleet.ports.sandbox import SandboxProvider
 from agent_fleet.ports.state_store import StateStore
+
+_MAX_ROLE_GUIDANCE_BYTES = 32_768
+_MINIMUM_RUNTIME_CAPABILITIES = frozenset(
+    {
+        RuntimeCapability.STRUCTURED_OUTPUT,
+        RuntimeCapability.TOOL_CALLING,
+    }
+)
 
 
 class WorkflowEngine:
@@ -57,7 +78,7 @@ class WorkflowEngine:
         self,
         state: StateStore,
         repository: RepositoryPort,
-        runtime: RuntimeAdapter,
+        runtimes: RuntimeRegistry,
         sandbox: SandboxProvider,
         artifacts: ArtifactService,
         gateway: ToolGateway,
@@ -71,7 +92,7 @@ class WorkflowEngine:
     ) -> None:
         self.state = state
         self.repository = repository
-        self.runtime = runtime
+        self.runtimes = runtimes
         self.sandbox = sandbox
         self.artifacts = artifacts
         self.gateway = gateway
@@ -88,27 +109,24 @@ class WorkflowEngine:
         *,
         project_path: Path,
         goal: str,
-        runtime_name: str,
+        runtime_name: str | None,
         sandbox_name: str,
-        fake_scenario: FakeScenario,
+        fake_scenario: FakeScenario | None,
+        provider_model: str | None = None,
+        credential_ref: str | None = None,
     ) -> Run:
         self._reject_untrusted_secrets(
             {
                 "project_path": str(project_path),
                 "runtime_name": runtime_name,
                 "sandbox_name": sandbox_name,
+                "provider_model": provider_model,
             }
         )
-        if runtime_name != "fake":
-            raise FleetError(
-                ErrorCode.RUNTIME_UNAVAILABLE,
-                f"Runtime {runtime_name!r} is unavailable in Phase 0/1.5.",
-                "Use `--runtime fake`; real provider calls begin in Phase 2.",
-            )
         if sandbox_name != "fake" or self.sandbox.capabilities != SandboxCapabilities.phase1_fake():
             raise FleetError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
-                "Only the non-isolating fake sandbox is available in Phase 0/1.5.",
+                "Only the non-isolating fake sandbox is available in Phase 2.",
                 "Use `--sandbox fake`; Docker execution begins in Phase 3.",
             )
         info = self.repository.inspect(project_path)
@@ -118,7 +136,8 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.PROJECT_NOT_INITIALIZED,
                 "The repository is not registered with this Fleet state directory.",
-                "Run `fleet init <path> --runtime fake --sandbox fake --yes` first.",
+                "Run `fleet init <path> --preview`, then initialize with an explicit reviewed "
+                "runtime and sandbox selection.",
             )
         if info.identity_hash != project.identity_hash:
             raise FleetError(
@@ -136,6 +155,34 @@ class WorkflowEngine:
                 "Commit or manually stash your work and retry. Fleet did not modify it.",
                 details={"dirty_paths": info.dirty_paths},
             )
+        selected_runtime = project.runtime_name if runtime_name is None else runtime_name
+        selected_provider_model = (
+            project.provider_model if provider_model is None else provider_model
+        )
+        selected_credential_ref = (
+            project.credential_ref if credential_ref is None else credential_ref
+        )
+        if (
+            selected_runtime != project.runtime_name
+            or selected_provider_model != project.provider_model
+            or selected_credential_ref != project.credential_ref
+        ):
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "Run-time provider options differ from the reviewed project registration.",
+                "Preview the desired initialization, then move the conflicting generated "
+                ".fleet tree and re-run `fleet init` with explicit provider options.",
+            )
+        runtime_configuration = RuntimeConfiguration(
+            runtime_name=selected_runtime,
+            provider_model=selected_provider_model,
+            credential_ref=selected_credential_ref,
+        )
+        self.runtimes.require(
+            runtime_configuration,
+            required_capabilities=_MINIMUM_RUNTIME_CAPABILITIES,
+            credential_check=RuntimeCredentialCheck.RESOLVE,
+        )
         spec_path = Path(project.canonical_root) / ".fleet" / "fleet.yaml"
         spec, config_snapshot = self.config.load_snapshot(spec_path)
         config_hash = self.config.snapshot_hash(config_snapshot)
@@ -143,8 +190,31 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "The active FleetSpec differs from the registered validated version.",
-                "Re-run `fleet init` only after reviewing the configuration change.",
+                "Run `fleet init --preview`; after review, move the conflicting generated "
+                ".fleet tree and initialize again with explicit options.",
             )
+        if (
+            spec.spec.runtime.adapter != selected_runtime
+            or spec.spec.runtime.provider_model != selected_provider_model
+        ):
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "The active FleetSpec runtime differs from Fleet-owned project settings.",
+                "Review the repository configuration with `fleet init --preview` before "
+                "reinitializing explicitly.",
+            )
+        self.runtimes.require(
+            runtime_configuration,
+            required_capabilities=spec.spec.runtime.required_capabilities,
+            credential_check=RuntimeCredentialCheck.NONE,
+        )
+        if selected_runtime != "fake" and fake_scenario is not None:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "Fake scenarios are available only with the fake runtime.",
+                "Remove `--fake-scenario` or use `--runtime fake`.",
+            )
+        selected_fake_scenario = fake_scenario or FakeScenario.SUCCESS
         redacted_goal, _ = self.redactor.redact_text(goal)
         now = self.clock.now()
         run = Run(
@@ -154,7 +224,10 @@ class WorkflowEngine:
             goal=redacted_goal,
             base_revision=info.head_revision,
             target_status_fingerprint=info.status_fingerprint,
-            fake_scenario=fake_scenario,
+            runtime_name=runtime_configuration.runtime_name,
+            provider_model=runtime_configuration.provider_model,
+            credential_ref=runtime_configuration.credential_ref,
+            fake_scenario=selected_fake_scenario,
             max_repair_iterations=spec.spec.workflows["code-change"].max_repair_iterations,
             created_at=now,
             updated_at=now,
@@ -167,6 +240,8 @@ class WorkflowEngine:
                 run,
                 config_hash,
                 config_snapshot,
+                runtime_configuration,
+                fleet_spec=spec,
                 known_roles=set(spec.spec.agents),
             )
             if run.fleet_strategy == FleetStrategy.DIRECT.value:
@@ -191,6 +266,7 @@ class WorkflowEngine:
                     {"code": error.code.value, "message": error.message},
                 )
                 await self.resources.cleanup_run(failed)
+                error.details.setdefault("run_id", run.run_id)
             raise
 
     async def resume(self, run_id: str) -> Run:
@@ -204,6 +280,28 @@ class WorkflowEngine:
             RunStatus.READY_FOR_REVIEW,
         }:
             return run
+        runtime_configuration = self._runtime_configuration(run)
+        self.runtimes.require(
+            runtime_configuration,
+            required_capabilities=_MINIMUM_RUNTIME_CAPABILITIES,
+            credential_check=RuntimeCredentialCheck.RESOLVE,
+        )
+        project = self.state.get_project(run.project_id)
+        spec, snapshot = self.config.load_snapshot(
+            Path(project.canonical_root) / ".fleet" / "fleet.yaml"
+        )
+        snapshot_hash = self.config.snapshot_hash(snapshot)
+        if run.config_snapshot_hash is not None and snapshot_hash != run.config_snapshot_hash:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "The Fleet configuration changed while the run was paused.",
+                "Restore the reviewed configuration or abandon this run and initialize again.",
+            )
+        self.runtimes.require(
+            runtime_configuration,
+            required_capabilities=spec.spec.runtime.required_capabilities,
+            credential_check=RuntimeCredentialCheck.NONE,
+        )
         if run.status is RunStatus.PAUSED_FOR_APPROVAL:
             if run.pending_approval_id is None:
                 raise FleetError(
@@ -267,6 +365,7 @@ class WorkflowEngine:
                     {"code": error.code.value, "message": error.message},
                 )
                 await self.resources.cleanup_run(failed)
+                error.details.setdefault("run_id", run_id)
             raise
 
     async def _scope(
@@ -274,46 +373,84 @@ class WorkflowEngine:
         run: Run,
         config_hash: str,
         config_snapshot: ConfigSnapshot,
+        runtime_configuration: RuntimeConfiguration,
         *,
+        fleet_spec: FleetSpec,
         known_roles: set[str],
     ) -> Run:
+        guidance = self._role_guidance(fleet_spec, config_snapshot, AgentRole.COS)
         task_id = self.ids.new(IdPrefix.TASK)
-        agent_id = self.ids.new(IdPrefix.AGENT)
-        result = await self.runtime.invoke(
-            AgentInvocation(
-                run_id=run.run_id,
-                task_id=task_id,
-                agent_instance_id=agent_id,
-                role=AgentRole.COS,
-                stage=WorkflowStage.SCOPING,
-                iteration=0,
-                max_steps=10,
-                input={"goal": run.goal, "fake_scenario": run.fake_scenario.value},
-            )
+        agent = AgentInstance(
+            agent_instance_id=self.ids.new(IdPrefix.AGENT),
+            run_id=run.run_id,
+            task_id=None,
+            role=AgentRole.COS,
+            status=AgentStatus.RUNNING,
+            iteration=0,
+            created_at=self.clock.now(),
         )
-        self._reject_untrusted_secrets(result.output)
-        acceptance = [
-            AcceptanceCriterion.model_validate(item)
-            for item in cast(list[dict[str, JsonValue]], result.output["acceptance_criteria"])
-        ]
-        change_kind = cast(Literal["read_only", "code_change"], str(result.output["change_kind"]))
+        project = self.state.get_project(run.project_id)
+        invocation_input: dict[str, JsonValue] = {"goal": run.goal}
+        if run.runtime_name == "fake":
+            invocation_input["fake_scenario"] = run.fake_scenario.value
+        context_artifact_ids: list[str] = []
+        for key, artifact_id in (
+            ("repository_profile", project.repository_profile_artifact_id),
+            ("project_knowledge", project.project_knowledge_artifact_id),
+        ):
+            if artifact_id is None:
+                continue
+            content = self._read_json_context(artifact_id)
+            invocation_input[key] = content
+            context_artifact_ids.append(artifact_id)
+        request = self._build_invocation(
+            run_id=run.run_id,
+            task_id=task_id,
+            agent_instance_id=agent.agent_instance_id,
+            role=AgentRole.COS,
+            stage=WorkflowStage.SCOPING,
+            iteration=0,
+            max_steps=10,
+            instructions=guidance,
+            context_artifact_ids=context_artifact_ids,
+            input=invocation_input,
+        )
+        adapter = self.runtimes.get(runtime_configuration.runtime_name)
+        self.state.save_agent_instance(agent)
+        self._emit(
+            run,
+            "agent.started",
+            {"role": "cos", "iteration": 0},
+            agent_id=agent.agent_instance_id,
+        )
+        result = await self._invoke_runtime_agent(
+            run,
+            agent,
+            adapter,
+            request,
+            RuntimeInvocationServices(
+                configuration=runtime_configuration,
+                tools=EMPTY_RUNTIME_TOOL_CATALOG,
+            ),
+        )
+        decision = cast(ScopeDecision, result.output)
         task = TaskSpec(
             task_id=task_id,
             run_id=run.run_id,
             original_goal=run.goal,
-            normalized_goal=str(result.output["normalized_goal"]),
-            workflow=str(result.output["workflow"]),
-            change_kind=change_kind,
+            normalized_goal=decision.normalized_goal,
+            workflow=decision.workflow,
+            change_kind=decision.change_kind,
             base_revision=run.base_revision,
-            allowed_paths=cast(list[str], result.output["allowed_paths"]),
-            forbidden_paths=cast(list[str], result.output["forbidden_paths"]),
-            acceptance_criteria=acceptance,
-            required_evidence=cast(list[str], result.output["required_evidence"]),
+            allowed_paths=decision.allowed_paths,
+            forbidden_paths=decision.forbidden_paths,
+            acceptance_criteria=decision.acceptance_criteria,
+            required_evidence=decision.required_evidence,
             max_repair_iterations=run.max_repair_iterations,
             config_snapshot_hash=config_hash,
             created_at=self.clock.now(),
         )
-        strategy = FleetStrategy(str(result.output["fleet_strategy"]))
+        strategy = FleetStrategy(decision.fleet_strategy)
         plan = self.planner.create(run, task, strategy, known_roles=known_roles)
         plan_artifact = self.artifacts.create_text(
             kind=ArtifactKind.FLEET_PLAN,
@@ -359,20 +496,24 @@ class WorkflowEngine:
                 "updated_at": self.clock.now(),
             }
         )
-        self.state.save_run(run, "run.task_bound", {"task_id": task_id})
         self.state.save_task(task)
-        instance = AgentInstance(
-            agent_instance_id=agent_id,
-            run_id=run.run_id,
-            task_id=task.task_id,
-            role=AgentRole.COS,
-            status=AgentStatus.COMPLETED,
-            iteration=0,
-            created_at=self.clock.now(),
-            completed_at=self.clock.now(),
+        self.state.save_agent_instance(
+            agent.model_copy(
+                update={
+                    "task_id": task_id,
+                    "status": AgentStatus.COMPLETED,
+                    "completed_at": self.clock.now(),
+                }
+            )
         )
-        self.state.save_agent_instance(instance)
-        self._emit(run, "agent.completed", {"role": "cos"}, agent_id=agent_id)
+        self.state.save_run(run, "run.task_bound", {"task_id": task_id})
+        run = self._persist_runtime_observation(
+            run,
+            task.task_id,
+            agent.agent_instance_id,
+            "cos",
+            result,
+        )
         self._emit(
             run,
             "fleet.plan_accepted",
@@ -420,7 +561,7 @@ class WorkflowEngine:
             if run.stage is WorkflowStage.VERIFYING:
                 verifier = await self._verify(run)
                 run = self.state.get_run(run.run_id)
-                if verifier.verdict.verdict is Verdict.FAIL:
+                if verifier.verdict is Verdict.FAIL:
                     if run.repair_iterations < run.max_repair_iterations:
                         run = run.model_copy(
                             update={
@@ -472,8 +613,10 @@ class WorkflowEngine:
                         f"evidence_bundle_artifact_id={run.evidence_bundle_artifact_id}\n"
                         f"assurance_verdict={decision.effective_verdict.value}\n"
                         f"verified_complete={str(run.verified_complete).lower()}\n"
-                        "runtime=fake\nsandbox=fake\nsecurity_level=fake\n"
-                        "proof_gap=No model or project code executed.\n"
+                        f"runtime={run.runtime_name}\n"
+                        f"provider_model={run.provider_model or 'none'}\n"
+                        "sandbox=fake\nsecurity_level=fake\n"
+                        "proof_gap=FakeSandbox did not execute project code.\n"
                     ),
                 )
                 await self.resources.cleanup_run(run)
@@ -497,6 +640,7 @@ class WorkflowEngine:
         if run.task_id is None:
             raise RuntimeError("run has no task")
         task = self.state.get_task(run.task_id)
+        guidance = self._active_role_guidance(run, AgentRole.ENGINEER)
         workspace = self.resources.candidate_workspace(run.run_id)
         handle = self.resources.engineer_sandbox(run.run_id)
         agent = AgentInstance(
@@ -508,6 +652,44 @@ class WorkflowEngine:
             iteration=run.repair_iterations,
             created_at=self.clock.now(),
         )
+        configuration = self._runtime_configuration(run)
+        adapter = self.runtimes.get(configuration.runtime_name)
+        catalog = GatewayRuntimeToolCatalog(
+            gateway=self.gateway,
+            redactor=self.redactor,
+            run=run,
+            task=task,
+            agent=agent,
+            workspace=workspace,
+            sandbox_handle=handle,
+            max_calls=configuration.max_tool_calls,
+        )
+        request = self._build_invocation(
+            run_id=run.run_id,
+            task_id=task.task_id,
+            agent_instance_id=agent.agent_instance_id,
+            role=AgentRole.ENGINEER,
+            stage=run.stage or WorkflowStage.IMPLEMENTING,
+            iteration=run.repair_iterations,
+            max_steps=20,
+            instructions=guidance,
+            context_artifact_ids=[
+                item
+                for item in (
+                    run.task_spec_artifact_id,
+                    run.fleet_plan_artifact_id,
+                    run.config_snapshot_artifact_id,
+                )
+                if item is not None
+            ],
+            input=self._runtime_input(
+                run,
+                {
+                    "task_spec": task.model_dump(mode="json"),
+                    "repair_iterations": run.repair_iterations,
+                },
+            ),
+        )
         self.state.save_agent_instance(agent)
         self._emit(
             run,
@@ -515,54 +697,31 @@ class WorkflowEngine:
             {"role": "engineer", "iteration": run.repair_iterations},
             agent_id=agent.agent_instance_id,
         )
-        result = await self.runtime.invoke(
-            AgentInvocation(
-                run_id=run.run_id,
-                task_id=task.task_id,
-                agent_instance_id=agent.agent_instance_id,
-                role=AgentRole.ENGINEER,
-                stage=run.stage or WorkflowStage.IMPLEMENTING,
-                iteration=run.repair_iterations,
-                max_steps=20,
-                input={
-                    "goal": task.normalized_goal,
-                    "fake_scenario": run.fake_scenario.value,
-                    "repair_iterations": run.repair_iterations,
-                },
-            )
-        )
-        self._reject_untrusted_secrets(result.output)
-        script = EngineerScript.model_validate(result.output)
-        evidence_artifact_ids: list[str] = []
-        for action in script.actions:
-            action_result = await self.gateway.execute(
-                run=run,
-                task=task,
-                agent=agent,
-                workspace=workspace,
-                sandbox_handle=handle,
-                scripted=action,
-            )
-            evidence_id = action_result.get("command_evidence_artifact_id")
-            if isinstance(evidence_id, str):
-                evidence_artifact_ids.append(evidence_id)
-        completed = agent.model_copy(
-            update={"status": AgentStatus.COMPLETED, "completed_at": self.clock.now()}
-        )
-        self.state.save_agent_instance(completed)
-        self._emit(
+        result = await self._invoke_runtime_agent(
             run,
-            "agent.completed",
-            {"role": "engineer", "iteration": run.repair_iterations},
-            agent_id=agent.agent_instance_id,
+            agent,
+            adapter,
+            request,
+            RuntimeInvocationServices(configuration=configuration, tools=catalog),
+        )
+        evidence_artifact_ids = self._command_evidence_ids(catalog.records)
+        report = cast(ImplementationReport, result.output).model_copy(
+            update={"evidence_artifact_ids": evidence_artifact_ids}
+        )
+        run = self._persist_runtime_observation(
+            run,
+            task.task_id,
+            agent.agent_instance_id,
+            "engineer",
+            result,
         )
         self.artifacts.create_text(
             kind=ArtifactKind.IMPLEMENTATION_REPORT,
             project_id=run.project_id,
             run_id=run.run_id,
             task_id=task.task_id,
-            producer="fake-runtime:engineer",
-            content=script.report.model_dump_json(indent=2),
+            producer=f"{run.runtime_name}-runtime:engineer",
+            content=report.model_dump_json(indent=2),
             mime_type="application/json",
         )
         patch = self.repository.compute_patch(workspace)
@@ -604,10 +763,11 @@ class WorkflowEngine:
             {"patch_artifact_id": artifact.artifact_id, "changed_paths": patch.changed_paths},
         )
 
-    async def _verify(self, run: Run) -> VerifierScript:
+    async def _verify(self, run: Run) -> VerifierVerdict:
         if run.task_id is None or run.patch_artifact_id is None:
             raise RuntimeError("run has no task or patch")
         task = self.state.get_task(run.task_id)
+        guidance = self._active_role_guidance(run, AgentRole.VERIFIER)
         project = self.state.get_project(run.project_id)
         patch = self.artifacts.read_text(run.patch_artifact_id).encode()
         workspace = self.repository.create_workspace(
@@ -632,6 +792,46 @@ class WorkflowEngine:
             iteration=run.repair_iterations,
             created_at=self.clock.now(),
         )
+        configuration = self._runtime_configuration(run)
+        adapter = self.runtimes.get(configuration.runtime_name)
+        catalog = GatewayRuntimeToolCatalog(
+            gateway=self.gateway,
+            redactor=self.redactor,
+            run=run,
+            task=task,
+            agent=agent,
+            workspace=workspace,
+            sandbox_handle=handle,
+            max_calls=configuration.max_tool_calls,
+        )
+        request = self._build_invocation(
+            run_id=run.run_id,
+            task_id=task.task_id,
+            agent_instance_id=agent.agent_instance_id,
+            role=AgentRole.VERIFIER,
+            stage=WorkflowStage.VERIFYING,
+            iteration=run.repair_iterations,
+            max_steps=10,
+            instructions=guidance,
+            context_artifact_ids=[
+                item
+                for item in (
+                    run.task_spec_artifact_id,
+                    run.fleet_plan_artifact_id,
+                    run.patch_artifact_id,
+                )
+                if item is not None
+            ],
+            input=self._runtime_input(
+                run,
+                {
+                    "task_spec": task.model_dump(mode="json"),
+                    "repair_iterations": run.repair_iterations,
+                    "patch_sha256": run.patch_sha256,
+                    "patch": self._bounded_runtime_text(patch.decode()),
+                },
+            ),
+        )
         self.state.save_agent_instance(agent)
         self._emit(
             run,
@@ -639,51 +839,24 @@ class WorkflowEngine:
             {"role": "verifier", "iteration": run.repair_iterations},
             agent_id=agent.agent_instance_id,
         )
-        result = await self.runtime.invoke(
-            AgentInvocation(
-                run_id=run.run_id,
-                task_id=task.task_id,
-                agent_instance_id=agent.agent_instance_id,
-                role=AgentRole.VERIFIER,
-                stage=WorkflowStage.VERIFYING,
-                iteration=run.repair_iterations,
-                max_steps=10,
-                input={
-                    "goal": task.original_goal,
-                    "fake_scenario": run.fake_scenario.value,
-                    "repair_iterations": run.repair_iterations,
-                    "patch_sha256": run.patch_sha256,
-                },
-            )
+        result = await self._invoke_runtime_agent(
+            run,
+            agent,
+            adapter,
+            request,
+            RuntimeInvocationServices(configuration=configuration, tools=catalog),
         )
-        self._reject_untrusted_secrets(result.output)
-        script = VerifierScript.model_validate(result.output)
-        evidence_artifact_ids: list[str] = []
-        for action in script.actions:
-            action_result = await self.gateway.execute(
-                run=run,
-                task=task,
-                agent=agent,
-                workspace=workspace,
-                sandbox_handle=handle,
-                scripted=action,
-            )
-            evidence_id = action_result.get("command_evidence_artifact_id")
-            if isinstance(evidence_id, str):
-                evidence_artifact_ids.append(evidence_id)
+        evidence_artifact_ids = self._command_evidence_ids(catalog.records)
         after = self.repository.workspace_status_fingerprint(workspace)
         mutated = before != after
-        completed = agent.model_copy(
-            update={"status": AgentStatus.COMPLETED, "completed_at": self.clock.now()}
-        )
-        self.state.save_agent_instance(completed)
-        self._emit(
+        run = self._persist_runtime_observation(
             run,
-            "agent.completed",
-            {"role": "verifier", "iteration": run.repair_iterations},
-            agent_id=agent.agent_instance_id,
+            task.task_id,
+            agent.agent_instance_id,
+            "verifier",
+            result,
         )
-        bound_verdict = script.verdict.model_copy(
+        bound_verdict = cast(VerifierVerdict, result.output).model_copy(
             update={"evidence_artifact_ids": evidence_artifact_ids}
         )
         verdict_artifact = self.artifacts.create_text(
@@ -691,7 +864,7 @@ class WorkflowEngine:
             project_id=run.project_id,
             run_id=run.run_id,
             task_id=task.task_id,
-            producer="fake-runtime:verifier",
+            producer=f"{run.runtime_name}-runtime:verifier",
             content=bound_verdict.model_dump_json(indent=2),
             mime_type="application/json",
         )
@@ -711,7 +884,7 @@ class WorkflowEngine:
             updated,
             "verification.completed",
             {
-                "verdict": script.verdict.verdict.value,
+                "verdict": bound_verdict.verdict.value,
                 "verdict_artifact_id": verdict_artifact.artifact_id,
                 "verification_workspace_mutated": mutated,
                 "security_level": self.sandbox.capabilities.security_level.value,
@@ -719,7 +892,249 @@ class WorkflowEngine:
         )
         await self.resources.cleanup_lease(updated, sandbox_lease)
         await self.resources.cleanup_lease(updated, workspace_lease)
-        return script
+        return bound_verdict
+
+    async def _invoke_runtime_agent(
+        self,
+        run: Run,
+        agent: AgentInstance,
+        adapter: RuntimeAdapter,
+        request: AgentInvocation,
+        services: RuntimeInvocationServices,
+    ) -> AgentInvocationResult:
+        try:
+            result = await adapter.invoke(request, services)
+            self._reject_untrusted_secrets(result.model_dump(mode="json"))
+            expected_outputs: dict[
+                str,
+                type[ScopeDecision] | type[ImplementationReport] | type[VerifierVerdict],
+            ] = {
+                AgentRole.COS.value: ScopeDecision,
+                AgentRole.ENGINEER.value: ImplementationReport,
+                AgentRole.VERIFIER.value: VerifierVerdict,
+            }
+            expected_output = expected_outputs.get(str(request.role))
+            if expected_output is None or not isinstance(result.output, expected_output):
+                raise FleetError(
+                    ErrorCode.RUNTIME_OUTPUT_INVALID,
+                    f"The {agent.role} runtime returned the wrong structured output type.",
+                    "Use a runtime that returns the project schema for the active role.",
+                )
+            completed = agent.model_copy(
+                update={"status": AgentStatus.COMPLETED, "completed_at": self.clock.now()}
+            )
+            self.state.save_agent_instance(completed)
+            self._emit(
+                run,
+                "agent.completed",
+                {"role": str(agent.role), "iteration": agent.iteration},
+                agent_id=agent.agent_instance_id,
+            )
+            return result
+        except FleetError as error:
+            self._mark_agent_failed(run, agent, error.code)
+            raise
+        except Exception:
+            self._mark_agent_failed(run, agent, ErrorCode.INTERNAL_ERROR)
+            raise FleetError(
+                ErrorCode.INTERNAL_ERROR,
+                f"The {agent.role} runtime invocation failed unexpectedly.",
+                "Inspect redacted run events and retry with a healthy runtime.",
+            ) from None
+
+    def _mark_agent_failed(
+        self,
+        run: Run,
+        agent: AgentInstance,
+        error_code: ErrorCode,
+    ) -> None:
+        failed = agent.model_copy(
+            update={"status": AgentStatus.FAILED, "completed_at": self.clock.now()}
+        )
+        self.state.save_agent_instance(failed)
+        self._emit(
+            run,
+            "agent.failed",
+            {"role": str(agent.role), "code": error_code.value},
+            agent_id=agent.agent_instance_id,
+        )
+
+    @staticmethod
+    def _runtime_input(run: Run, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        if run.runtime_name == "fake":
+            return {**value, "fake_scenario": run.fake_scenario.value}
+        return value
+
+    @staticmethod
+    def _runtime_configuration(run: Run) -> RuntimeConfiguration:
+        return RuntimeConfiguration(
+            runtime_name=run.runtime_name,
+            provider_model=run.provider_model,
+            credential_ref=run.credential_ref,
+        )
+
+    def _persist_runtime_observation(
+        self,
+        run: Run,
+        task_id: str,
+        agent_id: str,
+        role: str,
+        result: AgentInvocationResult,
+    ) -> Run:
+        if (
+            result.usage is None
+            and result.provider_metadata is None
+            and result.checkpoint_ref is None
+        ):
+            return self.state.get_run(run.run_id)
+        observation: dict[str, JsonValue] = {
+            "role": role,
+            "agent_instance_id": agent_id,
+            "usage": (result.usage.model_dump(mode="json") if result.usage is not None else None),
+            "provider_metadata": (
+                result.provider_metadata.model_dump(mode="json")
+                if result.provider_metadata is not None
+                else None
+            ),
+            "checkpoint_ref": result.checkpoint_ref,
+        }
+        self._reject_untrusted_secrets(observation)
+        artifact = self.artifacts.create_text(
+            kind=ArtifactKind.RUNTIME_USAGE,
+            project_id=run.project_id,
+            run_id=run.run_id,
+            task_id=task_id,
+            producer=f"{run.runtime_name}-runtime",
+            content=json.dumps(observation, indent=2, sort_keys=True) + "\n",
+            mime_type="application/json",
+        )
+        latest = self.state.get_run(run.run_id)
+        updated = latest.model_copy(
+            update={
+                "runtime_usage_artifact_ids": [
+                    *latest.runtime_usage_artifact_ids,
+                    artifact.artifact_id,
+                ],
+                "updated_at": self.clock.now(),
+            }
+        )
+        return self.state.save_run(
+            updated,
+            "runtime.usage_recorded",
+            {
+                "role": role,
+                "agent_instance_id": agent_id,
+                "usage_artifact_id": artifact.artifact_id,
+            },
+        )
+
+    def _command_evidence_ids(self, records: tuple[RuntimeToolExecutionRecord, ...]) -> list[str]:
+        result: list[str] = []
+        for record in records:
+            for artifact_id in record.artifact_ids:
+                if self.state.get_artifact(artifact_id).kind is ArtifactKind.COMMAND_EVIDENCE:
+                    result.append(artifact_id)
+        return list(dict.fromkeys(result))
+
+    def _read_json_context(self, artifact_id: str) -> JsonValue:
+        try:
+            value = json.loads(self.artifacts.read_text(artifact_id))
+        except (TypeError, ValueError):
+            raise FleetError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                "A runtime context artifact is not valid JSON.",
+                "Re-initialize the project from trusted repository metadata.",
+            ) from None
+        validated = cast(JsonValue, value)
+        self._reject_untrusted_secrets(validated)
+        return validated
+
+    @staticmethod
+    def _build_invocation(
+        *,
+        run_id: str,
+        task_id: str,
+        agent_instance_id: str,
+        role: AgentRole,
+        stage: WorkflowStage,
+        iteration: int,
+        max_steps: int,
+        instructions: str,
+        context_artifact_ids: list[str],
+        input: dict[str, JsonValue],
+    ) -> AgentInvocation:
+        invocation: AgentInvocation | None = None
+        with suppress(ValidationError):
+            invocation = AgentInvocation(
+                run_id=run_id,
+                task_id=task_id,
+                agent_instance_id=agent_instance_id,
+                role=role,
+                stage=stage,
+                iteration=iteration,
+                max_steps=max_steps,
+                instructions=instructions,
+                context_artifact_ids=context_artifact_ids,
+                input=input,
+            )
+        if invocation is None:
+            raise FleetError(
+                ErrorCode.RUNTIME_BUDGET_EXCEEDED,
+                "The runtime invocation context exceeds the bounded input contract.",
+                "Reduce repository metadata or task context before starting a new run.",
+            ) from None
+        return invocation
+
+    def _active_role_guidance(self, run: Run, role: AgentRole) -> str:
+        project = self.state.get_project(run.project_id)
+        spec, snapshot = self.config.load_snapshot(
+            Path(project.canonical_root) / ".fleet" / "fleet.yaml"
+        )
+        snapshot_hash = self.config.snapshot_hash(snapshot)
+        if run.config_snapshot_hash is None or snapshot_hash != run.config_snapshot_hash:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "The Fleet role guidance changed after the task was bound.",
+                "Restore the exact Run-bound configuration or start a new run.",
+            )
+        return self._role_guidance(spec, snapshot, role)
+
+    @staticmethod
+    def _role_guidance(spec: FleetSpec, snapshot: ConfigSnapshot, role: AgentRole) -> str:
+        request = spec.spec.agents.get(role.value)
+        if request is None:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "The active FleetSpec does not define the required runtime role.",
+                "Restore the generated CoS, Engineer, and Verifier role definitions.",
+            )
+        contents = {item.path: item.content for item in snapshot.files}
+        guidance = contents.get(request.instructions)
+        if guidance is None:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "The required runtime role guidance is missing from ConfigSnapshot.",
+                "Restore the referenced role file and initialize again.",
+            )
+        if len(guidance.encode("utf-8")) > _MAX_ROLE_GUIDANCE_BYTES:
+            raise FleetError(
+                ErrorCode.RUNTIME_BUDGET_EXCEEDED,
+                "Runtime role guidance exceeds the Phase 2 input ceiling.",
+                "Reduce the referenced role guidance below 32768 UTF-8 bytes.",
+                details={"max_role_guidance_bytes": _MAX_ROLE_GUIDANCE_BYTES},
+            )
+        return guidance
+
+    @staticmethod
+    def _bounded_runtime_text(value: str, *, max_bytes: int = 120_000) -> str:
+        if len(value.encode("utf-8")) > max_bytes:
+            raise FleetError(
+                ErrorCode.RUNTIME_BUDGET_EXCEEDED,
+                "Runtime patch context exceeds the Phase 2 input ceiling.",
+                "Reduce the task scope or review the patch without a model invocation.",
+                details={"max_patch_context_bytes": max_bytes},
+            )
+        return value
 
     def _persist_evidence(self, run: Run) -> tuple[Run, EvidenceBundle]:
         current = self.state.get_run(run.run_id)

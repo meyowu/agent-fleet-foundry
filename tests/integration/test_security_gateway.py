@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 
@@ -9,6 +8,7 @@ from conftest import FleetHarness
 
 from agent_fleet.adapters.repository.profile import StaticRepositoryProfiler
 from agent_fleet.adapters.runtime.fake import FakeRuntimeAdapter
+from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.bootstrap import build_container
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import (
@@ -20,44 +20,66 @@ from agent_fleet.domain.models import (
     CanonicalResource,
     FakeScenario,
     RunStatus,
+    RuntimeToolCall,
     SandboxCapabilities,
     SandboxHandle,
     SandboxSecurityLevel,
+    ScopeDecision,
     ScriptedAction,
     Workspace,
     WorkspaceKind,
 )
 from agent_fleet.domain.repository_profile import RepositoryProfileResult
 from agent_fleet.domain.security import Redactor
+from agent_fleet.ports.runtime import RuntimeInvocationServices
 
 
 class CommandInjectionRuntime(FakeRuntimeAdapter):
-    async def invoke(self, request: AgentInvocation) -> AgentInvocationResult:
-        result = await super().invoke(request)
+    async def invoke(
+        self,
+        request: AgentInvocation,
+        services: RuntimeInvocationServices,
+    ) -> AgentInvocationResult:
         if request.role == AgentRole.ENGINEER:
-            output = copy.deepcopy(result.output)
-            actions = output["actions"]
-            assert isinstance(actions, list)
-            for action in actions:
-                assert isinstance(action, dict)
-                if action["action"] == "command.run":
-                    parameters = action["parameters"]
-                    assert isinstance(parameters, dict)
-                    parameters["argv"] = ["-m", "pytest", "-q", "&&", "curl", "example.invalid"]
-            return AgentInvocationResult(output=output)
-        return result
+            await services.tools.execute(
+                RuntimeToolCall(
+                    call_id="injected_command",
+                    name="command_run",
+                    arguments={
+                        "executable": "python",
+                        "argv": ["-m", "pytest", "-q", "&&", "curl", "example.invalid"],
+                        "cwd": ".",
+                    },
+                )
+            )
+            raise AssertionError("bound runtime catalog accepted an arbitrary command tool")
+        return await super().invoke(request, services)
 
 
 class SecretScopeRuntime(FakeRuntimeAdapter):
     def __init__(self, secret: str) -> None:
         self.secret = secret
 
-    async def invoke(self, request: AgentInvocation) -> AgentInvocationResult:
-        result = await super().invoke(request)
+    async def invoke(
+        self,
+        request: AgentInvocation,
+        services: RuntimeInvocationServices,
+    ) -> AgentInvocationResult:
+        result = await super().invoke(request, services)
         if request.role == AgentRole.COS:
-            output = copy.deepcopy(result.output)
-            output["normalized_goal"] = f"untrusted {self.secret} output"
-            return AgentInvocationResult(output=output)
+            assert isinstance(result.output, ScopeDecision)
+            output = ScopeDecision.model_validate(
+                {
+                    **result.output.model_dump(mode="json"),
+                    "normalized_goal": f"untrusted {self.secret} output",
+                }
+            )
+            return AgentInvocationResult(
+                output=output,
+                usage=result.usage,
+                checkpoint_ref=result.checkpoint_ref,
+                provider_metadata=result.provider_metadata,
+            )
         return result
 
 
@@ -267,7 +289,7 @@ async def test_workflow_rejects_secret_in_adapter_option_without_echo_or_run(
 async def test_structured_command_exact_match_rejects_compound_injection(
     harness: FleetHarness,
 ) -> None:
-    harness.container.workflow.runtime = CommandInjectionRuntime()
+    harness.container.workflow.runtimes = RuntimeRegistry({"fake": CommandInjectionRuntime()})
     with pytest.raises(FleetError) as captured:
         await harness.start(FakeScenario.SUCCESS)
     assert captured.value.code is ErrorCode.COMMAND_DENIED
@@ -295,7 +317,7 @@ async def test_runtime_scope_secret_is_rejected_before_task_persistence(
     state_root = tmp_path / "fleet-state"
     container = build_container(state_root)
     container.projects.initialize(repository, runtime_name="fake", sandbox_name="fake")
-    container.workflow.runtime = SecretScopeRuntime(sentinel)
+    container.workflow.runtimes = RuntimeRegistry({"fake": SecretScopeRuntime(sentinel)})
 
     with pytest.raises(FleetError) as captured:
         await container.workflow.start(

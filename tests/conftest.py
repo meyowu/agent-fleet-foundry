@@ -1,15 +1,86 @@
 from __future__ import annotations
 
+import os
+import re
+import socket
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from pydantic_ai.models import override_allow_model_requests
 
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.system import UuidIdGenerator
 from agent_fleet.bootstrap import ApplicationContainer, build_container
 from agent_fleet.domain.models import FakeScenario, Run
+
+_LIVE_PROVIDER_FLAG = "AGENT_FLEET_ENABLE_LIVE_PROVIDER_TESTS"
+_LIVE_PROVIDER_MODEL = "AGENT_FLEET_LIVE_PROVIDER_MODEL"
+_LIVE_PROVIDER_CREDENTIAL_REF = "AGENT_FLEET_LIVE_PROVIDER_CREDENTIAL_REF"
+_ENV_CREDENTIAL_REF = re.compile(r"env:([A-Za-z_][A-Za-z0-9_]*)\Z")
+
+
+def _live_provider_inputs_are_ready() -> bool:
+    if os.environ.get(_LIVE_PROVIDER_FLAG) != "1":
+        return False
+    provider_model = os.environ.get(_LIVE_PROVIDER_MODEL, "")
+    provider, separator, model_name = provider_model.partition(":")
+    if separator != ":" or provider not in {"openai", "openai-chat"} or not model_name:
+        return False
+    credential_match = _ENV_CREDENTIAL_REF.fullmatch(
+        os.environ.get(_LIVE_PROVIDER_CREDENTIAL_REF, "")
+    )
+    return credential_match is not None and bool(os.environ.get(credential_match.group(1)))
+
+
+@pytest.fixture(autouse=True)
+def enforce_external_request_boundary(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Deny ordinary network/model requests; open only the explicit live canary."""
+
+    is_live_provider_test = request.node.get_closest_marker("live_provider") is not None
+    if is_live_provider_test:
+        if not _live_provider_inputs_are_ready():
+            pytest.skip(
+                "live provider canary requires explicit opt-in, supported model, "
+                "credential reference, and configured referenced environment variable"
+            )
+        with override_allow_model_requests(True):
+            yield
+        return
+
+    original_connect = socket.socket.connect
+    original_connect_ex = socket.socket.connect_ex
+    original_sendmsg = getattr(socket.socket, "sendmsg", None)
+
+    def deny_network(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("ordinary tests must not perform network access")
+
+    def guarded_connect(sock: socket.socket, address: object) -> object:
+        if sock.family in {socket.AF_INET, socket.AF_INET6}:
+            deny_network()
+        return original_connect(sock, address)  # type: ignore[arg-type]
+
+    def guarded_connect_ex(sock: socket.socket, address: object) -> int:
+        if sock.family in {socket.AF_INET, socket.AF_INET6}:
+            deny_network()
+        return original_connect_ex(sock, address)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(socket, "create_connection", deny_network)
+    monkeypatch.setattr(socket, "getaddrinfo", deny_network)
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+    monkeypatch.setattr(socket.socket, "sendto", deny_network)
+    if original_sendmsg is not None:
+        monkeypatch.setattr(socket.socket, "sendmsg", deny_network)
+
+    with override_allow_model_requests(False):
+        yield
 
 
 @dataclass
