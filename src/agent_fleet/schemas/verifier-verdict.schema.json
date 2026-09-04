@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "Verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "criterion_results": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Criterion Results",
+      "type": "array"
+    },
+    "evidence_artifact_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Artifact Ids",
+      "type": "array"
+    },
+    "proof_gaps": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Proof Gaps",
+      "type": "array"
+    },
+    "rationale": {
+      "title": "Rationale",
+      "type": "string"
+    },
+    "regressions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Regressions",
+      "type": "array"
+    },
+    "required_repairs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Required Repairs",
+      "type": "array"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict"
+    }
+  },
+  "required": [
+    "verdict",
+    "criterion_results",
+    "evidence_artifact_ids",
+    "regressions",
+    "required_repairs",
+    "proof_gaps",
+    "rationale"
+  ],
+  "title": "VerifierVerdict",
+  "type": "object"
+}

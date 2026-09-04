@@ -1,0 +1,16 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Protocol
+
+
+class SystemDiagnostics(Protocol):
+    def python_version(self) -> tuple[bool, str]: ...
+
+    def git_version(self) -> str | None: ...
+
+    def docker_version(self) -> str | None: ...
+
+    def sqlite_version(self) -> str: ...
+
+    def state_directory_writable(self, path: Path) -> tuple[bool, str]: ...

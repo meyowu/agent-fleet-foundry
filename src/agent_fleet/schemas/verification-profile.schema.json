@@ -1,0 +1,81 @@
+{
+  "$defs": {
+    "VerificationCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Argv",
+          "type": "array"
+        },
+        "cwd": {
+          "title": "Cwd",
+          "type": "string"
+        },
+        "executable": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._+-]+$",
+          "title": "Executable",
+          "type": "string"
+        },
+        "networkRequired": {
+          "const": false,
+          "title": "Networkrequired",
+          "type": "boolean"
+        },
+        "timeoutSeconds": {
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "executable",
+        "argv",
+        "cwd",
+        "timeoutSeconds",
+        "networkRequired"
+      ],
+      "title": "VerificationCommand",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "agentfleet.dev/v1alpha1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "commands": {
+      "additionalProperties": {
+        "$ref": "#/$defs/VerificationCommand"
+      },
+      "title": "Commands",
+      "type": "object"
+    },
+    "kind": {
+      "const": "VerificationProfile",
+      "title": "Kind",
+      "type": "string"
+    },
+    "requiredForCodeChange": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Requiredforcodechange",
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "commands",
+    "requiredForCodeChange"
+  ],
+  "title": "VerificationProfile",
+  "type": "object"
+}

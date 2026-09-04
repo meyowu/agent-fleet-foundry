@@ -1,0 +1,163 @@
+{
+  "$defs": {
+    "AgentRole": {
+      "enum": [
+        "cos",
+        "engineer",
+        "verifier"
+      ],
+      "title": "AgentRole",
+      "type": "string"
+    },
+    "CanonicalResource": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "title": "Identifier",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "workspace_path",
+            "fake_command",
+            "fake_side_effect"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "identifier"
+      ],
+      "title": "CanonicalResource",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "WorkflowStage": {
+      "enum": [
+        "intake",
+        "scoping",
+        "workspace_preparation",
+        "implementing",
+        "verifying",
+        "repairing",
+        "presenting",
+        "applying",
+        "cleanup"
+      ],
+      "title": "WorkflowStage",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "enum": [
+        "workspace.write_file",
+        "command.run",
+        "fixture.record_side_effect"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "agent_instance_id": {
+      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "title": "Agent Instance Id",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "intent_id": {
+      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "parameters": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Parameters",
+      "type": "object"
+    },
+    "principal_role": {
+      "$ref": "#/$defs/AgentRole"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    },
+    "requested_ttl_seconds": {
+      "anyOf": [
+        {
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Requested Ttl Seconds"
+    },
+    "requested_uses": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Requested Uses"
+    },
+    "resource": {
+      "$ref": "#/$defs/CanonicalResource"
+    },
+    "run_id": {
+      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "side_effect": {
+      "title": "Side Effect",
+      "type": "boolean"
+    },
+    "stage": {
+      "$ref": "#/$defs/WorkflowStage"
+    },
+    "task_id": {
+      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "workflow": {
+      "const": "code-change",
+      "title": "Workflow",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent_id",
+    "run_id",
+    "task_id",
+    "agent_instance_id",
+    "principal_role",
+    "workflow",
+    "stage",
+    "action",
+    "resource",
+    "parameters",
+    "reason",
+    "side_effect",
+    "idempotency_key"
+  ],
+  "title": "ToolIntent",
+  "type": "object"
+}

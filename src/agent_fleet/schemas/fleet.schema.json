@@ -1,0 +1,291 @@
+{
+  "$defs": {
+    "AgentLifecycle": {
+      "enum": [
+        "persistent",
+        "per_task"
+      ],
+      "title": "AgentLifecycle",
+      "type": "string"
+    },
+    "AgentRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "allowedTools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowedtools",
+          "type": "array"
+        },
+        "instructions": {
+          "title": "Instructions",
+          "type": "string"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/AgentLifecycle"
+        },
+        "maxSteps": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Maxsteps",
+          "type": "integer"
+        },
+        "mayDelegateTo": {
+          "items": {
+            "enum": [
+              "engineer",
+              "verifier"
+            ],
+            "type": "string"
+          },
+          "title": "Maydelegateto",
+          "type": "array"
+        },
+        "role": {
+          "enum": [
+            "chief-of-staff",
+            "software-engineer",
+            "verifier"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "lifecycle",
+        "instructions",
+        "allowedTools",
+        "maxSteps"
+      ],
+      "title": "AgentRequest",
+      "type": "object"
+    },
+    "FleetSpecBody": {
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "additionalProperties": {
+            "$ref": "#/$defs/AgentRequest"
+          },
+          "propertyNames": {
+            "enum": [
+              "cos",
+              "engineer",
+              "verifier"
+            ]
+          },
+          "title": "Agents",
+          "type": "object"
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectFiles"
+        },
+        "requestedPermissions": {
+          "items": {
+            "$ref": "#/$defs/RequestedPermission"
+          },
+          "title": "Requestedpermissions",
+          "type": "array"
+        },
+        "runtime": {
+          "$ref": "#/$defs/RuntimeRequest"
+        },
+        "sandbox": {
+          "$ref": "#/$defs/SandboxRequest"
+        },
+        "workflows": {
+          "additionalProperties": {
+            "$ref": "#/$defs/WorkflowRequest"
+          },
+          "propertyNames": {
+            "const": "code-change"
+          },
+          "title": "Workflows",
+          "type": "object"
+        }
+      },
+      "required": [
+        "runtime",
+        "sandbox",
+        "agents",
+        "workflows",
+        "project",
+        "requestedPermissions"
+      ],
+      "title": "FleetSpecBody",
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    },
+    "ProjectFiles": {
+      "additionalProperties": false,
+      "properties": {
+        "architecture": {
+          "title": "Architecture",
+          "type": "string"
+        },
+        "charter": {
+          "title": "Charter",
+          "type": "string"
+        },
+        "verification": {
+          "title": "Verification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "charter",
+        "architecture",
+        "verification"
+      ],
+      "title": "ProjectFiles",
+      "type": "object"
+    },
+    "RequestedPermission": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "repo.read",
+            "workspace.write",
+            "command.run"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "principalRole": {
+          "enum": [
+            "engineer",
+            "verifier"
+          ],
+          "title": "Principalrole",
+          "type": "string"
+        },
+        "resource": {
+          "title": "Resource",
+          "type": "string"
+        }
+      },
+      "required": [
+        "principalRole",
+        "action",
+        "resource"
+      ],
+      "title": "RequestedPermission",
+      "type": "object"
+    },
+    "RuntimeRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "fake",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "requiredCapabilities": {
+          "items": {
+            "enum": [
+              "structured_output",
+              "tool_calling"
+            ],
+            "type": "string"
+          },
+          "title": "Requiredcapabilities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "adapter",
+        "requiredCapabilities"
+      ],
+      "title": "RuntimeRequest",
+      "type": "object"
+    },
+    "SandboxRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "networkMode": {
+          "const": "none",
+          "title": "Networkmode",
+          "type": "string"
+        },
+        "provider": {
+          "const": "fake",
+          "title": "Provider",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "networkMode"
+      ],
+      "title": "SandboxRequest",
+      "type": "object"
+    },
+    "WorkflowRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "definition": {
+          "title": "Definition",
+          "type": "string"
+        },
+        "maxRepairIterations": {
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Maxrepairiterations",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "definition",
+        "maxRepairIterations"
+      ],
+      "title": "WorkflowRequest",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "agentfleet.dev/v1alpha1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Fleet",
+      "title": "Kind",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/FleetSpecBody"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "FleetSpec",
+  "type": "object"
+}

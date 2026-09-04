@@ -1,0 +1,1 @@
+"""Project-owned adapter protocols."""

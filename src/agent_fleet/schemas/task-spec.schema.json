@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "AcceptanceCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_id": {
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "description"
+      ],
+      "title": "AcceptanceCriterion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "acceptance_criteria": {
+      "items": {
+        "$ref": "#/$defs/AcceptanceCriterion"
+      },
+      "title": "Acceptance Criteria",
+      "type": "array"
+    },
+    "allowed_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Paths",
+      "type": "array"
+    },
+    "base_revision": {
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "config_snapshot_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Snapshot Hash",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "forbidden_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Forbidden Paths",
+      "type": "array"
+    },
+    "max_repair_iterations": {
+      "maximum": 5,
+      "minimum": 0,
+      "title": "Max Repair Iterations",
+      "type": "integer"
+    },
+    "normalized_goal": {
+      "title": "Normalized Goal",
+      "type": "string"
+    },
+    "original_goal": {
+      "title": "Original Goal",
+      "type": "string"
+    },
+    "required_evidence": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Required Evidence",
+      "type": "array"
+    },
+    "run_id": {
+      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "task_id": {
+      "pattern": "^[a-z]+_[0-9a-f]{32}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "workflow": {
+      "const": "code-change",
+      "default": "code-change",
+      "title": "Workflow",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "run_id",
+    "original_goal",
+    "normalized_goal",
+    "base_revision",
+    "allowed_paths",
+    "forbidden_paths",
+    "acceptance_criteria",
+    "required_evidence",
+    "max_repair_iterations",
+    "config_snapshot_hash",
+    "created_at"
+  ],
+  "title": "TaskSpec",
+  "type": "object"
+}
