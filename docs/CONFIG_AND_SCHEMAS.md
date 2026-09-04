@@ -1,5 +1,7 @@
 # Configuration and canonical schemas — Agent Fleet
 
+This document distinguishes target public contracts from the implementation boundary. Phase 0/1.5 now enforces extensible role/workflow identifiers, one-use approval, bounded RepositoryProfile/ProjectKnowledge generation, exact ConfigSnapshot and TaskSpec bindings, FleetPlan, SandboxCapabilities, EvidenceBundle/CompletionDecision, FleetPatch validation, and fake runtime/sandbox schemas. Real provider configuration, Docker enforcement, persistent trust, parallel scheduling, and operational FleetPatch remain later phases.
+
 ## 1. Configuration ownership
 
 There are three distinct configuration classes. Do not merge them into one file.
@@ -29,7 +31,9 @@ Not stored in the repository. It selects defaults and grants/revokes bounded per
 
 Stored in environment variables, OS keyring, or future secret backends. Only references appear in configuration.
 
-## 2. FleetSpec example
+## 2. Target FleetSpec example (Phase 2–4)
+
+The following is the intended richer contract and is **not** accepted by the Phase 1.5 parser. The current checked-in `fleet.schema.json` accepts only `runtime.adapter=fake`, `sandbox.provider=fake`, `networkMode=none`, the bounded agent/workflow/project reference fields, and requested permission triples. It has no `models`, image/resources, agent model selection, workflow parallelism, permission conditions, or budget section yet. `fleet init --preview --json` is the authoritative way to see a current parseable proposal.
 
 ```yaml
 apiVersion: agentfleet.dev/v1alpha1
@@ -65,7 +69,7 @@ spec:
 
   agents:
     cos:
-      role: chief-of-staff
+      role: cos
       lifecycle: persistent
       instructions: agents/cos.md
       model: default
@@ -81,7 +85,7 @@ spec:
       maxSteps: 20
 
     engineer:
-      role: software-engineer
+      role: engineer
       lifecycle: per_task
       instructions: agents/engineer.md
       model: default
@@ -155,10 +159,14 @@ spec:
 
 Notes:
 
-- Provider/model strings are opaque to the domain layer.
-- `credentialRef` is a reference, never a secret value.
+- The `agents` mapping is a catalog of available role templates keyed by validated extensible `RoleId`; it is not the team instantiated for every run.
+- Phase 1 generated `chief-of-staff` and `software-engineer` role labels remain accepted only for the corresponding `cos` and `engineer` keys; other key/label mismatches fail validation.
+- The `workflows` mapping is keyed by validated extensible `WorkflowId`. A per-run FleetPlan selects a supported strategy and subset of roles.
+- CoS, Engineer, and Verifier are the current built-ins. The current schema accepts other validated role IDs/references, while specialist output schemas and execution remain roadmap work.
+- Provider/model strings will be opaque to the domain layer when Phase 2 adds them.
+- A future `credentialRef` is a reference, never a secret value.
 - Referenced paths must resolve under `.fleet/` and may not escape through symlinks.
-- Requested permissions are intersected with user policy and technical sandbox capabilities.
+- Phase 1.5 applies a narrow hard-coded baseline broker and exact allow-once grant. Full requested-permission intersection with user policy and sandbox capabilities is Phase 4.
 - Unknown configuration fields fail validation for `v1alpha1` unless intentionally placed in a documented extension map.
 
 ## 3. Verification configuration example
@@ -199,7 +207,7 @@ requiredForCodeChange:
 
 Do not store a single shell string. Commands are executable plus argv.
 
-## 4. Workflow example
+## 4. Target workflow example (Phase 5)
 
 `.fleet/workflows/code-change.yaml`:
 
@@ -249,9 +257,9 @@ limits:
   maxRepairIterations: 2
 ```
 
-The parser validates only supported deterministic stage types and transitions. Arbitrary Python imports, executable expressions, templates with code execution, or user-defined transition code are forbidden.
+Phase 1.5 captures this referenced file in ConfigSnapshot but does not parse it into executable stages; `WorkflowEngine` owns the hard-coded deterministic state machine. A later workflow parser may accept only supported stage types and transitions. Arbitrary Python imports, executable expressions, templates with code execution, or user-defined transition code remain forbidden.
 
-## 5. User trust configuration example
+## 5. Target user trust configuration (Phase 4)
 
 `trust.yaml`:
 
@@ -291,13 +299,13 @@ projects:
         createdAt: "2026-09-03T00:00:00Z"
 ```
 
-The implementation must not encourage manual editing before schema validation/atomic update support exists. `fleet permissions` is the preferred interface.
+This file and the `fleet permissions` command family do not exist in Phase 1.5. Phase 4 must provide schema validation, atomic update support, and a CLI before manual editing is supported.
 
-## 6. Canonical domain models
+## 6. Target semantic models and current contracts
 
-The exact Python syntax may evolve, but semantic fields are required.
+The checked-in generated JSON Schemas are authoritative for the Phase 1.5 serialized wire shape. Mandatory Python and application validators enforce cross-field, graph, filesystem, current-state, registered-secret, permission, and evidence-integrity rules that JSON Schema cannot express. Some conceptual snippets below describe richer later-phase contracts and are labeled as targets; implemented sections describe the current models.
 
-### 6.1 ScopeDecision
+### 6.1 Target ScopeDecision (Phase 2/5)
 
 ```python
 class ScopeDecision(BaseModel):
@@ -312,6 +320,7 @@ class ScopeDecision(BaseModel):
     risks: list[Risk]
     ambiguities: list[Ambiguity]
     recommended_budget: BudgetRequest
+    proposed_fleet_plan: FleetPlan
 ```
 
 Control plane validates requested values against effective ceilings.
@@ -325,17 +334,35 @@ class TaskSpec(BaseModel):
     original_goal: str
     normalized_goal: str
     workflow: str
+    change_kind: Literal["read_only", "code_change"]
     base_revision: str
     allowed_paths: list[LogicalRepoPath]
     forbidden_paths: list[LogicalRepoPath]
     acceptance_criteria: list[AcceptanceCriterion]
     required_evidence: list[EvidenceRequirement]
-    requested_capabilities: list[CapabilityRequest]
-    effective_budget: EffectiveBudget
     max_repair_iterations: int
     config_snapshot_hash: str
     created_at: datetime
 ```
+
+The control plane serializes the accepted TaskSpec as a content-addressed run/task artifact and binds both its artifact ID and SHA-256 to the Run. Evidence assembly rejects a missing, foreign, wrong-kind, corrupt, hash-mismatched, or content-divergent TaskSpec artifact.
+
+### 6.2.1 ConfigSnapshot
+
+```python
+class ConfigSnapshotFile(BaseModel):
+    path: LogicalFleetPath
+    sha256: str
+    content: str
+
+
+class ConfigSnapshot(BaseModel):
+    api_version: Literal["agentfleet.dev/v1alpha1"]
+    kind: Literal["ConfigSnapshot"]
+    files: list[ConfigSnapshotFile]
+```
+
+Phase 1.5 captures the exact UTF-8 contents and SHA-256 of `.fleet/fleet.yaml` plus every role, workflow, charter, architecture, and verification file it references. Paths are unique, sorted, canonical, and confined beneath `.fleet/`; the loader rejects symlink/special-file references, checks size before opening, reads at most the per-file ceiling, detects a changed file during read, and enforces an aggregate byte limit. The composition root injects the control-plane Redactor into the configuration adapter: every generated tree and loaded file is scanned for registered values before YAML parsing, writes, or snapshot construction, and failures use a generic exception with no parser cause. Initialization binds the snapshot to Project, and each run binds a run/task-scoped copy to Run and TaskSpec. Any referenced-file drift is rejected before a run is created, even when Git reports the same set of untracked `.fleet/` paths; explicit patch apply loads and compares the complete snapshot again.
 
 ### 6.3 ToolIntent
 
@@ -353,7 +380,7 @@ class ToolIntent(BaseModel):
     parameters: dict[str, JsonValue]
     reason: str
     side_effect: bool
-    idempotency_key: str | None = None
+    idempotency_key: str
     requested_ttl_seconds: int | None = None
     requested_uses: int | None = None
 ```
@@ -373,12 +400,10 @@ class PermissionDecision(BaseModel):
     outcome: PermissionOutcome
     decision_code: str
     explanation: str
-    matched_rule_ids: list[str]
-    protected: bool
-    risk: RiskLevel
-    effective_scope: CanonicalScope | None
-    approval_request: ApprovalRequest | None
+    protected: bool = False
 ```
+
+Matched-rule details, risk classification, effective scopes, and persistent-trust explanations are Phase 4 additions.
 
 ### 6.5 ApprovalRequest and resolution
 
@@ -386,14 +411,12 @@ class PermissionDecision(BaseModel):
 class ApprovalRequest(BaseModel):
     request_id: PermissionRequestId
     intent_id: IntentId
+    run_id: RunId
     intent_hash: str
     principal_role: str
     action: str
     resource: CanonicalResource
     reason: str
-    risk: RiskLevel
-    requested_scope: CanonicalScope
-    maximum_approvable_scope: CanonicalScope
     available_choices: list[ApprovalChoice]
     created_at: datetime
     expires_at: datetime
@@ -402,11 +425,11 @@ class ApprovalRequest(BaseModel):
 class ApprovalChoice(str, Enum):
     DENY = "deny"
     ALLOW_ONCE = "allow_once"
-    ALLOW_RUN = "allow_run"
-    ALLOW_ALWAYS_PROJECT_EXACT = "allow_always_project_exact"
 ```
 
-### 6.6 CommandSpec
+Allow-for-run and persistent exact project trust choices remain Phase 4.
+
+### 6.6 Target real CommandSpec (Phase 3)
 
 ```python
 class CommandSpec(BaseModel):
@@ -458,24 +481,194 @@ class VerifierVerdict(BaseModel):
 ### 6.9 FleetPatch
 
 ```python
+class FleetPatchOperation(str, Enum):
+    ADD = "add"
+    REPLACE = "replace"
+    REMOVE = "remove"
+
+
+class FleetPatchFileChange(BaseModel):
+    operation: FleetPatchOperation
+    path: LogicalFleetPath
+    before_sha256: str | None
+    after_sha256: str | None
+    content: str | None
+
+
 class FleetPatch(BaseModel):
+    api_version: Literal["agentfleet.dev/v1alpha1"]
+    kind: Literal["FleetPatch"]
     fleet_patch_id: FleetPatchId
     project_id: ProjectId
-    base_fleet_spec_hash: str
-    target_files: list[LogicalFleetPath]
-    unified_diff_artifact_id: ArtifactId
-    semantic_changes: list[SemanticFleetChange]
-    requested_by_user_message_ref: str
-    validation_result: FleetPatchValidation
-    prohibited_change_attempts: list[str]
+    base_fleet_spec_sha256: str
+    changes: list[FleetPatchFileChange]
+    rationale: str
+    rollback_of: FleetPatchId | None
+```
+
+Each change records its operation, canonical logical `.fleet/` path, expected prior hash, proposed hash, and content when applicable. FleetPatch, Project, and rollback IDs require their dedicated `fpatch_`/`prj_` prefixes. `add` forbids a prior hash and requires UTF-8 content whose SHA-256 exactly equals `after_sha256`; `replace` additionally requires `before_sha256`; `remove` requires only `before_sha256` and forbids content/after hash. A patch contains 1–128 paths that are unique after component-wise Unicode case folding. Untrusted raw proposals enter through `parse_and_validate_fleet_patch`: it first rejects non-plain, cyclic, deeper-than-64, over-10,000-node, or otherwise non-JSON Python objects without recursive descent into object subclasses, then scans the accepted built-in JSON tree before Pydantic parsing so a registered secret cannot be echoed by a schema error. The typed validator repeats whole-proposal scanning before current-state checks. Both validation layers require the control-plane Redactor and recursively reject registered secrets in rationale, paths, and content. Phase 1.5 deliberately permits only the minimum reviewed organization set: files beneath `agents/` and `workflows/`, plus `project/charter.md`, `project/architecture.md`, `project/verification.yaml`, and `.fleet/README.md`. `.fleet/skills/**` is not accepted by the Phase 1.5 validator; Phase 6 may add it only with explicit skill semantics and security tests. Trust/settings, secret material or references, state/database/artifact storage, audit history, hard denies, approval ownership, and sandbox hard-limit configuration are protected targets. Phase 1.5 generates and validates this schema but does not persist, apply, or roll back FleetPatch operations; Phase 6 adds semantic/textual diff artifacts, status, audit, atomic application, and rollback-as-new-operation.
+
+### 6.10 RepositoryProfile and ProjectKnowledge
+
+```python
+class CommandProvenance(BaseModel):
+    path: LogicalRepoPath
+    source: str
+    pointer: str | None
+
+
+class RepositoryCommand(BaseModel):
+    name: str
+    purpose: Literal["test", "lint", "build", "check", "other"]
+    executable: str
+    argv: list[str]
+    cwd: LogicalRepoPath
+    provenance: CommandProvenance
+    confidence: Literal["high", "medium", "low"]
+    execution_authorized: Literal[False]
+
+
+class RepositoryProfile(BaseModel):
+    schema_version: Literal[1]
+    root: Literal["."]
+    ecosystems: list[str]
+    build_systems: list[str]
+    boundaries: list[RepositoryBoundary]
+    commands: list[RepositoryCommand]
+    signals: list[RepositorySignal]
+    ambiguities: list[RepositoryAmbiguity]
+    files_read: list[LogicalRepoPath]
+    bytes_read: int
+
+
+class ProjectKnowledge(BaseModel):
+    schema_version: Literal[1]
+    source_profile_sha256: str
+    summary: str
+    ecosystems: list[str]
+    build_systems: list[str]
+    repository_boundaries: list[LogicalRepoPath]
+    verification_commands: list[str]
+    ambiguities: list[str]
+```
+
+All paths are repository-relative. Static signals carry source paths, while detected commands additionally carry structured provenance and confidence. ProjectKnowledge is a factual projection but does not yet attach provenance/confidence to each summary string. `source_profile_sha256` is the semantic canonical JSON hash of the source RepositoryProfile and is independently recomputed at the ProjectService trust boundary; the profile artifact's SHA-256 separately addresses its serialized bytes. Older Phase 1 rows using `knowledge_hash` remain readable but serialize under the precise new field name. Init JSON exposes the profile values as `repository_profile_semantic_sha256` and `repository_profile_artifact_sha256`, and separately reports the canonical ProjectKnowledge hash as `project_knowledge_semantic_sha256` plus its serialized artifact hash. Profiling never executes or authorizes a detected command.
+
+### 6.11 FleetPlan
+
+```python
+class FleetStrategy(str, Enum):
+    DIRECT = "direct"
+    SINGLE_ENGINEER = "single_engineer"
+    ENGINEER_VERIFIER = "engineer_verifier"
+    PARALLEL_ENGINEERS = "parallel_engineers"
+    RESEARCH_ARCHITECT_ENGINEER_VERIFIER = "research_architect_engineer_verifier"
+
+
+class FleetPlanNode(BaseModel):
+    node_id: str
+    role_id: RoleId
+    depends_on: list[str]  # unique, at most 16
+    scope: list[LogicalRepoPath]  # unique, at most 128
+    can_write: bool
+    requires_workspace: bool
+    independent_verifier: bool
+    max_steps: int
+
+
+class FleetPlan(BaseModel):
+    api_version: Literal["agentfleet.dev/v1alpha1"]
+    kind: Literal["FleetPlan"]
+    plan_id: PlanId
+    run_id: RunId
+    task_id: TaskId
+    strategy: FleetStrategy
+    nodes: list[FleetPlanNode]  # at most 16
+    max_parallel_agents: int
+    required_evidence: list[EvidenceRequirementId]
+    rationale: str
     created_at: datetime
 ```
 
-Only paths under the allowed `.fleet/` subset may appear.
+`EvidenceRequirementId` is a closed security vocabulary: `canonical_patch`, `command_evidence`, `control_plane_plan`, and `independent_verifier_verdict`. A small set of Phase 1 legacy display labels normalizes to those IDs when older rows are loaded; unknown values are rejected. TaskSpec, FleetPlan, and EvidenceBundle require unique non-empty lists and the plan must exactly preserve the task requirements.
+
+The control plane validates declared roles, references, bounded/unique collections, acyclic dependencies, concurrency ceilings, case-insensitively non-overlapping task-bounded writer scopes, workspace requirements, true parallel-writer topology, direct side effects, and assurance topology. Verifier scopes are task-bounded but may intentionally cover writer output. Phase 1.5 schedules only direct, single-Engineer, and Engineer+Verifier plans; the other strategies remain representable but unsupported for execution.
+
+### 6.12 SandboxCapabilities
+
+```python
+class SandboxCapabilities(BaseModel):
+    provider: str
+    security_level: Literal["fake", "isolated", "unsafe_host"]
+    isolation_enforced: bool
+    executes_code: bool
+    supported_network_modes: list[str]
+    supports_resource_limits: bool
+    supports_recovery: bool
+```
+
+Capability models reject incoherent provider/security/isolation/execution/network/resource-limit combinations. Init and workflow startup accept only the exact Phase 1.5 FakeSandbox descriptor, report it, and every command record binds its provider and security level. FakeSandbox declares `isolation_enforced=false`, `executes_code=false`, no resource-limit support, and only `network=none`; ToolGateway consequently labels its command records `simulated`. Per-plan `SandboxRequirements` matching and a complete capability snapshot in each run bundle remain Phase 3 hardening.
+
+### 6.13 EvidenceBundle and CompletionDecision
+
+```python
+class EvidenceStrength(str, Enum):
+    SIMULATED = "simulated"
+    OBSERVED = "observed"
+    INDEPENDENTLY_VERIFIED = "independently_verified"
+
+
+class CriterionAssessment(BaseModel):
+    criterion_id: str
+    verdict: Literal["pass", "fail", "inconclusive"]
+    evidence_artifact_ids: list[ArtifactId]
+    explanation: str
+
+
+class CompletionDecision(BaseModel):
+    verified_complete: bool
+    effective_verdict: Literal["pass", "fail", "inconclusive"]
+    reason_codes: list[str]
+
+
+class EvidenceBundle(BaseModel):
+    api_version: Literal["agentfleet.dev/v1alpha1"]
+    kind: Literal["EvidenceBundle"]
+    run_id: RunId
+    project_id: ProjectId
+    task_id: TaskId
+    config_snapshot_artifact_id: ArtifactId
+    config_snapshot_sha256: str
+    task_spec_artifact_id: ArtifactId
+    task_spec_sha256: str
+    fleet_plan_artifact_id: ArtifactId
+    fleet_plan_sha256: str
+    fleet_strategy: FleetStrategy
+    required_evidence: list[EvidenceRequirementId]
+    base_revision: str
+    patch_artifact_id: ArtifactId | None
+    patch_sha256: str | None
+    changed_paths: list[LogicalRepoPath]
+    command_evidence: list[CommandEvidence]
+    verifier_agent_instance_id: AgentInstanceId | None
+    verifier_verdict_artifact_id: ArtifactId | None
+    verifier_evidence_artifact_ids: list[ArtifactId]
+    verifier_workspace_mutated: bool
+    reported_verdict: Literal["pass", "fail", "inconclusive"] | None
+    verifier_required_repairs: list[str]
+    verifier_regressions: list[str]
+    criterion_assessments: list[CriterionAssessment]
+    remaining_risks: list[RemainingRisk]
+    proof_gaps: list[ProofGap]
+    completion_decision: CompletionDecision | None
+    assembled_at: datetime
+```
+
+EvidenceAssembler derives provenance and strength from trusted state, executor/sandbox capabilities, and artifact integrity. Agent-provided IDs and claims are never sufficient by themselves. It validates the exact ConfigSnapshot and TaskSpec artifact identities/content before considering plan, patch, commands, or verdict. It preserves Verifier-reported proof gaps, repairs, and regressions instead of dropping negative findings. CompletionGate requires authoritative artifact references, exact task/run/config/base/patch identities, successful non-truncated commands, complete criterion mappings, and—when required—Verifier-owned command evidence bound to the final patch. A contradictory PASS with repairs/regressions or a detected Verifier-workspace mutation receives stable reason codes and cannot verify completion. Phase 1.5 cannot map one overall scripted verdict independently to multiple acceptance criteria; such tasks remain inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. Run lifecycle status and `verified_complete` are separate values. `fleet run/status --json` exposes a bounded evidence summary including changed paths, criterion assessments, command results, verdicts, repairs/regressions, risks, proof gaps, and completion reason codes; a mismatched bundle binding is an integrity error rather than a partial status response.
 
 ## 7. Event payload examples
 
-### Permission request
+### Current Phase 1.5 permission request
 
 ```json
 {
@@ -483,26 +676,22 @@ Only paths under the allowed `.fleet/` subset may appear.
   "payload": {
     "request_id": "perm_...",
     "intent_hash": "sha256:...",
-    "principal_role": "engineer",
     "action": "command.run",
-    "resource_summary": "uv run pytest -q in candidate workspace",
-    "risk": "low",
-    "choices": ["deny", "allow_once", "allow_run", "allow_always_project_exact"]
+    "resource": {"kind": "fake_side_effect", "identifier": "fixture://approval-proof"}
   }
 }
 ```
 
-### Verification result
+### Current Phase 1.5 verification result
 
 ```json
 {
   "event_type": "verification.completed",
   "payload": {
     "verdict": "pass",
-    "criteria_total": 3,
-    "criteria_passed": 3,
-    "evidence_artifact_ids": ["art_..."],
-    "verification_workspace_mutated": false
+    "verdict_artifact_id": "art_...",
+    "verification_workspace_mutated": false,
+    "security_level": "fake"
   }
 }
 ```
@@ -546,13 +735,14 @@ Do not include provider secrets, raw unbounded prompts, or hidden reasoning in J
 
 ## 9. Schema generation and compatibility
 
-- Generate JSON Schema from Pydantic models for repository configuration and stable CLI payloads.
+- Generate JSON Schema from Pydantic models for repository configuration, ConfigSnapshot, stable CLI payloads, RepositoryProfile, ProjectKnowledge, FleetPlan, EvidenceBundle, and FleetPatch.
 - Check generated schemas into `src/agent_fleet/schemas/` or a documented build output path.
 - Add a test that regeneration produces no diff.
+- Treat checked-in JSON Schema as the authoritative serialized wire shape, not as the complete authorization policy. Constraints expressible in JSON Schema, including ID/path patterns, lengths, enums, and collection bounds, must be generated there. Cross-field, graph, filesystem, current-state, registered-secret, base-hash, permission, and evidence-integrity rules remain mandatory Pydantic/application validators and must run before data is trusted.
 - Reject unsupported newer major/API versions with an actionable error.
 - Migrations apply to user state, not repository FleetSpec API versions.
 - During `v1alpha1`, incompatible changes are allowed only with explicit migration/documentation in the same change.
-- Snapshot parsed normalized configuration, not only raw YAML, for reproducibility.
+- Snapshot the exact bounded UTF-8 contents and individual hashes of FleetSpec plus every referenced configuration file; never bind only the parsed top-level YAML.
 
 ## 10. Prompt files
 

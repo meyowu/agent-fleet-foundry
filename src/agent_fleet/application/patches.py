@@ -8,6 +8,7 @@ from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import ApplyResult, Run, RunStatus, WorkflowStage
 from agent_fleet.ports.clock import Clock
+from agent_fleet.ports.config import ConfigurationPort
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.state_store import StateStore
 
@@ -18,11 +19,13 @@ class PatchService:
         state: StateStore,
         artifacts: ArtifactService,
         repository: RepositoryPort,
+        config: ConfigurationPort,
         clock: Clock,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
         self.repository = repository
+        self.config = config
         self.clock = clock
 
     def show(self, run_id: str) -> str:
@@ -50,6 +53,12 @@ class PatchService:
                 "Wait for READY_FOR_REVIEW and inspect the patch first.",
             )
         project = self.state.get_project(run.project_id)
+        if run.config_snapshot_hash is None:
+            raise FleetError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                "The run has no exact configuration snapshot binding.",
+                "Do not apply the patch; inspect state integrity and rerun the task.",
+            )
         patch_metadata = self.state.get_artifact(run.patch_artifact_id)
         if run.patch_sha256 != patch_metadata.sha256:
             raise FleetError(
@@ -57,7 +66,15 @@ class PatchService:
                 "The run patch hash does not match its registered artifact metadata.",
                 "Do not apply the patch; inspect state integrity and rerun the task.",
             )
-        current = self.repository.inspect(Path(project.canonical_root))
+        project_root = Path(project.canonical_root)
+        _, active_config = self.config.load_snapshot(project_root / ".fleet" / "fleet.yaml")
+        if self.config.snapshot_hash(active_config) != run.config_snapshot_hash:
+            raise FleetError(
+                ErrorCode.PATCH_TARGET_DIVERGED,
+                "The Fleet configuration changed after the candidate was created.",
+                "Review the configuration change and start a new Fleet run; nothing was applied.",
+            )
+        current = self.repository.inspect(project_root)
         if (
             current.identity_hash != project.identity_hash
             or current.head_revision != run.base_revision
@@ -84,7 +101,7 @@ class PatchService:
         )
         try:
             result = self.repository.apply_patch_to_target(
-                Path(project.canonical_root),
+                project_root,
                 patch,
                 project.identity_hash,
                 run.base_revision,

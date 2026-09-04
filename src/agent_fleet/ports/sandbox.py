@@ -5,6 +5,7 @@ from typing import Protocol
 from agent_fleet.domain.models import (
     ExecRequest,
     ExecResult,
+    SandboxCapabilities,
     SandboxHandle,
     SandboxSecurityLevel,
     SandboxSpec,
@@ -12,6 +13,9 @@ from agent_fleet.domain.models import (
 
 
 class SandboxProvider(Protocol):
+    @property
+    def capabilities(self) -> SandboxCapabilities: ...
+
     @property
     def security_level(self) -> SandboxSecurityLevel: ...
 

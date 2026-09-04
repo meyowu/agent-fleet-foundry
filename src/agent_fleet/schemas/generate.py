@@ -8,16 +8,34 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from agent_fleet.domain.config import FleetSpec, VerificationProfile
-from agent_fleet.domain.models import JsonEnvelope, TaskSpec, ToolIntent, VerifierVerdict
+from agent_fleet.domain.config import ConfigSnapshot, FleetSpec, VerificationProfile
+from agent_fleet.domain.evidence import CommandEvidence, EvidenceBundle
+from agent_fleet.domain.fleet_patch import FleetPatch
+from agent_fleet.domain.fleet_plan import FleetPlan
+from agent_fleet.domain.models import (
+    JsonEnvelope,
+    SandboxCapabilities,
+    TaskSpec,
+    ToolIntent,
+    VerifierVerdict,
+)
+from agent_fleet.domain.repository_profile import ProjectKnowledge, RepositoryProfile
 
 SCHEMAS: dict[str, type[BaseModel]] = {
     "fleet.schema.json": FleetSpec,
     "verification-profile.schema.json": VerificationProfile,
+    "config-snapshot.schema.json": ConfigSnapshot,
     "cli-envelope.schema.json": JsonEnvelope,
     "task-spec.schema.json": TaskSpec,
     "tool-intent.schema.json": ToolIntent,
     "verifier-verdict.schema.json": VerifierVerdict,
+    "repository-profile.schema.json": RepositoryProfile,
+    "project-knowledge.schema.json": ProjectKnowledge,
+    "fleet-plan.schema.json": FleetPlan,
+    "sandbox-capabilities.schema.json": SandboxCapabilities,
+    "command-evidence.schema.json": CommandEvidence,
+    "evidence-bundle.schema.json": EvidenceBundle,
+    "fleet-patch.schema.json": FleetPatch,
 }
 
 

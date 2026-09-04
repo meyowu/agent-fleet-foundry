@@ -1,0 +1,66 @@
+{
+  "$defs": {
+    "SandboxSecurityLevel": {
+      "enum": [
+        "fake",
+        "isolated",
+        "unsafe_host"
+      ],
+      "title": "SandboxSecurityLevel",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "executes_code": {
+      "title": "Executes Code",
+      "type": "boolean"
+    },
+    "isolation_enforced": {
+      "title": "Isolation Enforced",
+      "type": "boolean"
+    },
+    "provider": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Provider",
+      "type": "string"
+    },
+    "security_level": {
+      "$ref": "#/$defs/SandboxSecurityLevel"
+    },
+    "supported_network_modes": {
+      "items": {
+        "enum": [
+          "none",
+          "approved-unrestricted"
+        ],
+        "type": "string"
+      },
+      "maxItems": 2,
+      "minItems": 1,
+      "title": "Supported Network Modes",
+      "type": "array"
+    },
+    "supports_recovery": {
+      "title": "Supports Recovery",
+      "type": "boolean"
+    },
+    "supports_resource_limits": {
+      "title": "Supports Resource Limits",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "provider",
+    "security_level",
+    "isolation_enforced",
+    "executes_code",
+    "supported_network_modes",
+    "supports_resource_limits",
+    "supports_recovery"
+  ],
+  "title": "SandboxCapabilities",
+  "type": "object"
+}

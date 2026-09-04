@@ -1,0 +1,515 @@
+{
+  "$defs": {
+    "CommandEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_instance_id": {
+          "pattern": "^agent_[0-9a-f]{32}$",
+          "title": "Agent Instance Id",
+          "type": "string"
+        },
+        "argv": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Argv",
+          "type": "array"
+        },
+        "candidate_patch_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidate Patch Sha256"
+        },
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "config_snapshot_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Snapshot Sha256",
+          "type": "string"
+        },
+        "cwd": {
+          "title": "Cwd",
+          "type": "string"
+        },
+        "evidence_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "executable": {
+          "title": "Executable",
+          "type": "string"
+        },
+        "exit_code": {
+          "title": "Exit Code",
+          "type": "integer"
+        },
+        "output_truncated": {
+          "title": "Output Truncated",
+          "type": "boolean"
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sandbox_provider": {
+          "title": "Sandbox Provider",
+          "type": "string"
+        },
+        "sandbox_security_level": {
+          "$ref": "#/$defs/SandboxSecurityLevel"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "strength": {
+          "$ref": "#/$defs/EvidenceStrength"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9a-f]{32}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "timed_out": {
+          "title": "Timed Out",
+          "type": "boolean"
+        },
+        "transcript_artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Transcript Artifact Id",
+          "type": "string"
+        },
+        "workspace_base_revision": {
+          "title": "Workspace Base Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "run_id",
+        "task_id",
+        "agent_instance_id",
+        "executable",
+        "argv",
+        "cwd",
+        "sandbox_provider",
+        "sandbox_security_level",
+        "strength",
+        "exit_code",
+        "timed_out",
+        "output_truncated",
+        "transcript_artifact_id",
+        "workspace_base_revision",
+        "config_snapshot_sha256",
+        "started_at",
+        "completed_at"
+      ],
+      "title": "CommandEvidence",
+      "type": "object"
+    },
+    "CompletionDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "effective_verdict": {
+          "$ref": "#/$defs/Verdict"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "verified_complete": {
+          "title": "Verified Complete",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "verified_complete",
+        "effective_verdict",
+        "reason_codes"
+      ],
+      "title": "CompletionDecision",
+      "type": "object"
+    },
+    "CriterionAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "evidence_artifact_ids": {
+          "items": {
+            "pattern": "^art_[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "title": "Evidence Artifact Ids",
+          "type": "array"
+        },
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "verdict",
+        "explanation"
+      ],
+      "title": "CriterionAssessment",
+      "type": "object"
+    },
+    "EvidenceStrength": {
+      "enum": [
+        "simulated",
+        "observed",
+        "independently_verified"
+      ],
+      "title": "EvidenceStrength",
+      "type": "string"
+    },
+    "FleetStrategy": {
+      "enum": [
+        "direct",
+        "single_engineer",
+        "engineer_verifier",
+        "parallel_engineers",
+        "research_architect_engineer_verifier"
+      ],
+      "title": "FleetStrategy",
+      "type": "string"
+    },
+    "ProofGap": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "required_strength": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvidenceStrength"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "code",
+        "description"
+      ],
+      "title": "ProofGap",
+      "type": "object"
+    },
+    "RemainingRisk": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "description"
+      ],
+      "title": "RemainingRisk",
+      "type": "object"
+    },
+    "SandboxSecurityLevel": {
+      "enum": [
+        "fake",
+        "isolated",
+        "unsafe_host"
+      ],
+      "title": "SandboxSecurityLevel",
+      "type": "string"
+    },
+    "Verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "assembled_at": {
+      "format": "date-time",
+      "title": "Assembled At",
+      "type": "string"
+    },
+    "base_revision": {
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "changed_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Changed Paths",
+      "type": "array"
+    },
+    "command_evidence": {
+      "items": {
+        "$ref": "#/$defs/CommandEvidence"
+      },
+      "title": "Command Evidence",
+      "type": "array"
+    },
+    "completion_decision": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CompletionDecision"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "config_snapshot_artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Config Snapshot Artifact Id",
+      "type": "string"
+    },
+    "config_snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Snapshot Sha256",
+      "type": "string"
+    },
+    "criterion_assessments": {
+      "items": {
+        "$ref": "#/$defs/CriterionAssessment"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Criterion Assessments",
+      "type": "array"
+    },
+    "fleet_plan_artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Fleet Plan Artifact Id",
+      "type": "string"
+    },
+    "fleet_plan_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Fleet Plan Sha256",
+      "type": "string"
+    },
+    "fleet_strategy": {
+      "$ref": "#/$defs/FleetStrategy"
+    },
+    "kind": {
+      "const": "EvidenceBundle",
+      "default": "EvidenceBundle",
+      "title": "Kind",
+      "type": "string"
+    },
+    "patch_artifact_id": {
+      "anyOf": [
+        {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Patch Artifact Id"
+    },
+    "patch_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Patch Sha256"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "proof_gaps": {
+      "items": {
+        "$ref": "#/$defs/ProofGap"
+      },
+      "title": "Proof Gaps",
+      "type": "array"
+    },
+    "remaining_risks": {
+      "items": {
+        "$ref": "#/$defs/RemainingRisk"
+      },
+      "title": "Remaining Risks",
+      "type": "array"
+    },
+    "reported_verdict": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Verdict"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "required_evidence": {
+      "items": {
+        "enum": [
+          "canonical_patch",
+          "command_evidence",
+          "control_plane_plan",
+          "independent_verifier_verdict"
+        ],
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Required Evidence",
+      "type": "array"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "task_spec_artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Task Spec Artifact Id",
+      "type": "string"
+    },
+    "task_spec_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Task Spec Sha256",
+      "type": "string"
+    },
+    "verifier_agent_instance_id": {
+      "anyOf": [
+        {
+          "pattern": "^agent_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Verifier Agent Instance Id"
+    },
+    "verifier_evidence_artifact_ids": {
+      "items": {
+        "pattern": "^art_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "title": "Verifier Evidence Artifact Ids",
+      "type": "array"
+    },
+    "verifier_regressions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Verifier Regressions",
+      "type": "array"
+    },
+    "verifier_required_repairs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Verifier Required Repairs",
+      "type": "array"
+    },
+    "verifier_verdict_artifact_id": {
+      "anyOf": [
+        {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Verifier Verdict Artifact Id"
+    },
+    "verifier_workspace_mutated": {
+      "default": false,
+      "title": "Verifier Workspace Mutated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "run_id",
+    "project_id",
+    "task_id",
+    "base_revision",
+    "config_snapshot_artifact_id",
+    "config_snapshot_sha256",
+    "task_spec_artifact_id",
+    "task_spec_sha256",
+    "fleet_plan_artifact_id",
+    "fleet_plan_sha256",
+    "fleet_strategy",
+    "required_evidence",
+    "criterion_assessments",
+    "assembled_at"
+  ],
+  "title": "EvidenceBundle",
+  "type": "object"
+}

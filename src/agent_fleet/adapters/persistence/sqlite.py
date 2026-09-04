@@ -230,7 +230,7 @@ class SqliteStateStore:
                     instance.agent_instance_id,
                     instance.run_id,
                     instance.task_id,
-                    instance.role.value,
+                    str(instance.role),
                     instance.model_dump_json(),
                 ),
             )

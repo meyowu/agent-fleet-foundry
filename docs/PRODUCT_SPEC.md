@@ -2,9 +2,13 @@
 
 ## 1. Product definition
 
-Agent Fleet is a local-first, bring-your-own-key command-line product that bootstraps and operates a versioned, reviewable agent organization around a software repository.
+Agent Fleet is a local-first, bring-your-own-key Chief-of-Staff command-line product that bootstraps, operates, secures, and evolves a versioned, reviewable, project-specific agent organization around a software repository.
 
-The user’s primary interface is one persistent Chief of Staff (CoS). The CoS understands goals, prepares bounded task specifications, selects workflows, delegates work to specialist agents, tracks evidence, and presents results. Specialists are ephemeral by default. The initial fleet contains:
+The positioning is intentionally narrower than “multi-agent framework”:
+
+> A local-first, BYOK Chief-of-Staff CLI that bootstraps, operates, secures, and evolves a project-specific agent organization.
+
+The user’s primary interface is one persistent Chief of Staff (CoS). The CoS understands goals, prepares bounded task specifications, proposes the smallest sufficient team and workflow, delegates work to specialist agents, tracks evidence, and presents results. Specialists are ephemeral by default. CoS, Engineer, and Verifier are the initial built-in role templates, not an always-running fixed roster:
 
 - **Chief of Staff** — persistent coordinator; scopes and delegates but does not directly execute arbitrary shell commands or silently alter policy.
 - **Engineer** — per-task implementation worker; operates only in the task’s isolated candidate workspace.
@@ -41,6 +45,30 @@ CoS:
 ```
 
 Internally the product may use multiple models and agents. Externally it should feel like a reliable senior technical chief of staff, not a chat room the user must manage.
+
+### 2.1 Differentiated product contract
+
+The product has differentiated value only when the following six properties are real, observable, and enforced at the stated boundary. A prompt or model claim does not count as implementation.
+
+1. **Repository-aware bootstrap.** `fleet init .` identifies repository and subproject boundaries, ecosystems, build/package systems, and exact candidate test/lint/build commands without executing untrusted project code. It produces a provenance-bearing `RepositoryProfile`, factual `ProjectKnowledge`, a reviewable FleetSpec proposal, an explicit sandbox capability summary, and a disposable canary report containing the patch and evidence.
+2. **Adaptive Fleet.** CoS proposes a typed `FleetPlan` for the smallest sufficient topology. Valid shapes include direct handling, one Engineer, Engineer plus independent Verifier, multiple parallel Engineers, and Researcher plus Architect plus Engineer plus Verifier. The control plane validates configured roles, dependencies, budgets, concurrency, workspace ownership, and required assurance before scheduling. Roles are created for the task and do not gain authority merely from their names.
+3. **Independent permission control plane.** Every runtime-requested action passes through ToolGateway and an injected PermissionBroker, with exactly `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`. The user can ultimately allow once, allow for a run, persist an exact project scope, revoke it, and inspect why a rule matched. No harness-native tool may bypass this boundary.
+4. **Independent sandbox abstraction.** The control plane selects a provider only when its declared capabilities satisfy the task requirements. Docker is the first recommended real provider; Modal/hosted providers are later adapters; local host execution is explicitly named unsafe. Harnesses do not receive host paths or sandbox handles and do not choose their own execution boundary.
+5. **Evidence-first delivery.** A structured `EvidenceBundle` binds exact content-addressed ConfigSnapshot and TaskSpec artifacts, changed files, canonical patch, commands, test/build results, verifier identity and verdict, risks, and proof gaps to the task, plan, configuration, and base revision. A deterministic `CompletionGate` computes assurance from authoritative control-plane records, and status output makes the reason codes and proof gaps reviewable. Simulated output and Agent assertions cannot satisfy requirements for executed or independently verified proof.
+6. **Versioned Fleet evolution.** A conversational organization change produces a `FleetPatch` proposal, never a silent edit. The user can inspect semantic and textual diffs, apply an exact validated change, and roll it back through a new audited operation. FleetPatch cannot alter trust, secrets, audit history, hard denies, approval ownership, or sandbox hard limits.
+
+The implementation status is deliberately explicit:
+
+| Differentiator | Phase 0/1 baseline | Phase 1.5 alignment | Complete product milestone |
+|---|---|---|---|
+| Repository-aware bootstrap | Partial: Git boundary and generic config/canary creation | Static profile, knowledge artifacts, detected-command proposal, no-write diff preview, and disposable canary fixture creation | Isolated canary execution plus bootstrap EvidenceBundle in Phase 3 |
+| Adaptive Fleet | Fixed three-role workflow | Validated plan plus direct/single-Engineer/Engineer+Verifier offline paths | Parallel and specialist scheduling after Phase 1.5 |
+| Permission control plane | Partial inline policy and allow-once | Independent broker contract and no runtime host-path bypass | Run/persistent exact trust, explain, revoke in Phase 4 |
+| Sandbox abstraction | Fake provider protocol only | Explicit capability contract and fail-closed matching | Docker in Phase 3; remote providers later |
+| Evidence-first delivery | Hashed artifacts, but no completion gate | Exact ConfigSnapshot/TaskSpec bindings, EvidenceBundle, inspectable proof gaps, and simulated-proof-aware CompletionGate | Executed Docker evidence in Phase 3 and full workflow in Phase 5 |
+| Versioned evolution | Versioned `.fleet/` files only | FleetPatch schema and protected-path validator | Proposal/diff/apply/rollback in Phase 6 |
+
+“Partial” is not shorthand for complete. CLI and documentation must label the fake runtime, fake sandbox, simulated evidence, and roadmap-only behaviors directly.
 
 ## 3. Target users
 
@@ -103,28 +131,30 @@ fleet init .
 Interactive flow:
 
 1. Locate and validate the Git repository.
-2. Inspect language/build/test signals without executing untrusted project code.
-3. Ask for or accept via flags:
+2. Build a deterministic `RepositoryProfile` by inspecting bounded language, manifest, lockfile, build, test, lint, CI, and repository-boundary signals without following escaping symlinks or executing untrusted project code.
+3. Show each detected command with its exact executable/argv/cwd, source file, confidence, and ambiguity. Detection is not permission to execute it.
+4. Generate factual `ProjectKnowledge` from observed signals, with provenance and unknowns rather than invented architecture claims.
+5. Ask for or accept via flags:
    - model/provider identifier;
    - credential reference;
    - sandbox backend;
    - trust mode.
-4. Show the exact initial access request:
+6. Show the exact initial access request:
    - read repository;
    - write `.fleet/` only after review;
    - create state outside the repository;
    - create temporary worktrees and containers;
    - call the configured model provider from the control plane.
-5. Generate proposed `.fleet/` files in a staging area.
-6. Run a bootstrap canary in a generated disposable fixture repository, not in the user’s business code.
-7. The canary performs an end-to-end minimal code change:
+7. Generate repository-specific proposed `.fleet/` files in a staging area and show the exact diff.
+8. Run a bootstrap canary in a generated disposable fixture repository, not in the user’s business code.
+9. The canary performs an end-to-end minimal code change:
    - a tiny fixture contains a failing behavioral test;
    - Engineer produces a candidate fix;
    - Verifier reruns validation independently;
    - CoS reports the patch, events, and evidence.
-8. Show the proposed repository configuration diff.
-9. Apply `.fleet/` only after user confirmation.
-10. Enter or offer the CoS chat experience.
+10. Present a `BootstrapReport` binding the profile, Project Knowledge, FleetSpec proposal, sandbox capabilities, canary FleetPlan, patch, command evidence, verifier verdict, risks, and proof gaps.
+11. Apply `.fleet/` only after user confirmation.
+12. Enter or offer the CoS chat experience.
 
 Non-interactive form must be available for CI/testing:
 
@@ -172,6 +202,16 @@ Command:
 ```bash
 fleet run "Add validation for empty project names and include a regression test."
 ```
+
+Before execution, CoS proposes a typed FleetPlan. The deterministic planner accepts only configured roles and supported topology, then chooses or validates the smallest sufficient strategy:
+
+- `direct` for an answer or control-plane-only result with no worker side effect;
+- `single_engineer` for a bounded implementation whose requested assurance does not claim independent verification;
+- `engineer_verifier` for the default verified code-change path;
+- `parallel_engineers` for independent shards with an explicit join/merge policy;
+- a specialist DAG such as Researcher -> Architect -> Engineer -> Verifier when the repository and task justify it.
+
+The plan records why each role is needed. Unplanned roles are not instantiated, and a role name never grants tools or permission. Parallel and specialist scheduling are post-Phase-1.5 behavior even though the FleetPlan schema must represent them.
 
 Expected stages:
 
@@ -293,7 +333,9 @@ Requirements:
 - record before/after hashes and support rollback;
 - never modify protected user trust policy, secret references, audit records, sandbox hard limits, or approval ownership through FleetPatch.
 
-## 6. Initial role definitions
+## 6. Built-in role templates
+
+These definitions are reusable responsibility templates. They do not require every run to create all three instances, do not prohibit repository-defined specialist roles, and do not confer authority outside the effective task, workflow, permission, and sandbox constraints. CoS proposes a team; the deterministic FleetPlan validator decides whether that proposal is executable.
 
 ## 6.1 Chief of Staff
 
@@ -349,7 +391,7 @@ Responsibilities:
 Default restrictions:
 
 - no ability to change the accepted candidate artifact;
-- any verifier sandbox filesystem changes are discarded;
+- verifier write intents are denied; any future permitted scratch changes remain disposable;
 - no self-conversion into Engineer;
 - no relaxation of acceptance criteria;
 - no external side effects.
@@ -440,6 +482,13 @@ The canary is successful only when the candidate behavior passes independently a
 
 ## 10. Functional requirements
 
+- Deterministic, non-executing repository profiling with provenance, confidence, ambiguity, and canonical hashes.
+- Repository-specific FleetSpec and Project Knowledge proposals derived only from observed evidence.
+- A persisted, validated FleetPlan that creates only the roles required for the selected strategy.
+- Runtime inputs contain logical identifiers and bounded artifacts, never host paths or sandbox handles.
+- An independent PermissionBroker is the sole authorization decision point for runtime-requested actions.
+- Sandbox requirements are matched against explicit provider capabilities; unsupported requirements fail closed.
+- An authoritative EvidenceBundle and CompletionGate distinguish operational completion from verified completion.
 - Durable run and approval state in SQLite.
 - Append-only event history with redaction.
 - Stable project identity that is not based only on an absolute path.
@@ -477,10 +526,10 @@ The canary is successful only when the candidate behavior passes independently a
 A new user can:
 
 1. install the package and run `fleet doctor`;
-2. initialize a Git repository with a provider/model reference and Docker sandbox;
-3. complete the disposable bootstrap canary;
+2. initialize a Git repository and inspect the evidence-backed repository profile, detected commands, Project Knowledge, and proposed configuration;
+3. initialize with a provider/model reference and Docker sandbox, then complete the disposable bootstrap canary;
 4. enter `fleet chat` and request a small code change;
-5. observe CoS -> Engineer -> Verifier stages;
+5. inspect the selected FleetPlan and observe that only its required role instances run;
 6. approve a narrowly scoped action once, for the run, or always for that exact project scope;
 7. receive a patch, test evidence, verifier verdict, events, and artifact hashes;
 8. restart the CLI and inspect or resume the run;
@@ -488,6 +537,8 @@ A new user can:
 10. request a change to the fleet configuration, inspect the proposed FleetPatch, and apply or reject it;
 11. revoke a persistent permission rule;
 12. run the complete default test suite without a real model, network, or Docker.
+
+For every run, the user can also distinguish `COMPLETED` as lifecycle state from `verified_complete` as an evidence-derived assurance decision. A run with simulated command output or unresolved required evidence never reports verified completion.
 
 A security reviewer can demonstrate that:
 

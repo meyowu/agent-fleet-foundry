@@ -1,0 +1,141 @@
+{
+  "$defs": {
+    "EvidenceStrength": {
+      "enum": [
+        "simulated",
+        "observed",
+        "independently_verified"
+      ],
+      "title": "EvidenceStrength",
+      "type": "string"
+    },
+    "SandboxSecurityLevel": {
+      "enum": [
+        "fake",
+        "isolated",
+        "unsafe_host"
+      ],
+      "title": "SandboxSecurityLevel",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "agent_instance_id": {
+      "pattern": "^agent_[0-9a-f]{32}$",
+      "title": "Agent Instance Id",
+      "type": "string"
+    },
+    "argv": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Argv",
+      "type": "array"
+    },
+    "candidate_patch_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Candidate Patch Sha256"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "config_snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Snapshot Sha256",
+      "type": "string"
+    },
+    "cwd": {
+      "title": "Cwd",
+      "type": "string"
+    },
+    "evidence_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Evidence Id",
+      "type": "string"
+    },
+    "executable": {
+      "title": "Executable",
+      "type": "string"
+    },
+    "exit_code": {
+      "title": "Exit Code",
+      "type": "integer"
+    },
+    "output_truncated": {
+      "title": "Output Truncated",
+      "type": "boolean"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "sandbox_provider": {
+      "title": "Sandbox Provider",
+      "type": "string"
+    },
+    "sandbox_security_level": {
+      "$ref": "#/$defs/SandboxSecurityLevel"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "strength": {
+      "$ref": "#/$defs/EvidenceStrength"
+    },
+    "task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "timed_out": {
+      "title": "Timed Out",
+      "type": "boolean"
+    },
+    "transcript_artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Transcript Artifact Id",
+      "type": "string"
+    },
+    "workspace_base_revision": {
+      "title": "Workspace Base Revision",
+      "type": "string"
+    }
+  },
+  "required": [
+    "evidence_id",
+    "run_id",
+    "task_id",
+    "agent_instance_id",
+    "executable",
+    "argv",
+    "cwd",
+    "sandbox_provider",
+    "sandbox_security_level",
+    "strength",
+    "exit_code",
+    "timed_out",
+    "output_truncated",
+    "transcript_artifact_id",
+    "workspace_base_revision",
+    "config_snapshot_sha256",
+    "started_at",
+    "completed_at"
+  ],
+  "title": "CommandEvidence",
+  "type": "object"
+}

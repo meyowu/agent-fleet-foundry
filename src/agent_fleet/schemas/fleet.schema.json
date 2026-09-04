@@ -33,21 +33,18 @@
         },
         "mayDelegateTo": {
           "items": {
-            "enum": [
-              "engineer",
-              "verifier"
-            ],
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]*$",
             "type": "string"
           },
           "title": "Maydelegateto",
           "type": "array"
         },
         "role": {
-          "enum": [
-            "chief-of-staff",
-            "software-engineer",
-            "verifier"
-          ],
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
           "title": "Role",
           "type": "string"
         }
@@ -66,15 +63,14 @@
       "additionalProperties": false,
       "properties": {
         "agents": {
-          "additionalProperties": {
-            "$ref": "#/$defs/AgentRequest"
+          "patternProperties": {
+            "^[a-z][a-z0-9_-]*$": {
+              "$ref": "#/$defs/AgentRequest"
+            }
           },
           "propertyNames": {
-            "enum": [
-              "cos",
-              "engineer",
-              "verifier"
-            ]
+            "maxLength": 64,
+            "minLength": 1
           },
           "title": "Agents",
           "type": "object"
@@ -96,11 +92,14 @@
           "$ref": "#/$defs/SandboxRequest"
         },
         "workflows": {
-          "additionalProperties": {
-            "$ref": "#/$defs/WorkflowRequest"
+          "patternProperties": {
+            "^[a-z][a-z0-9_-]*$": {
+              "$ref": "#/$defs/WorkflowRequest"
+            }
           },
           "propertyNames": {
-            "const": "code-change"
+            "maxLength": 64,
+            "minLength": 1
           },
           "title": "Workflows",
           "type": "object"
@@ -162,19 +161,16 @@
       "additionalProperties": false,
       "properties": {
         "action": {
-          "enum": [
-            "repo.read",
-            "workspace.write",
-            "command.run"
-          ],
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
           "title": "Action",
           "type": "string"
         },
         "principalRole": {
-          "enum": [
-            "engineer",
-            "verifier"
-          ],
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
           "title": "Principalrole",
           "type": "string"
         },

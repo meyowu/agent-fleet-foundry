@@ -21,6 +21,7 @@
     },
     "evidence_artifact_ids": {
       "items": {
+        "pattern": "^art_[0-9a-f]{32}$",
         "type": "string"
       },
       "title": "Evidence Artifact Ids",

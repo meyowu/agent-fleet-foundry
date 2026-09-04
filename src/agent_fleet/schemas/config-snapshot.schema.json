@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "ConfigSnapshotFile": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "maxLength": 512000,
+          "title": "Content",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "content"
+      ],
+      "title": "ConfigSnapshotFile",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/ConfigSnapshotFile"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "title": "Files",
+      "type": "array"
+    },
+    "kind": {
+      "const": "ConfigSnapshot",
+      "default": "ConfigSnapshot",
+      "title": "Kind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "files"
+  ],
+  "title": "ConfigSnapshot",
+  "type": "object"
+}

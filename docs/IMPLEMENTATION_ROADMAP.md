@@ -4,6 +4,8 @@
 
 Implement phases in order. Every phase must leave a runnable, tested repository and produce an updated ExecPlan outcome. Do not begin a later phase by creating empty placeholder abstractions across the whole system. Add only the contracts required by the current vertical slice, while preserving the specified architectural boundaries.
 
+Current boundary as of 2026-09-04: Phase 0/1 and the Phase 1.5 offline North-Star foundation are implemented. Phase 2–7 are roadmap and must not be described as implemented. Provider integration and Docker execution remain prohibited until the final Phase 1.5 quality gates recorded in its ExecPlan pass.
+
 For each phase:
 
 1. create or update the active ExecPlan;
@@ -146,11 +148,58 @@ Persistent always-allow comes in Phase 4, but the domain shape may be introduced
 
 A clean subprocess-level E2E test installs/runs the CLI against a temporary Git fixture and verifies the resulting patch behavior. README clearly labels runtime and sandbox as fake in this phase.
 
+## Phase 1.5 — North-Star alignment
+
+### Goal
+
+Correct the foundational abstractions around the six product differentiators before introducing a real model harness or execution sandbox. The result remains completely offline, but repository intelligence, adaptive planning, permission separation, sandbox capability claims, evidence assurance, and FleetPatch boundaries become real typed contracts with an observable vertical slice.
+
+### Deliverables
+
+- Normative product positioning and ADR: a local-first, BYOK Chief-of-Staff CLI for a project-specific agent organization, not a generic multi-agent framework.
+- A deterministic `RepositoryProfiler` for common Python, Node, Go, Rust, Maven, Gradle, Make, and CI signals that never executes repository code.
+- Content-addressed `RepositoryProfile` and factual `ProjectKnowledge` artifacts with provenance, confidence, ambiguities, an independently checked source-profile semantic hash, and distinct serialized artifact hashes.
+- Exact content-addressed `ConfigSnapshot` and `TaskSpec` artifacts bound to Project/Run/EvidenceBundle, covering every referenced `.fleet/` file rather than only the top-level parsed FleetSpec.
+- Repository-specific verification-command proposals; missing or ambiguous commands are not invented.
+- Extensible validated RoleId/WorkflowId values instead of a security-irrelevant closed role roster.
+- An immutable `FleetPlan` with nodes, dependencies, scopes, workspace ownership, budgets, concurrency, verification requirements, and deterministic validation.
+- Offline scheduling for `direct`, `single_engineer`, and `engineer_verifier`, creating only planned AgentInstances. Parallel and specialist DAGs are representable but not executed in this phase.
+- A separately injected project-owned `PermissionBroker`; ToolGateway retains canonicalization/execution and all unplanned actions default deny.
+- Runtime invocations contain no host paths, sandbox handles, credentials, grants, or direct executor objects. Verifier mutation is expressed as a denied intent.
+- Immutable `SandboxCapabilities` plus fail-closed provider capability matching. FakeSandbox explicitly declares no isolation, no code execution, and simulated evidence.
+- Authoritative command/criterion/risk/proof-gap models, `EvidenceBundle`, and `CompletionGate`, with workflow completion distinct from verified completion.
+- Evidence-aware `fleet run/status` output that exposes changed paths, command results, verdicts, risks, proof gaps, and deterministic completion reason codes while rejecting a corrupt bundle binding.
+- Strict FleetPatch schema and protected-path/base-hash validation for the minimum `agents/**`, `workflows/**`, named project files, and `.fleet/README.md` set only; `.fleet/skills/**`, persistence, and operational commands remain Phase 6.
+- Contract tests for every concrete Phase 1 adapter plus repository-profile, plan, permission, evidence, sandbox, and FleetPatch security tests.
+
+### Required tests
+
+- Python/uv and Node/package-script fixtures yield distinct deterministic profiles and exact evidence-backed candidate commands.
+- Profiling does not execute malicious Git hooks, package scripts, Make targets, manifest payloads, or escaping symlinks.
+- FleetPlan rejects cycles, unknown roles, excessive concurrency, conflicting writers, direct side effects, and unsupported assurance claims.
+- Direct, single-Engineer, and Engineer+Verifier paths create only planned role instances and preserve bounded repair/approval behavior.
+- Every runtime action has a canonical intent, PermissionDecision, and audit event; verifier writes are denied before mutation.
+- Runtime payloads contain no absolute host path or sandbox handle.
+- Fake command PASS remains simulated and cannot set `verified_complete=true`.
+- Evidence requirements map to content-addressed authoritative artifacts and reject stale/tampered identities.
+- Referenced configuration drift is rejected before run creation even when Git's untracked status text is unchanged; missing/foreign/corrupt TaskSpec and ConfigSnapshot bindings fail closed.
+- Case-insensitive filesystem aliases cannot place Fleet state inside a repository or supply a repository-controlled host executable.
+- FleetPatch rejects protected and escaping paths plus base-hash conflicts.
+- Existing Phase 0/1 tests, migration data, patch guards, redaction, recovery, and subprocess E2E remain green.
+
+### Acceptance criteria
+
+`fleet init --json` exposes repository profile, Project Knowledge, sandbox capabilities, and artifact references. An offline run persists a validated FleetPlan and EvidenceBundle. The fake path may reach review, but reports `verified_complete=false` with a simulated-evidence proof gap. All formatting, lint, strict type checking, unit/contract/integration/E2E, schema-drift, and build checks pass without network, API keys, Docker, or project-code execution by FakeSandbox.
+
+Phase 1.5 is a hard gate: Phase 2 and Phase 3 must not begin until these acceptance criteria pass.
+
 ## Phase 2 — BYOK provider configuration and PydanticAI runtime adapter
 
 ### Goal
 
 Replace scripted role output with a real model/harness adapter while preserving deterministic tests and system-owned orchestration.
+
+Prerequisite: Phase 1.5 is complete. The adapter consumes validated RepositoryProfile/ProjectKnowledge/TaskSpec/FleetPlan context, exposes only ToolGateway-backed tools, and never receives a host path, sandbox handle, credential value, grant, or alternate executor.
 
 ### Deliverables
 
@@ -303,7 +352,7 @@ Implement every relevant test listed in `docs/SECURITY_MODEL.md`, especially:
 
 A user can approve a test command once, for the run, or persist an exact project rule; inspect why it matched; revoke it; and observe that broader/different actions still prompt or fail.
 
-## Phase 5 — Complete real CoS -> Engineer -> Verifier workflow and chat
+## Phase 5 — Complete real adaptive CoS workflow and chat
 
 ### Goal
 
@@ -313,7 +362,8 @@ Deliver the core user experience with a persistent CoS interface and bounded spe
 
 - `fleet chat` line-oriented REPL with durable thread/run references.
 - CoS turns user messages into validated TaskSpec drafts.
-- Explicit code-change workflow uses:
+- Validated adaptive planning chooses the smallest supported team; direct, single-Engineer, Engineer+Verifier, parallel Engineer, and declared specialist DAG paths have explicit assurance and join semantics.
+- The verified code-change workflow uses:
   - a fresh Engineer invocation per iteration;
   - separate candidate workspace;
   - actual patch extraction by control plane;
@@ -353,6 +403,8 @@ A user can initialize a small real repository, ask CoS for a code change, let th
 ### Goal
 
 Allow the user to ask CoS to change agent roles/workflows/skills while maintaining a protected policy boundary.
+
+This phase turns the Phase 1.5 FleetPatch schema/path/base-hash validator into an operational, persisted workflow. It must reuse that contract rather than introduce an incompatible mutation format.
 
 ### Deliverables
 

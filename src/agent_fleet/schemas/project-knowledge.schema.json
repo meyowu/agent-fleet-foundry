@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "description": "Portable project facts derived entirely from a RepositoryProfile.",
+  "properties": {
+    "ambiguities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Ambiguities",
+      "type": "array"
+    },
+    "build_systems": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Build Systems",
+      "type": "array"
+    },
+    "ecosystems": {
+      "items": {
+        "enum": [
+          "python",
+          "node",
+          "go",
+          "rust",
+          "maven",
+          "gradle",
+          "make",
+          "github-actions"
+        ],
+        "type": "string"
+      },
+      "title": "Ecosystems",
+      "type": "array"
+    },
+    "repository_boundaries": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Repository Boundaries",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source_profile_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Source Profile Sha256",
+      "type": "string"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "verification_commands": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Verification Commands",
+      "type": "array"
+    }
+  },
+  "required": [
+    "source_profile_sha256",
+    "summary",
+    "ecosystems",
+    "build_systems",
+    "repository_boundaries",
+    "verification_commands",
+    "ambiguities"
+  ],
+  "title": "ProjectKnowledge",
+  "type": "object"
+}

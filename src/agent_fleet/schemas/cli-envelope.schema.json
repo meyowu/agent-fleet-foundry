@@ -46,6 +46,7 @@
       "type": "string"
     },
     "correlation_id": {
+      "pattern": "^corr_[0-9a-f]{32}$",
       "title": "Correlation Id",
       "type": "string"
     },

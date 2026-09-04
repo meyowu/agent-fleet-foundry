@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import JsonValue
 
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.evidence import EvidenceAssembler
 from agent_fleet.application.gateway import ToolGateway
+from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.resources import ResourceService
+from agent_fleet.domain.config import ConfigSnapshot
 from agent_fleet.domain.errors import (
     ApprovalDeniedError,
     ApprovalRequiredError,
     ErrorCode,
     FleetError,
 )
+from agent_fleet.domain.evidence import EvidenceBundle
+from agent_fleet.domain.fleet_plan import FleetStrategy
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     AcceptanceCriterion,
@@ -29,6 +34,7 @@ from agent_fleet.domain.models import (
     FleetEvent,
     Run,
     RunStatus,
+    SandboxCapabilities,
     SandboxSpec,
     TaskSpec,
     Verdict,
@@ -56,6 +62,8 @@ class WorkflowEngine:
         artifacts: ArtifactService,
         gateway: ToolGateway,
         resources: ResourceService,
+        planner: FleetPlanner,
+        evidence: EvidenceAssembler,
         config: ConfigurationPort,
         clock: Clock,
         ids: IdGenerator,
@@ -68,6 +76,8 @@ class WorkflowEngine:
         self.artifacts = artifacts
         self.gateway = gateway
         self.resources = resources
+        self.planner = planner
+        self.evidence = evidence
         self.config = config
         self.clock = clock
         self.ids = ids
@@ -82,19 +92,27 @@ class WorkflowEngine:
         sandbox_name: str,
         fake_scenario: FakeScenario,
     ) -> Run:
+        self._reject_untrusted_secrets(
+            {
+                "project_path": str(project_path),
+                "runtime_name": runtime_name,
+                "sandbox_name": sandbox_name,
+            }
+        )
         if runtime_name != "fake":
             raise FleetError(
                 ErrorCode.RUNTIME_UNAVAILABLE,
-                f"Runtime {runtime_name!r} is unavailable in Phase 0/1.",
+                f"Runtime {runtime_name!r} is unavailable in Phase 0/1.5.",
                 "Use `--runtime fake`; real provider calls begin in Phase 2.",
             )
-        if sandbox_name != "fake" or self.sandbox.security_level.value != "fake":
+        if sandbox_name != "fake" or self.sandbox.capabilities != SandboxCapabilities.phase1_fake():
             raise FleetError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
-                "Only the non-isolating fake sandbox is available in Phase 0/1.",
+                "Only the non-isolating fake sandbox is available in Phase 0/1.5.",
                 "Use `--sandbox fake`; Docker execution begins in Phase 3.",
             )
         info = self.repository.inspect(project_path)
+        self._reject_untrusted_secrets(info.model_dump(mode="json"))
         project = self.state.get_project_by_root(info.root)
         if project is None:
             raise FleetError(
@@ -119,8 +137,8 @@ class WorkflowEngine:
                 details={"dirty_paths": info.dirty_paths},
             )
         spec_path = Path(project.canonical_root) / ".fleet" / "fleet.yaml"
-        spec = self.config.load(spec_path)
-        config_hash = self.config.hash(spec)
+        spec, config_snapshot = self.config.load_snapshot(spec_path)
+        config_hash = self.config.snapshot_hash(config_snapshot)
         if config_hash != project.fleet_spec_hash:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
@@ -145,7 +163,15 @@ class WorkflowEngine:
         try:
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.INTAKE)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.SCOPING)
-            run = await self._scope(run, config_hash)
+            run = await self._scope(
+                run,
+                config_hash,
+                config_snapshot,
+                known_roles=set(spec.spec.agents),
+            )
+            if run.fleet_strategy == FleetStrategy.DIRECT.value:
+                run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
+                return await self._continue(run)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
             await self._prepare_workspace(run)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
@@ -155,6 +181,7 @@ class WorkflowEngine:
         except FleetError as error:
             latest = self.state.get_run(run.run_id)
             if latest.status is not RunStatus.PAUSED_FOR_APPROVAL:
+                latest = self._persist_failure_evidence(latest, error)
                 failed = latest.model_copy(
                     update={"status": RunStatus.FAILED, "updated_at": self.clock.now()}
                 )
@@ -188,6 +215,7 @@ class WorkflowEngine:
             if request.status.value == "pending":
                 raise ApprovalRequiredError(request.request_id)
             if request.status.value == "denied":
+                run = self._persist_evidence(run)[0]
                 rejected = run.model_copy(
                     update={"status": RunStatus.REJECTED, "updated_at": self.clock.now()}
                 )
@@ -215,7 +243,8 @@ class WorkflowEngine:
         except ApprovalRequiredError:
             return self.state.get_run(run_id)
         except ApprovalDeniedError as error:
-            rejected = self.state.get_run(run_id).model_copy(
+            current = self._persist_evidence(self.state.get_run(run_id))[0]
+            rejected = current.model_copy(
                 update={"status": RunStatus.REJECTED, "updated_at": self.clock.now()}
             )
             self.state.save_run(
@@ -228,6 +257,7 @@ class WorkflowEngine:
         except FleetError as error:
             latest = self.state.get_run(run_id)
             if latest.status is not RunStatus.PAUSED_FOR_APPROVAL:
+                latest = self._persist_failure_evidence(latest, error)
                 failed = latest.model_copy(
                     update={"status": RunStatus.FAILED, "updated_at": self.clock.now()}
                 )
@@ -239,7 +269,14 @@ class WorkflowEngine:
                 await self.resources.cleanup_run(failed)
             raise
 
-    async def _scope(self, run: Run, config_hash: str) -> Run:
+    async def _scope(
+        self,
+        run: Run,
+        config_hash: str,
+        config_snapshot: ConfigSnapshot,
+        *,
+        known_roles: set[str],
+    ) -> Run:
         task_id = self.ids.new(IdPrefix.TASK)
         agent_id = self.ids.new(IdPrefix.AGENT)
         result = await self.runtime.invoke(
@@ -254,15 +291,19 @@ class WorkflowEngine:
                 input={"goal": run.goal, "fake_scenario": run.fake_scenario.value},
             )
         )
+        self._reject_untrusted_secrets(result.output)
         acceptance = [
             AcceptanceCriterion.model_validate(item)
             for item in cast(list[dict[str, JsonValue]], result.output["acceptance_criteria"])
         ]
+        change_kind = cast(Literal["read_only", "code_change"], str(result.output["change_kind"]))
         task = TaskSpec(
             task_id=task_id,
             run_id=run.run_id,
             original_goal=run.goal,
             normalized_goal=str(result.output["normalized_goal"]),
+            workflow=str(result.output["workflow"]),
+            change_kind=change_kind,
             base_revision=run.base_revision,
             allowed_paths=cast(list[str], result.output["allowed_paths"]),
             forbidden_paths=cast(list[str], result.output["forbidden_paths"]),
@@ -272,7 +313,52 @@ class WorkflowEngine:
             config_snapshot_hash=config_hash,
             created_at=self.clock.now(),
         )
-        run = run.model_copy(update={"task_id": task_id, "updated_at": self.clock.now()})
+        strategy = FleetStrategy(str(result.output["fleet_strategy"]))
+        plan = self.planner.create(run, task, strategy, known_roles=known_roles)
+        plan_artifact = self.artifacts.create_text(
+            kind=ArtifactKind.FLEET_PLAN,
+            project_id=run.project_id,
+            run_id=run.run_id,
+            task_id=task.task_id,
+            producer="control-plane",
+            content=plan.model_dump_json(indent=2),
+            mime_type="application/json",
+        )
+        task_artifact = self.artifacts.create_text(
+            kind=ArtifactKind.TASK_SPEC,
+            project_id=run.project_id,
+            run_id=run.run_id,
+            task_id=task.task_id,
+            producer="control-plane",
+            content=task.model_dump_json(indent=2),
+            mime_type="application/json",
+        )
+        config_snapshot_artifact = self.artifacts.create_text(
+            kind=ArtifactKind.CONFIG_SNAPSHOT,
+            project_id=run.project_id,
+            run_id=run.run_id,
+            task_id=task.task_id,
+            producer="control-plane",
+            content=config_snapshot.model_dump_json(indent=2),
+            mime_type="application/json",
+            redact=False,
+            reject_secret=True,
+        )
+        if config_snapshot_artifact.sha256 != config_hash:
+            raise RuntimeError("configuration snapshot hash changed before task binding")
+        run = run.model_copy(
+            update={
+                "task_id": task_id,
+                "task_spec_artifact_id": task_artifact.artifact_id,
+                "task_spec_hash": task_artifact.sha256,
+                "config_snapshot_artifact_id": config_snapshot_artifact.artifact_id,
+                "config_snapshot_hash": config_snapshot_artifact.sha256,
+                "fleet_plan_artifact_id": plan_artifact.artifact_id,
+                "fleet_plan_hash": plan_artifact.sha256,
+                "fleet_strategy": strategy.value,
+                "updated_at": self.clock.now(),
+            }
+        )
         self.state.save_run(run, "run.task_bound", {"task_id": task_id})
         self.state.save_task(task)
         instance = AgentInstance(
@@ -287,14 +373,15 @@ class WorkflowEngine:
         )
         self.state.save_agent_instance(instance)
         self._emit(run, "agent.completed", {"role": "cos"}, agent_id=agent_id)
-        self.artifacts.create_text(
-            kind=ArtifactKind.TASK_SPEC,
-            project_id=run.project_id,
-            run_id=run.run_id,
-            task_id=task.task_id,
-            producer="control-plane",
-            content=task.model_dump_json(indent=2),
-            mime_type="application/json",
+        self._emit(
+            run,
+            "fleet.plan_accepted",
+            {
+                "fleet_plan_artifact_id": plan_artifact.artifact_id,
+                "fleet_plan_sha256": plan_artifact.sha256,
+                "strategy": strategy.value,
+                "planned_roles": [node.role_id for node in plan.nodes],
+            },
         )
         return run
 
@@ -323,7 +410,12 @@ class WorkflowEngine:
                 run = self.state.get_run(run.run_id)
                 if run.status is RunStatus.PAUSED_FOR_APPROVAL:
                     return run
-                run = self._transition(run, RunStatus.RUNNING, WorkflowStage.VERIFYING)
+                next_stage = (
+                    WorkflowStage.PRESENTING
+                    if run.fleet_strategy == FleetStrategy.SINGLE_ENGINEER.value
+                    else WorkflowStage.VERIFYING
+                )
+                run = self._transition(run, RunStatus.RUNNING, next_stage)
                 continue
             if run.stage is WorkflowStage.VERIFYING:
                 verifier = await self._verify(run)
@@ -344,6 +436,7 @@ class WorkflowEngine:
                             {"repair_iteration": run.repair_iterations},
                         )
                         continue
+                    run = self._persist_evidence(run)[0]
                     rejected = run.model_copy(
                         update={"status": RunStatus.REJECTED, "updated_at": self.clock.now()}
                     )
@@ -357,6 +450,15 @@ class WorkflowEngine:
                 run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
                 continue
             if run.stage is WorkflowStage.PRESENTING:
+                run, bundle = self._persist_evidence(run)
+                if bundle.completion_decision is None:
+                    raise RuntimeError("EvidenceBundle has no completion decision")
+                decision = bundle.completion_decision
+                operational_status = (
+                    RunStatus.COMPLETED
+                    if run.fleet_strategy == FleetStrategy.DIRECT.value
+                    else RunStatus.READY_FOR_REVIEW
+                )
                 self.artifacts.create_text(
                     kind=ArtifactKind.RUN_SUMMARY,
                     project_id=run.project_id,
@@ -364,20 +466,29 @@ class WorkflowEngine:
                     task_id=run.task_id,
                     producer="control-plane",
                     content=(
-                        "status=ready_for_review\n"
+                        f"status={operational_status.value}\n"
                         f"patch_sha256={run.patch_sha256}\n"
+                        f"fleet_strategy={run.fleet_strategy}\n"
+                        f"evidence_bundle_artifact_id={run.evidence_bundle_artifact_id}\n"
+                        f"assurance_verdict={decision.effective_verdict.value}\n"
+                        f"verified_complete={str(run.verified_complete).lower()}\n"
                         "runtime=fake\nsandbox=fake\nsecurity_level=fake\n"
-                        "limitation=No model or project code executed.\n"
+                        "proof_gap=No model or project code executed.\n"
                     ),
                 )
                 await self.resources.cleanup_run(run)
                 ready = run.model_copy(
-                    update={"status": RunStatus.READY_FOR_REVIEW, "updated_at": self.clock.now()}
+                    update={"status": operational_status, "updated_at": self.clock.now()}
                 )
                 self.state.save_run(
                     ready,
-                    "patch.ready",
-                    {"patch_artifact_id": run.patch_artifact_id, "patch_sha256": run.patch_sha256},
+                    "run.completed" if operational_status is RunStatus.COMPLETED else "patch.ready",
+                    {
+                        "patch_artifact_id": run.patch_artifact_id,
+                        "patch_sha256": run.patch_sha256,
+                        "verified_complete": run.verified_complete,
+                        "assurance_verdict": decision.effective_verdict.value,
+                    },
                 )
                 return ready
             return run
@@ -420,9 +531,11 @@ class WorkflowEngine:
                 },
             )
         )
+        self._reject_untrusted_secrets(result.output)
         script = EngineerScript.model_validate(result.output)
+        evidence_artifact_ids: list[str] = []
         for action in script.actions:
-            await self.gateway.execute(
+            action_result = await self.gateway.execute(
                 run=run,
                 task=task,
                 agent=agent,
@@ -430,6 +543,9 @@ class WorkflowEngine:
                 sandbox_handle=handle,
                 scripted=action,
             )
+            evidence_id = action_result.get("command_evidence_artifact_id")
+            if isinstance(evidence_id, str):
+                evidence_artifact_ids.append(evidence_id)
         completed = agent.model_copy(
             update={"status": AgentStatus.COMPLETED, "completed_at": self.clock.now()}
         )
@@ -469,12 +585,16 @@ class WorkflowEngine:
             mime_type="text/x-diff",
             redact=False,
             reject_secret=True,
-            metadata={"changed_paths": ",".join(patch.changed_paths)},
+            metadata={"changed_paths": cast(JsonValue, patch.changed_paths)},
         )
-        updated = self.state.get_run(run.run_id).model_copy(
+        latest = self.state.get_run(run.run_id)
+        updated = latest.model_copy(
             update={
                 "patch_artifact_id": artifact.artifact_id,
                 "patch_sha256": patch.sha256,
+                "command_evidence_artifact_ids": list(
+                    dict.fromkeys([*latest.command_evidence_artifact_ids, *evidence_artifact_ids])
+                ),
                 "updated_at": self.clock.now(),
             }
         )
@@ -532,14 +652,15 @@ class WorkflowEngine:
                     "goal": task.original_goal,
                     "fake_scenario": run.fake_scenario.value,
                     "repair_iterations": run.repair_iterations,
-                    "verification_workspace_path": workspace.path,
                     "patch_sha256": run.patch_sha256,
                 },
             )
         )
+        self._reject_untrusted_secrets(result.output)
         script = VerifierScript.model_validate(result.output)
+        evidence_artifact_ids: list[str] = []
         for action in script.actions:
-            await self.gateway.execute(
+            action_result = await self.gateway.execute(
                 run=run,
                 task=task,
                 agent=agent,
@@ -547,6 +668,9 @@ class WorkflowEngine:
                 sandbox_handle=handle,
                 scripted=action,
             )
+            evidence_id = action_result.get("command_evidence_artifact_id")
+            if isinstance(evidence_id, str):
+                evidence_artifact_ids.append(evidence_id)
         after = self.repository.workspace_status_fingerprint(workspace)
         mutated = before != after
         completed = agent.model_copy(
@@ -559,17 +683,29 @@ class WorkflowEngine:
             {"role": "verifier", "iteration": run.repair_iterations},
             agent_id=agent.agent_instance_id,
         )
+        bound_verdict = script.verdict.model_copy(
+            update={"evidence_artifact_ids": evidence_artifact_ids}
+        )
         verdict_artifact = self.artifacts.create_text(
             kind=ArtifactKind.VERIFIER_VERDICT,
             project_id=run.project_id,
             run_id=run.run_id,
             task_id=task.task_id,
             producer="fake-runtime:verifier",
-            content=script.verdict.model_dump_json(indent=2),
+            content=bound_verdict.model_dump_json(indent=2),
             mime_type="application/json",
         )
-        updated = self.state.get_run(run.run_id).model_copy(
-            update={"verifier_workspace_mutated": mutated, "updated_at": self.clock.now()}
+        latest = self.state.get_run(run.run_id)
+        updated = latest.model_copy(
+            update={
+                "command_evidence_artifact_ids": list(
+                    dict.fromkeys([*latest.command_evidence_artifact_ids, *evidence_artifact_ids])
+                ),
+                "verifier_agent_instance_id": agent.agent_instance_id,
+                "verifier_verdict_artifact_id": verdict_artifact.artifact_id,
+                "verifier_workspace_mutated": mutated,
+                "updated_at": self.clock.now(),
+            }
         )
         self.state.save_run(
             updated,
@@ -578,12 +714,74 @@ class WorkflowEngine:
                 "verdict": script.verdict.verdict.value,
                 "verdict_artifact_id": verdict_artifact.artifact_id,
                 "verification_workspace_mutated": mutated,
-                "security_level": "fake",
+                "security_level": self.sandbox.capabilities.security_level.value,
             },
         )
         await self.resources.cleanup_lease(updated, sandbox_lease)
         await self.resources.cleanup_lease(updated, workspace_lease)
         return script
+
+    def _persist_evidence(self, run: Run) -> tuple[Run, EvidenceBundle]:
+        current = self.state.get_run(run.run_id)
+        if current.evidence_bundle_artifact_id is not None:
+            bundle = EvidenceBundle.model_validate_json(
+                self.artifacts.read_text(current.evidence_bundle_artifact_id)
+            )
+            return current, bundle
+        if current.task_id is None:
+            raise RuntimeError("evidence run has no task")
+        task = self.state.get_task(current.task_id)
+        bundle = self.evidence.assemble(current, task)
+        evidence_artifact = self.artifacts.create_text(
+            kind=ArtifactKind.EVIDENCE_BUNDLE,
+            project_id=current.project_id,
+            run_id=current.run_id,
+            task_id=task.task_id,
+            producer="control-plane",
+            content=bundle.model_dump_json(indent=2),
+            mime_type="application/json",
+        )
+        if bundle.completion_decision is None:
+            raise RuntimeError("EvidenceBundle has no completion decision")
+        decision = bundle.completion_decision
+        updated = current.model_copy(
+            update={
+                "evidence_bundle_artifact_id": evidence_artifact.artifact_id,
+                "evidence_bundle_hash": evidence_artifact.sha256,
+                "assurance_verdict": decision.effective_verdict,
+                "verified_complete": decision.verified_complete,
+                "updated_at": self.clock.now(),
+            }
+        )
+        self.state.save_run(
+            updated,
+            "evidence.assembled",
+            {
+                "evidence_bundle_artifact_id": evidence_artifact.artifact_id,
+                "verified_complete": updated.verified_complete,
+                "assurance_verdict": decision.effective_verdict.value,
+                "reason_codes": decision.reason_codes,
+            },
+        )
+        return updated, bundle
+
+    def _persist_failure_evidence(self, run: Run, error: FleetError) -> Run:
+        if (
+            run.task_id is None
+            or run.fleet_plan_artifact_id is None
+            or error.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+        ):
+            return run
+        return self._persist_evidence(run)[0]
+
+    def _reject_untrusted_secrets(self, value: object) -> None:
+        if self.redactor.contains_secret_data(value):
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "Untrusted workflow data contained registered secret material.",
+                "Remove secret material from runtime input or output and start a new run; it "
+                "was not persisted.",
+            )
 
     def _transition(self, run: Run, status: RunStatus, stage: WorkflowStage) -> Run:
         updated = run.model_copy(

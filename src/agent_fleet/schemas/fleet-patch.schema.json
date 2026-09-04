@@ -1,0 +1,140 @@
+{
+  "$defs": {
+    "FleetPatchFileChange": {
+      "additionalProperties": false,
+      "properties": {
+        "after_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Sha256"
+        },
+        "before_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Sha256"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "maxLength": 1000000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content"
+        },
+        "operation": {
+          "$ref": "#/$defs/FleetPatchOperation"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 8,
+          "pattern": "^\\.fleet/[^/\\\\\\x00][^\\\\\\x00]*$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "path"
+      ],
+      "title": "FleetPatchFileChange",
+      "type": "object"
+    },
+    "FleetPatchOperation": {
+      "enum": [
+        "add",
+        "replace",
+        "remove"
+      ],
+      "title": "FleetPatchOperation",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "base_fleet_spec_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Base Fleet Spec Sha256",
+      "type": "string"
+    },
+    "changes": {
+      "items": {
+        "$ref": "#/$defs/FleetPatchFileChange"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Changes",
+      "type": "array"
+    },
+    "fleet_patch_id": {
+      "pattern": "^fpatch_[0-9a-f]{32}$",
+      "title": "Fleet Patch Id",
+      "type": "string"
+    },
+    "kind": {
+      "const": "FleetPatch",
+      "default": "FleetPatch",
+      "title": "Kind",
+      "type": "string"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "rationale": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Rationale",
+      "type": "string"
+    },
+    "rollback_of": {
+      "anyOf": [
+        {
+          "pattern": "^fpatch_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rollback Of"
+    }
+  },
+  "required": [
+    "fleet_patch_id",
+    "project_id",
+    "base_fleet_spec_sha256",
+    "changes",
+    "rationale"
+  ],
+  "title": "FleetPatch",
+  "type": "object"
+}

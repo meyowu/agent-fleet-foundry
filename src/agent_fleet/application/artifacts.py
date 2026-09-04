@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic import JsonValue
+
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import ArtifactKind, ArtifactMetadata
@@ -36,10 +38,11 @@ class ArtifactService:
         producer: str,
         run_id: str | None = None,
         task_id: str | None = None,
+        artifact_id: str | None = None,
         mime_type: str = "text/plain",
         redact: bool = True,
         reject_secret: bool = False,
-        metadata: dict[str, object] | None = None,
+        metadata: dict[str, JsonValue] | None = None,
     ) -> ArtifactMetadata:
         if reject_secret and self.redactor.contains_secret(content):
             raise FleetError(
@@ -52,9 +55,8 @@ class ArtifactService:
         else:
             summary = []
         content_ref, digest, byte_size = self.store.put(content.encode("utf-8"))
-        safe_metadata = {key: str(value) for key, value in (metadata or {}).items()}
         artifact = ArtifactMetadata(
-            artifact_id=self.ids.new(IdPrefix.ARTIFACT),
+            artifact_id=artifact_id or self.ids.new(IdPrefix.ARTIFACT),
             kind=kind,
             project_id=project_id,
             run_id=run_id,
@@ -66,7 +68,7 @@ class ArtifactService:
             producer=producer,
             redacted=bool(summary),
             created_at=self.clock.now(),
-            metadata=safe_metadata,
+            metadata=metadata or {},
         )
         self.state.save_artifact(artifact)
         return artifact
