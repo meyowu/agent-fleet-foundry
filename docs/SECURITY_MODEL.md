@@ -99,9 +99,9 @@ The adapter-code distinction is important: models, provider responses, and harne
 
 ### Current enforcement boundary
 
-- **Enforced in Phase 0/1.5:** bounded static profiling with pre-output/pre-write registered-secret rejection, canonical fake-tool intents, an independently injected baseline PermissionBroker, three decision values, default deny, decision audit events, exact allow-once binding/consumption, runtime input rejection for host-path/sandbox capabilities, path and symlink checks, redaction sentinels, Git 2.45+ hardened worktrees and trusted executable resolution, canonical patch hashes, verifier-write denial/mutation detection, target-state apply guards, intrinsically coherent capabilities with exact FakeSandbox matching, and simulated-proof-aware EvidenceBundle/CompletionGate.
-- **Still partial:** FakeSandbox remains non-isolating and executes no code; only direct/single/pair offline plans run; permission persistence is allow-once only; FleetPatch is a protected schema/validator rather than an operational workflow.
-- **Roadmap:** real credential boundary and model adapter (Phase 2), Docker enforcement (Phase 3), run/persistent trust plus explain/revoke (Phase 4), full real adaptive workflow (Phase 5), and operational FleetPatch evolution (Phase 6).
+- **Enforced in Phase 0–2:** bounded static profiling with pre-output/pre-write registered-secret rejection, canonical runtime-tool intents, an independently injected baseline PermissionBroker, three decision values, default deny, decision audit events, exact allow-once binding/consumption, runtime input rejection for host-path/sandbox capabilities, path and symlink checks, Git 2.45+ hardened worktrees and trusted executable resolution, canonical patch hashes, verifier-write denial/mutation detection, target-state apply guards, exact FakeSandbox matching, simulated-proof-aware EvidenceBundle/CompletionGate, strict `env:NAME` BYOK references, explicit PydanticAI provider construction, complete Fleet-supplied/model-response/final-request registered-secret scans, typed role output/usage projection, dynamic secret redaction, and no harness-native execution path.
+- **Still partial:** FakeSandbox remains non-isolating and executes no code; only direct/single/pair plans run; permission persistence is allow-once only; FleetPatch is a protected schema/validator rather than an operational workflow; the installed PydanticAI adapter code shares the trusted control-plane process.
+- **Roadmap:** Docker enforcement (Phase 3), run/persistent trust plus explain/revoke (Phase 4), the complete adaptive/chat workflow (Phase 5), and operational FleetPatch evolution (Phase 6).
 
 ## 5. Authorization model
 
@@ -167,7 +167,7 @@ system hard ceiling
 
 No union/accumulation may create authority absent from an upper layer.
 
-PermissionBroker is an independently injected project-owned contract. ToolGateway constructs and persists canonical intents, but does not privately decide policy; runtime adapters neither supply nor replace the broker. Every runtime-requested side effect must reach the same gateway/broker path regardless of harness. Phase 1.5 implements only three exact baseline cases (bounded Engineer write, one fake command, and one approval proof), default deny, and exact allow-once behavior. The full intersection/precedence shown above, allow-for-run, persistent exact trust, rich matched-rule explanation, and revoke remain Phase 4.
+PermissionBroker is an independently injected project-owned contract. ToolGateway constructs and persists canonical intents, but does not privately decide policy; runtime adapters neither supply nor replace the broker. Every runtime-requested side effect must reach the same gateway/broker path regardless of harness. Phase 1.5 introduced, and Phase 2 retains, only three exact baseline cases (bounded Engineer write, one fake command, and one approval proof), default deny, and exact allow-once behavior. CoS-proposed TaskSpec paths are canonically/protected-boundary validated, but Phase 2 does not independently translate the natural-language user goal into a deterministic upper path scope; target-checkout mutation remains behind explicit patch review/apply. The full user/project/task intersection and reviewed user-scope ceiling, allow-for-run, persistent exact trust, rich matched-rule explanation, and revoke remain Phase 4.
 
 Evaluation precedence:
 
@@ -192,7 +192,9 @@ Deny overrides allow at the same or broader scope. More-specific allow cannot ov
 - raw credentials, grant IDs, approval resolution, or trusted policy context;
 - repository/sandbox adapter instances or an unmediated subprocess callable.
 
-A runtime may propose a typed action using the tool catalog. In Phase 1.5, ToolGateway constructs trusted principal/stage identity and validates the exact supported logical resource shapes, asks PermissionBroker, and invokes an executor only after authorization; broader resource canonicalization belongs with Phase 3 tools. Built-in runtime modules must not import concrete repository or sandbox implementations or perform filesystem/subprocess side effects. A verifier mutation test must submit a forbidden intent and prove denial, not mutate a host path directly.
+A runtime may propose a typed action using the tool catalog. In Phase 2, `GatewayRuntimeToolCatalog` constructs trusted principal/stage/workspace identity, validates exact supported logical resource shapes, and asks ToolGateway and PermissionBroker. After authorization, candidate writes use a narrow Fleet-owned atomic candidate-worktree primitive; fake commands and the approval fixture invoke FakeSandbox. Broader resource canonicalization belongs with Phase 3 tools. The PydanticAI adapter exposes the catalog through its external-tool transport but cannot replace it with native shell, filesystem, code-execution, MCP, hosted, or arbitrary network tools. Built-in runtime modules must not import concrete repository or sandbox implementations or perform filesystem/subprocess side effects. A verifier mutation test must submit a forbidden intent and prove denial, not mutate a host path directly.
+
+The runtime registry performs exact adapter selection and typed capability checks with no fallback. The live PydanticAI path allows only `openai:<model>` and `openai-chat:<model>` and rejects other prefixes before credential resolution or network. CoS receives no execution tools; Engineer and Verifier receive only their stage-bound catalog. Fleet-owned instructions, tool definitions, output schemas, and bounded dynamic context are registered-secret scanned before model invocation. Complete new provider messages are scanned before any deferred tool, and the SDK-serialized body is scanned at the last request hook before send. Model output, usage, and provider metadata are bounded and projected into project-owned types before they cross the adapter boundary.
 
 ## 5.5 CapabilityGrant
 
@@ -420,7 +422,7 @@ A known command can still execute malicious project code; sandbox enforcement re
 
 ## 10. Sandbox requirements
 
-Every provider exposes an immutable capability descriptor including provider name, security level, whether isolation is enforced, whether code is executed, supported network modes, and enforceable resource/recovery support. The control plane matches supported requirements against this descriptor before creating a resource. Phase 1.5 reports the full descriptor at init and binds provider/security level into each command record; full run-level capability snapshots and richer requirement matching arrive with real providers. Missing capability is a hard mismatch, never permission to fall back.
+Every sandbox provider exposes an immutable capability descriptor including provider name, security level, whether isolation is enforced, whether code is executed, supported network modes, and enforceable resource/recovery support. The control plane matches supported requirements against this descriptor before creating a resource. Phase 2 reports and binds the exact FakeSandbox descriptor; full run-level capability snapshots and richer requirement matching arrive with real sandbox providers. Missing capability is a hard mismatch, never permission to fall back.
 
 ## 10.1 Docker provider baseline
 
@@ -478,6 +480,8 @@ Separate dependency/environment preparation from normal agent execution where pr
 
 The fake sandbox exists for deterministic tests. It declares `isolation_enforced=false`, `executes_code=false`, and evidence strength `simulated`. It must model permission/resource behavior but must never be presented as a security boundary or as test/build execution in production output.
 
+A real PydanticAI invocation does not change this classification. Model-generated file content may pass through the authorized candidate-write fixture, but the Phase 2 verification command is recorded rather than executed. Consequently every Phase 2 run using FakeSandbox keeps the corresponding proof gap and cannot set `verified_complete=true`.
+
 ## 11. Worktree and patch safety
 
 The Phase 1.5 Git adapter requires Git 2.45 or newer. It resolves Git to an absolute file outside the requested path, every statically discoverable ancestor Git repository, and Fleet state using lexical, canonical, and filesystem-identity containment; relative/empty/missing `PATH` entries are discarded. Initial discovery records the absolute top-level, Git directory, and common directory, then requires the same identity when invoked from the reported root, preventing repository-local `core.worktree` from switching project boundaries. Commands strip ambient Git configuration variables, ignore system/global config, disable terminal prompts, credentials, hooks, fsmonitor, signing, replacements, lazy fetching, automatic maintenance, external diffs/text conversion, and protocol access, then enforce an explicit subcommand allow-list. Repository-local executable filter/diff, hook, include, and command keys are discovered without includes and rejected generically; their attacker-controlled names are never copied into later Git argv or error text. Invalid repository discovery also omits the unresolved canonical path and underlying subprocess exception chain. Worktree files are materialized from index blobs rather than checkout, so checkout hooks and smudge filters are not used. Permanent regressions cover filter/diff/include/includeIf/config-hook rejection, argv non-propagation, canonical non-Git path non-disclosure, and prove that a missing promisor blob cannot trigger a repository-configured upload-pack helper.
@@ -498,31 +502,35 @@ Residual limitation: repository-local driver discovery and the later Git operati
 
 ## 12. Secret management
 
-Registered secret values are rejected recursively across mapping keys and values in untrusted runtime output and ToolIntent content before hashing, lookup, audit, approval, task, or artifact persistence. Trusted user-authored messages may be redacted where retaining the surrounding diagnostic is useful, but a runtime cannot convert a secret into persisted task or permission state.
+Registered secret values are rejected recursively across mapping keys and values in untrusted runtime output and ToolIntent content before hashing, lookup, audit, approval, task, or artifact persistence. They are also rejected in package instructions/tool/output schema material before model construction, in complete provider new-message envelopes before tool side effects or continuation, and in the final serialized provider request body before send. Trusted user-authored messages may be redacted where retaining the surrounding diagnostic is useful, but a runtime cannot convert a secret into persisted task or permission state.
 
 ### Provider credentials
 
-User configuration stores references only:
+The explicit `fleet init` command supplies a strict reference such as:
 
 ```yaml
-credential_ref: env:ANTHROPIC_API_KEY
+credential_ref: env:OPENAI_API_KEY
 ```
 
-or:
-
-```yaml
-credential_ref: keyring:agent-fleet/anthropic
-```
+Phase 2 implements `env:NAME` only. The reference is persisted in Fleet-owned Project/Run state, not repository-controlled `.fleet/`; the repository may store only the selected runtime and opaque provider/model ID. Keyring and other secret backends remain future work.
 
 Requirements:
 
-- resolve only in the control plane immediately before provider use;
-- pass directly to the provider adapter through supported API objects where possible;
-- never put in FleetSpec, SQLite, worker environment, CLI argv, prompt, or artifact;
-- register values and common encoded forms with the redactor;
+- validate shape without an environment read during preview, which also performs no provider network or Fleet-state write;
+- inspect configured/missing/invalid status for `fleet doctor` without returning the value or contacting a provider;
+- resolve only in trusted control-plane memory for init/run preflight and provider construction;
+- accept only 8–16384 bytes of visible ASCII so control characters, whitespace, invalid header encodings, and pathologically short redaction tokens fail before provider construction;
+- pass the value directly to an explicitly constructed provider client;
+- never put the raw value in FleetSpec, SQLite, worker environment, CLI argv, prompt, model-visible tool context, event, or artifact;
+- register the raw value and bounded common encoded forms with the shared redactor before a provider object can raise;
 - ensure exceptions and HTTP debug logging do not reveal credentials;
-- avoid global environment mutation when concurrent providers could cross-contaminate;
+- do not modify the global environment or ask the SDK to infer credentials;
+- pin the official OpenAI HTTPS base/host, disable redirects and ambient proxy/CA discovery, and explicitly clear unrelated ambient OpenAI identity fields before transport construction;
 - expose only “configured/missing/invalid,” not the value.
+
+Provider HTTPS is an intentional trusted-control-plane network boundary, distinct from worker networking. Selected prompts and bounded task/project context leave the machine and are subject to the provider's data handling. Phase 2 pins its OpenAI SDK client to `https://api.openai.com/v1`, disables redirects and `trust_env`, and does not honor `OPENAI_BASE_URL` or ambient proxy routing for that credential. This is explicit client construction, not a general OS egress firewall; Phase 2 does not provide an enforcing proxy or claim protection from a malicious provider or compromised local trust store. Provider retries are disabled; Fleet owns bounded request/tool/provider-reported-token/time/retry accounting and does not persist raw response bodies, headers, SDK objects, or provider exception representations. The total-token ceiling is post-response accounting rather than a strict pre-spend billing ceiling. Fleet's response hook clears provider-controlled headers before OpenAI SDK handling, but a caller that programmatically enables low-level transport DEBUG loggers can cause transport metadata to be logged before the hook; normal Fleet CLI and `OPENAI_LOG` do not enable those loggers.
+
+Provider reconfiguration does not justify silently rewriting repository policy. When a new runtime/provider proposal differs from the existing generated `.fleet/` tree, Phase 2 initialization fails before Project/artifact state or repository mutation. The user must review the preview and move the entire conflicting generated tree aside before explicit reinitialization. A credential-reference-only update is different: the reference is Fleet-owned state, so it can change without repository configuration mutation. Start/resume resolve the active Project reference before parsing configuration; patch apply resolves both that reference and the historical Run reference so an older still-configured value is registered before any parser failure.
 
 ### External service credentials
 
@@ -623,7 +631,7 @@ The complete Phase 3/5 limit target includes:
 - max event payload size;
 - concurrency limit.
 
-Agents must never be allowed to raise these limits. Phase 1.5 enforces bounded repair counts, model validation sizes, profiler/config bounds, fake command output truncation, and FleetPlan collection/concurrency ceilings. Token/cost, total tool-call, real process/container, and comprehensive artifact/event budgets remain later work; their future exhaustion must produce a typed terminal or paused result with current artifacts preserved.
+Agents must never be allowed to raise these limits. Phase 2 enforces bounded repair counts, model validation sizes, profiler/config bounds, fake command output truncation, FleetPlan collection/concurrency ceilings, and per-invocation PydanticAI request/tool/token/time/retry ceilings. Provider-reported usage is persisted without price estimation. Real process/container and comprehensive artifact/event budgets remain later work; exhaustion produces a typed failure with current artifacts preserved where the implemented boundary supports it.
 
 ## 19. Recovery
 
@@ -683,11 +691,20 @@ At minimum:
 37. Status rejects every Run/EvidenceBundle config, task, plan, base, patch, command, verifier, mutation, and assurance binding mismatch.
 38. Case-folded `.git`/`.fleet` aliases and allowed/forbidden scope overlaps are rejected before permission evaluation.
 39. Parallel FleetPlan writer scopes and FleetPatch change paths reject case-folded aliases/ancestry; FleetPatch requires dedicated ID prefixes and registered-secret scanning across its complete serialized proposal.
-40. Incoherent sandbox capability combinations and any non-exact Phase 1.5 FakeSandbox descriptor fail before initialization/workflow resource creation.
+40. Incoherent sandbox capability combinations and any non-exact Phase 2 FakeSandbox descriptor fail before initialization/workflow resource creation.
 41. Repository-derived registered secrets fail bootstrap before preview output, Project/artifact/state/staging creation, or target `.fleet/` writes.
 42. Raw and canonical repository paths, runtime/sandbox option values, and existing-configuration diffs containing a registered secret fail before error rendering or persistence; ProjectKnowledge rejects a profiler-supplied source-profile hash that the control plane cannot reproduce.
 43. Untrusted FleetPatch payloads must be bounded plain built-in JSON trees; object subclasses, cycles, depth over 64, and more than 10,000 nodes are rejected without recursive descent, accepted trees are secret-scanned before schema parsing, and typed validation repeats whole-proposal scanning. Invalid payloads never echo a registered sentinel through messages or exception chains.
 44. Repository-local executable Git config keys cannot propagate attacker-controlled names into secured child argv; malformed registered-secret YAML and canonical non-Git secret paths fail through generic errors with no secret-bearing cause, context, traceback, or state write.
+45. Preview validates a PydanticAI selection without reading the referenced environment variable, migrating/writing Fleet state, constructing a provider client, or opening a socket.
+46. Missing/invalid credentials and unsupported provider prefixes fail before Run creation and without secret-bearing output; `doctor` uses inspect-only status and never invokes a model.
+47. The PydanticAI adapter exposes only the exact role-bound external tools, and every tool call reaches GatewayRuntimeToolCatalog, ToolGateway, and PermissionBroker in that order; authorized candidate writes use the Fleet-owned candidate-worktree primitive, while fake commands/approval fixtures use FakeSandbox.
+48. PydanticAI TestModel/FunctionModel contract and integration tests run with live model requests disabled and sockets denied; no ambient credential is used for an opt-in live smoke.
+49. Raw, URL-encoded, base64/base64url, hex, and JSON-escaped registered credential forms do not survive in prompts, model output, exceptions, CLI output, SQLite/WAL, or artifacts.
+50. Reinitialization with a differing generated `.fleet/` tree fails before Project/artifact state or repository mutation; it never creates a split-brain runtime registration.
+51. Package instructions/tool/output schemas, bounded dynamic context, complete new provider messages, tool arguments, and the final SDK-serialized body reject registered secrets; a companion secret beside a deferred call is rejected before the first tool side effect.
+52. Fresh start/resume register the current Project credential before configuration parsing, and patch apply registers both current Project and historical Run credentials after a credential-only rotation; malformed configuration errors remain cause/context-free and secret-free.
+53. A deferred tool batch is fully budget-, identity-, membership-, generic-shape-, and catalog-schema-validated before its first side effect.
 
 ## 21. Security release gate
 

@@ -7,10 +7,19 @@ from pathlib import Path
 import pytest
 from conftest import FleetHarness
 
+from agent_fleet.adapters.repository.git import GitRepositoryAdapter
+from agent_fleet.adapters.system import UuidIdGenerator
 from agent_fleet.bootstrap import build_container
 from agent_fleet.domain.config import ConfigSnapshot
 from agent_fleet.domain.errors import ErrorCode, FleetError
-from agent_fleet.domain.models import ArtifactKind, FakeScenario, Run
+from agent_fleet.domain.ids import IdPrefix
+from agent_fleet.domain.models import (
+    ArtifactKind,
+    FakeScenario,
+    Run,
+    RunStatus,
+    WorkflowStage,
+)
 
 
 def _assemble(harness: FleetHarness, run: Run) -> None:
@@ -166,3 +175,177 @@ async def test_malformed_config_secret_fails_before_run_without_exception_leak(
         for path in harness.state_root.rglob("*")
         if path.is_file()
     )
+
+
+def _provider_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    secret: str,
+) -> tuple[Path, Path]:
+    state_root = tmp_path / "fleet-state"
+    repository = GitRepositoryAdapter(tmp_path, UuidIdGenerator()).create_canary_fixture(
+        tmp_path / "repository"
+    )
+    monkeypatch.setenv("FLEET_SELECTED_PROVIDER_KEY", secret)
+    container = build_container(state_root)
+    container.projects.initialize(
+        repository,
+        runtime_name="pydantic-ai",
+        provider_model="openai:gpt-test",
+        credential_ref="env:FLEET_SELECTED_PROVIDER_KEY",
+    )
+    return state_root, repository
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_fresh_start_registers_selected_key_before_malformed_config_parse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "selected+provider+secret+987654"
+    state_root, repository = _provider_project(tmp_path, monkeypatch, secret)
+    fleet_yaml = repository / ".fleet" / "fleet.yaml"
+    fleet_yaml.write_text(
+        fleet_yaml.read_text(encoding="utf-8").replace(
+            f"name: {repository.name}", f"name: {secret}"
+        ),
+        encoding="utf-8",
+    )
+    fresh = build_container(state_root)
+
+    with pytest.raises(FleetError) as captured:
+        await fresh.workflow.start(
+            project_path=repository,
+            goal="safe goal",
+            runtime_name=None,
+            provider_model=None,
+            credential_ref=None,
+            sandbox_name="fake",
+            fake_scenario=None,
+        )
+
+    rendered = "".join(traceback.format_exception(captured.value))
+    assert captured.value.code is ErrorCode.CONFIG_INVALID
+    assert fresh.redactor.contains_secret(secret)
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    assert secret not in rendered
+    with fresh.state._connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_fresh_resume_registers_selected_key_before_malformed_config_parse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "selected+provider+secret+resume987654"
+    state_root, repository = _provider_project(tmp_path, monkeypatch, secret)
+    setup = build_container(state_root)
+    project = setup.state.get_project_by_root(str(repository.resolve()))
+    assert project is not None
+    repository_info = setup.repository.inspect(repository)
+    now = setup.state.clock.now()
+    run = Run(
+        run_id=setup.state.ids.new(IdPrefix.RUN),
+        project_id=project.project_id,
+        correlation_id=setup.state.ids.new(IdPrefix.CORRELATION),
+        goal="safe goal",
+        base_revision=repository_info.head_revision,
+        target_status_fingerprint=repository_info.status_fingerprint,
+        runtime_name=project.runtime_name,
+        provider_model=project.provider_model,
+        credential_ref=project.credential_ref,
+        created_at=now,
+        updated_at=now,
+    )
+    setup.state.create_run(run)
+    intake = run.model_copy(
+        update={
+            "status": RunStatus.RUNNING,
+            "stage": WorkflowStage.INTAKE,
+            "updated_at": setup.state.clock.now(),
+        }
+    )
+    setup.state.save_run(intake, "run.stage_changed", {"stage": "intake"})
+    running = intake.model_copy(
+        update={"stage": WorkflowStage.SCOPING, "updated_at": setup.state.clock.now()}
+    )
+    setup.state.save_run(running, "run.stage_changed", {"stage": "scoping"})
+    fleet_yaml = repository / ".fleet" / "fleet.yaml"
+    fleet_yaml.write_text(
+        fleet_yaml.read_text(encoding="utf-8").replace(
+            f"name: {repository.name}", f"name: {secret}"
+        ),
+        encoding="utf-8",
+    )
+    fresh = build_container(state_root)
+
+    with pytest.raises(FleetError) as captured:
+        await fresh.workflow.resume(run.run_id)
+
+    rendered = "".join(traceback.format_exception(captured.value))
+    assert captured.value.code is ErrorCode.CONFIG_INVALID
+    assert fresh.redactor.contains_secret(secret)
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    assert secret not in rendered
+    assert fresh.state.get_run(run.run_id).status is RunStatus.RUNNING
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_fresh_patch_apply_registers_project_and_historical_run_credentials(
+    harness: FleetHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_secret = "historical-run-provider-secret-123"
+    new_secret = "current-project-provider-secret-456"
+    monkeypatch.setenv("FLEET_OLD_PROVIDER_KEY", old_secret)
+    monkeypatch.setenv("FLEET_NEW_PROVIDER_KEY", new_secret)
+    run = await harness.start(FakeScenario.SUCCESS)
+    provider_run = run.model_copy(
+        update={
+            "runtime_name": "pydantic-ai",
+            "provider_model": "openai:gpt-test",
+            "credential_ref": "env:FLEET_OLD_PROVIDER_KEY",
+        }
+    )
+    harness.container.state.save_run(
+        provider_run,
+        "run.runtime_binding_rotated_for_test",
+        {"status": provider_run.status.value},
+    )
+    project = harness.container.state.get_project(run.project_id)
+    harness.container.state.save_project(
+        project.model_copy(
+            update={
+                "runtime_name": "pydantic-ai",
+                "provider_model": "openai:gpt-test",
+                "credential_ref": "env:FLEET_NEW_PROVIDER_KEY",
+            }
+        )
+    )
+    target = harness.repository_root / "src" / "canary_calc" / "core.py"
+    target_before = target.read_bytes()
+    fleet_yaml = harness.repository_root / ".fleet" / "fleet.yaml"
+    fleet_yaml.write_text(f"apiVersion: [{old_secret}\n", encoding="utf-8")
+    fresh = build_container(harness.state_root)
+
+    with pytest.raises(FleetError) as captured:
+        fresh.patches.apply(run.run_id)
+
+    rendered = "".join(traceback.format_exception(captured.value))
+    assert captured.value.code is ErrorCode.CONFIG_INVALID
+    assert fresh.redactor.contains_secret(old_secret)
+    assert fresh.redactor.contains_secret(new_secret)
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    for secret in (old_secret, new_secret):
+        assert secret not in str(captured.value)
+        assert secret not in repr(captured.value)
+        assert secret not in rendered
+    assert fresh.state.get_run(run.run_id).status is RunStatus.READY_FOR_REVIEW
+    assert target.read_bytes() == target_before

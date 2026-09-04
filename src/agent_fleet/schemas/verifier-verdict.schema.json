@@ -14,8 +14,11 @@
   "properties": {
     "criterion_results": {
       "items": {
+        "maxLength": 4096,
+        "minLength": 1,
         "type": "string"
       },
+      "maxItems": 128,
       "title": "Criterion Results",
       "type": "array"
     },
@@ -24,31 +27,43 @@
         "pattern": "^art_[0-9a-f]{32}$",
         "type": "string"
       },
+      "maxItems": 256,
       "title": "Evidence Artifact Ids",
       "type": "array"
     },
     "proof_gaps": {
       "items": {
+        "maxLength": 4096,
+        "minLength": 1,
         "type": "string"
       },
+      "maxItems": 128,
       "title": "Proof Gaps",
       "type": "array"
     },
     "rationale": {
+      "maxLength": 8192,
+      "minLength": 1,
       "title": "Rationale",
       "type": "string"
     },
     "regressions": {
       "items": {
+        "maxLength": 4096,
+        "minLength": 1,
         "type": "string"
       },
+      "maxItems": 128,
       "title": "Regressions",
       "type": "array"
     },
     "required_repairs": {
       "items": {
+        "maxLength": 4096,
+        "minLength": 1,
         "type": "string"
       },
+      "maxItems": 128,
       "title": "Required Repairs",
       "type": "array"
     },

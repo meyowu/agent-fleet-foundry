@@ -13,10 +13,13 @@ from agent_fleet.domain.evidence import CommandEvidence, EvidenceBundle
 from agent_fleet.domain.fleet_patch import FleetPatch
 from agent_fleet.domain.fleet_plan import FleetPlan
 from agent_fleet.domain.models import (
+    ImplementationReport,
     JsonEnvelope,
     SandboxCapabilities,
+    ScopeDecision,
     TaskSpec,
     ToolIntent,
+    UsageRecord,
     VerifierVerdict,
 )
 from agent_fleet.domain.repository_profile import ProjectKnowledge, RepositoryProfile
@@ -27,6 +30,9 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "config-snapshot.schema.json": ConfigSnapshot,
     "cli-envelope.schema.json": JsonEnvelope,
     "task-spec.schema.json": TaskSpec,
+    "scope-decision.schema.json": ScopeDecision,
+    "implementation-report.schema.json": ImplementationReport,
+    "usage-record.schema.json": UsageRecord,
     "tool-intent.schema.json": ToolIntent,
     "verifier-verdict.schema.json": VerifierVerdict,
     "repository-profile.schema.json": RepositoryProfile,

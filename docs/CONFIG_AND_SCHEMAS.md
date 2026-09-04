@@ -1,6 +1,6 @@
 # Configuration and canonical schemas — Agent Fleet
 
-This document distinguishes target public contracts from the implementation boundary. Phase 0/1.5 now enforces extensible role/workflow identifiers, one-use approval, bounded RepositoryProfile/ProjectKnowledge generation, exact ConfigSnapshot and TaskSpec bindings, FleetPlan, SandboxCapabilities, EvidenceBundle/CompletionDecision, FleetPatch validation, and fake runtime/sandbox schemas. Real provider configuration, Docker enforcement, persistent trust, parallel scheduling, and operational FleetPatch remain later phases.
+This document distinguishes target public contracts from the implementation boundary. Phase 0–2 now enforces extensible role/workflow identifiers, one-use approval, bounded RepositoryProfile/ProjectKnowledge generation, exact ConfigSnapshot and TaskSpec bindings, FleetPlan, SandboxCapabilities, EvidenceBundle/CompletionDecision, FleetPatch validation, and shared fake/PydanticAI runtime contracts. Phase 2 adds explicit BYOK provider configuration; Docker enforcement, persistent trust, parallel scheduling, and operational FleetPatch remain later phases.
 
 ## 1. Configuration ownership
 
@@ -29,11 +29,30 @@ Not stored in the repository. It selects defaults and grants/revokes bounded per
 
 ### Resolved secrets
 
-Stored in environment variables, OS keyring, or future secret backends. Only references appear in configuration.
+Phase 2 resolves only strict `env:NAME` references. The reference originates in an explicit user command and is persisted only in Fleet-owned Project/Run state. Repository `.fleet/` configuration may contain the runtime and opaque provider/model identifier but never the credential reference or value. The raw value remains in trusted control-plane memory. OS keyring and other backends are future work.
 
-## 2. Target FleetSpec example (Phase 2–4)
+## 2. Current FleetSpec runtime fields and later extensions
 
-The following is the intended richer contract and is **not** accepted by the Phase 1.5 parser. The current checked-in `fleet.schema.json` accepts only `runtime.adapter=fake`, `sandbox.provider=fake`, `networkMode=none`, the bounded agent/workflow/project reference fields, and requested permission triples. It has no `models`, image/resources, agent model selection, workflow parallelism, permission conditions, or budget section yet. `fleet init --preview --json` is the authoritative way to see a current parseable proposal.
+The checked-in Phase 2 `fleet.schema.json` accepts `runtime.adapter` as `fake` or `pydantic-ai`. `pydantic-ai` requires `runtime.providerModel`; `fake` forbids it. Both require the `structured_output` and `tool_calling` capabilities. The only accepted sandbox is `fake` with `networkMode: none`. A current real-runtime fragment is:
+
+```yaml
+spec:
+  runtime:
+    adapter: pydantic-ai
+    providerModel: "openai:gpt-5-mini"
+    requiredCapabilities:
+      - structured_output
+      - tool_calling
+  sandbox:
+    provider: fake
+    networkMode: none
+```
+
+The adapter-level live allowlist is narrower than the generic `providerModel` grammar: only `openai:<model>` and `openai-chat:<model>` are wired. Unknown prefixes fail closed before credential resolution or network. `credentialRef` is deliberately absent from FleetSpec.
+
+Phase 2 init accepts an identical generated `.fleet/` tree but does not merge or overwrite a differing one. A runtime/provider-model proposal that changes repository files fails before Project/artifact state or repository mutation. After reviewing `--preview`, the user moves the complete conflicting generated tree aside and reruns explicit init. Changing only `credential_ref` can succeed without `.fleet/` changes because it belongs exclusively to Fleet-owned state. General atomic configuration evolution remains the Phase 6 FleetPatch workflow.
+
+The richer example below is a Phase 4/5 target and is **not** accepted as a whole by the Phase 2 parser. In particular, current FleetSpec has no `models`, image/resources, agent model selection, workflow parallelism, permission conditions, resource section, or budget section. `fleet init --preview --json` is the authoritative way to see a current parseable proposal.
 
 ```yaml
 apiVersion: agentfleet.dev/v1alpha1
@@ -45,6 +64,7 @@ metadata:
 spec:
   runtime:
     adapter: pydantic-ai
+    providerModel: "openai:gpt-5-mini"
     requiredCapabilities:
       - structured_output
       - tool_calling
@@ -52,10 +72,8 @@ spec:
   models:
     default:
       model: "provider:model-name"
-      credentialRef: "env:MODEL_PROVIDER_API_KEY"
     verifier:
       model: "provider:review-model-name"
-      credentialRef: "env:MODEL_PROVIDER_API_KEY"
 
   sandbox:
     provider: docker
@@ -163,8 +181,8 @@ Notes:
 - Phase 1 generated `chief-of-staff` and `software-engineer` role labels remain accepted only for the corresponding `cos` and `engineer` keys; other key/label mismatches fail validation.
 - The `workflows` mapping is keyed by validated extensible `WorkflowId`. A per-run FleetPlan selects a supported strategy and subset of roles.
 - CoS, Engineer, and Verifier are the current built-ins. The current schema accepts other validated role IDs/references, while specialist output schemas and execution remain roadmap work.
-- Provider/model strings will be opaque to the domain layer when Phase 2 adds them.
-- A future `credentialRef` is a reference, never a secret value.
+- Provider/model strings are bounded opaque values in the domain; the concrete adapter applies its explicit prefix allowlist.
+- `credentialRef` is a reference, never a secret value, and is intentionally stored outside repository FleetSpec in Phase 2.
 - Referenced paths must resolve under `.fleet/` and may not escape through symlinks.
 - Phase 1.5 applies a narrow hard-coded baseline broker and exact allow-once grant. Full requested-permission intersection with user policy and sandbox capabilities is Phase 4.
 - Unknown configuration fields fail validation for `v1alpha1` unless intentionally placed in a documented extension map.
@@ -257,7 +275,7 @@ limits:
   maxRepairIterations: 2
 ```
 
-Phase 1.5 captures this referenced file in ConfigSnapshot but does not parse it into executable stages; `WorkflowEngine` owns the hard-coded deterministic state machine. A later workflow parser may accept only supported stage types and transitions. Arbitrary Python imports, executable expressions, templates with code execution, or user-defined transition code remain forbidden.
+Phase 2 captures this referenced file in ConfigSnapshot but does not parse it into executable stages; `WorkflowEngine` owns the hard-coded deterministic state machine. A later workflow parser may accept only supported stage types and transitions. Arbitrary Python imports, executable expressions, templates with code execution, or user-defined transition code remain forbidden.
 
 ## 5. Target user trust configuration (Phase 4)
 
@@ -299,31 +317,63 @@ projects:
         createdAt: "2026-09-03T00:00:00Z"
 ```
 
-This file and the `fleet permissions` command family do not exist in Phase 1.5. Phase 4 must provide schema validation, atomic update support, and a CLI before manual editing is supported.
+This file and the `fleet permissions` command family do not exist through Phase 2. Phase 4 must provide schema validation, atomic update support, and a CLI before manual editing is supported.
 
 ## 6. Target semantic models and current contracts
 
-The checked-in generated JSON Schemas are authoritative for the Phase 1.5 serialized wire shape. Mandatory Python and application validators enforce cross-field, graph, filesystem, current-state, registered-secret, permission, and evidence-integrity rules that JSON Schema cannot express. Some conceptual snippets below describe richer later-phase contracts and are labeled as targets; implemented sections describe the current models.
+The checked-in generated JSON Schemas are authoritative for the Phase 2 serialized wire shape. Mandatory Python and application validators enforce cross-field, graph, filesystem, current-state, registered-secret, permission, runtime, and evidence-integrity rules that JSON Schema cannot express. Some conceptual snippets below describe richer later-phase contracts and are labeled as targets; implemented sections describe the current models.
 
-### 6.1 Target ScopeDecision (Phase 2/5)
+### 6.1 ScopeDecision
 
 ```python
 class ScopeDecision(BaseModel):
     normalized_goal: str
     workflow: str
-    requires_code_change: bool
+    change_kind: Literal["read_only", "code_change"]
+    fleet_strategy: FleetStrategy
     allowed_paths: list[LogicalRepoPath]
     forbidden_paths: list[LogicalRepoPath]
-    acceptance_criteria: list[str]
-    required_evidence: list[EvidenceRequirement]
-    requested_capabilities: list[CapabilityRequest]
-    risks: list[Risk]
-    ambiguities: list[Ambiguity]
-    recommended_budget: BudgetRequest
-    proposed_fleet_plan: FleetPlan
+    acceptance_criteria: list[AcceptanceCriterion]
+    required_evidence: list[EvidenceRequirementId]
 ```
 
-Control plane validates requested values against effective ceilings.
+FakeRuntime and PydanticAI CoS return this same strict model. The control plane validates paths, protected boundaries, known workflow/roles, strategy support, evidence requirements, and topology ceilings before constructing TaskSpec/FleetPlan. A model does not persist its own FleetPlan or directly authorize target-checkout mutation. Phase 2 does accept the validated CoS `allowed_paths` as candidate-worktree TaskSpec scope; it does not yet derive a separate deterministic path ceiling from the natural-language user goal, so explicit patch review/apply is required and the full reviewed user-scope intersection remains Phase 4 work.
+
+### 6.1.1 Runtime configuration, preflight, and usage
+
+```python
+class RuntimeConfiguration(BaseModel):
+    runtime_name: str
+    provider_model: str | None
+    credential_ref: str | None
+    max_requests: int
+    max_tool_calls: int
+    max_total_tokens: int
+    timeout_seconds: int
+    max_retries: int
+
+
+class RuntimePreflight(BaseModel):
+    runtime_name: str
+    ready: bool
+    capabilities: frozenset[RuntimeCapability]
+    credential_status: Literal[
+        "not_selected", "not_required", "not_checked", "configured", "missing", "invalid"
+    ]
+    diagnostic: str
+
+
+class UsageRecord(BaseModel):
+    requests: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    tool_calls: int | None
+    provider_cost: Decimal | None
+    provider_currency: str | None
+```
+
+The fake runtime forbids provider/credential metadata. PydanticAI requires both a provider/model ID and strict `env:NAME` reference. Preview uses credential-check `none`, doctor uses `inspect`, and init/run use `resolve`. Usage contains only reported provider-neutral facts; cost/currency must appear together, Fleet does not estimate price, and each reported invocation is stored as a content-addressed `runtime_usage` artifact. `max_total_tokens` is evaluated from provider-reported usage after responses and before continuations/tools rather than as a strict pre-spend ceiling. Provider metadata is similarly a bounded projection rather than a raw SDK response.
 
 ### 6.2 TaskSpec
 
@@ -362,7 +412,7 @@ class ConfigSnapshot(BaseModel):
     files: list[ConfigSnapshotFile]
 ```
 
-Phase 1.5 captures the exact UTF-8 contents and SHA-256 of `.fleet/fleet.yaml` plus every role, workflow, charter, architecture, and verification file it references. Paths are unique, sorted, canonical, and confined beneath `.fleet/`; the loader rejects symlink/special-file references, checks size before opening, reads at most the per-file ceiling, detects a changed file during read, and enforces an aggregate byte limit. The composition root injects the control-plane Redactor into the configuration adapter: every generated tree and loaded file is scanned for registered values before YAML parsing, writes, or snapshot construction, and failures use a generic exception with no parser cause. Initialization binds the snapshot to Project, and each run binds a run/task-scoped copy to Run and TaskSpec. Any referenced-file drift is rejected before a run is created, even when Git reports the same set of untracked `.fleet/` paths; explicit patch apply loads and compares the complete snapshot again.
+Introduced in Phase 1.5 and retained in Phase 2, ConfigSnapshot captures the exact UTF-8 contents and SHA-256 of `.fleet/fleet.yaml` plus every role, workflow, charter, architecture, and verification file it references. Paths are unique, sorted, canonical, and confined beneath `.fleet/`; the loader rejects symlink/special-file references, checks size before opening, reads at most the per-file ceiling, detects a changed file during read, and enforces an aggregate byte limit. The composition root injects the control-plane Redactor into the configuration adapter: every generated tree and loaded file is scanned for registered values before YAML parsing, writes, or snapshot construction, and failures use a generic exception with no parser cause. Initialization binds the snapshot to Project, and each run binds a run/task-scoped copy to Run and TaskSpec. Any referenced-file drift is rejected before a run is created, even when Git reports the same set of untracked `.fleet/` paths; explicit patch apply loads and compares the complete snapshot again.
 
 ### 6.3 ToolIntent
 
@@ -592,7 +642,7 @@ class FleetPlan(BaseModel):
 
 `EvidenceRequirementId` is a closed security vocabulary: `canonical_patch`, `command_evidence`, `control_plane_plan`, and `independent_verifier_verdict`. A small set of Phase 1 legacy display labels normalizes to those IDs when older rows are loaded; unknown values are rejected. TaskSpec, FleetPlan, and EvidenceBundle require unique non-empty lists and the plan must exactly preserve the task requirements.
 
-The control plane validates declared roles, references, bounded/unique collections, acyclic dependencies, concurrency ceilings, case-insensitively non-overlapping task-bounded writer scopes, workspace requirements, true parallel-writer topology, direct side effects, and assurance topology. Verifier scopes are task-bounded but may intentionally cover writer output. Phase 1.5 schedules only direct, single-Engineer, and Engineer+Verifier plans; the other strategies remain representable but unsupported for execution.
+The control plane validates declared roles, references, bounded/unique collections, acyclic dependencies, concurrency ceilings, case-insensitively non-overlapping task-bounded writer scopes, workspace requirements, true parallel-writer topology, direct side effects, and assurance topology. Verifier scopes are task-bounded but may intentionally cover writer output. Phase 2 schedules only direct, single-Engineer, and Engineer+Verifier plans through either runtime; the other strategies remain representable but unsupported for execution.
 
 ### 6.12 SandboxCapabilities
 
@@ -607,7 +657,7 @@ class SandboxCapabilities(BaseModel):
     supports_recovery: bool
 ```
 
-Capability models reject incoherent provider/security/isolation/execution/network/resource-limit combinations. Init and workflow startup accept only the exact Phase 1.5 FakeSandbox descriptor, report it, and every command record binds its provider and security level. FakeSandbox declares `isolation_enforced=false`, `executes_code=false`, no resource-limit support, and only `network=none`; ToolGateway consequently labels its command records `simulated`. Per-plan `SandboxRequirements` matching and a complete capability snapshot in each run bundle remain Phase 3 hardening.
+Capability models reject incoherent provider/security/isolation/execution/network/resource-limit combinations. Init and workflow startup accept only the exact Phase 2 FakeSandbox descriptor, report it, and every command record binds its provider and security level. FakeSandbox declares `isolation_enforced=false`, `executes_code=false`, no resource-limit support, and only `network=none`; ToolGateway consequently labels its command records `simulated`. Selecting PydanticAI changes the model boundary, not this execution classification. Per-plan `SandboxRequirements` matching and a complete capability snapshot in each run bundle remain Phase 3 hardening.
 
 ### 6.13 EvidenceBundle and CompletionDecision
 
@@ -664,11 +714,11 @@ class EvidenceBundle(BaseModel):
     assembled_at: datetime
 ```
 
-EvidenceAssembler derives provenance and strength from trusted state, executor/sandbox capabilities, and artifact integrity. Agent-provided IDs and claims are never sufficient by themselves. It validates the exact ConfigSnapshot and TaskSpec artifact identities/content before considering plan, patch, commands, or verdict. It preserves Verifier-reported proof gaps, repairs, and regressions instead of dropping negative findings. CompletionGate requires authoritative artifact references, exact task/run/config/base/patch identities, successful non-truncated commands, complete criterion mappings, and—when required—Verifier-owned command evidence bound to the final patch. A contradictory PASS with repairs/regressions or a detected Verifier-workspace mutation receives stable reason codes and cannot verify completion. Phase 1.5 cannot map one overall scripted verdict independently to multiple acceptance criteria; such tasks remain inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. Run lifecycle status and `verified_complete` are separate values. `fleet run/status --json` exposes a bounded evidence summary including changed paths, criterion assessments, command results, verdicts, repairs/regressions, risks, proof gaps, and completion reason codes; a mismatched bundle binding is an integrity error rather than a partial status response.
+EvidenceAssembler derives provenance and strength from trusted state, executor/sandbox capabilities, and artifact integrity. Agent-provided IDs and claims are never sufficient by themselves. It validates the exact ConfigSnapshot and TaskSpec artifact identities/content before considering plan, patch, commands, or verdict. It preserves Verifier-reported proof gaps, repairs, and regressions instead of dropping negative findings. CompletionGate requires authoritative artifact references, exact task/run/config/base/patch identities, successful non-truncated commands, complete criterion mappings, and—when required—Verifier-owned command evidence bound to the final patch. A contradictory PASS with repairs/regressions or a detected Verifier-workspace mutation receives stable reason codes and cannot verify completion. Phase 2 cannot map one overall verdict independently to multiple acceptance criteria; such tasks remain inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. Run lifecycle status and `verified_complete` are separate values. PydanticAI output cannot upgrade FakeSandbox command evidence, so Phase 2 remains `verified_complete=false`. `fleet run/status --json` exposes a bounded evidence summary including changed paths, criterion assessments, command results, verdicts, repairs/regressions, risks, proof gaps, runtime usage artifact IDs, and completion reason codes; a mismatched bundle binding is an integrity error rather than a partial status response.
 
 ## 7. Event payload examples
 
-### Current Phase 1.5 permission request
+### Current Phase 2 permission request
 
 ```json
 {
@@ -682,7 +732,7 @@ EvidenceAssembler derives provenance and strength from trusted state, executor/s
 }
 ```
 
-### Current Phase 1.5 verification result
+### Current Phase 2 verification result
 
 ```json
 {
@@ -733,9 +783,11 @@ Error:
 
 Do not include provider secrets, raw unbounded prompts, or hidden reasoning in JSON output.
 
+For `fleet doctor --json`, `ok: true` means the diagnostic command completed and emitted a valid report. Readiness is `data.healthy` plus each check's `required`/`ok` fields. A selected PydanticAI project makes `provider_credential` required; configured status is ready, while missing/invalid yields `data.healthy: false`. The fake runtime reports `not_selected` and keeps that check optional. Doctor inspects presence/validity only and never resolves/returns a value or contacts the provider. Command-level Fleet errors still use `ok: false` and the stable nonzero exit category.
+
 ## 9. Schema generation and compatibility
 
-- Generate JSON Schema from Pydantic models for repository configuration, ConfigSnapshot, stable CLI payloads, RepositoryProfile, ProjectKnowledge, FleetPlan, EvidenceBundle, and FleetPatch.
+- Generate JSON Schema from Pydantic models for repository configuration, ConfigSnapshot, stable CLI payloads, RepositoryProfile, ProjectKnowledge, FleetPlan, EvidenceBundle, FleetPatch, ScopeDecision, ImplementationReport, VerifierVerdict, and UsageRecord.
 - Check generated schemas into `src/agent_fleet/schemas/` or a documented build output path.
 - Add a test that regeneration produces no diff.
 - Treat checked-in JSON Schema as the authoritative serialized wire shape, not as the complete authorization policy. Constraints expressible in JSON Schema, including ID/path patterns, lengths, enums, and collection bounds, must be generated there. Cross-field, graph, filesystem, current-state, registered-secret, base-hash, permission, and evidence-integrity rules remain mandatory Pydantic/application validators and must run before data is trusted.
@@ -746,7 +798,7 @@ Do not include provider secrets, raw unbounded prompts, or hidden reasoning in J
 
 ## 10. Prompt files
 
-Role instruction files should be versioned and concise. They specify goals, responsibilities, output contract, and restrictions. They must not duplicate or override system security policy.
+Repository role instruction files should be versioned and concise. The Phase 2 PydanticAI adapter also packages project-owned `cos.md`, `engineer.md`, and `verifier.md` system prompts with the wheel and source distribution. They specify goals, responsibilities, strict output contracts, and restrictions. Neither repository nor packaged prompt text grants permission or overrides system security policy.
 
 Example Engineer instruction themes:
 

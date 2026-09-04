@@ -32,7 +32,7 @@ The control plane is deterministic application code. The LLM/harness adapter is 
 
 The architecture implements a project-specific organization runtime, not a generic agent chat bus. Role instances are created from a validated per-run FleetPlan. The plan may be adaptive, but the execution graph, budgets, workspace ownership, and assurance rules remain system-controlled.
 
-Implementation boundary: Phase 0/1.5 enforces durable state/artifacts, hardened Git worktrees, bounded static repository intelligence, adaptive plan artifacts for direct/single/pair offline paths, an independently injected baseline PermissionBroker, explicit fake-sandbox capabilities, CompletionGate, exact allow-once, and guarded patch application. Parallel/specialist scheduling, provider/BYOK, Docker, complete trust semantics, persistent chat, and operational FleetPatch remain later phases.
+Implementation boundary: Phase 0–2 enforces durable state/artifacts, hardened Git worktrees, bounded static repository intelligence, adaptive direct/single/pair plans, an independently injected baseline PermissionBroker, explicit fake-sandbox capabilities, CompletionGate, exact allow-once, guarded patch application, and either a deterministic fake runtime or an explicit BYOK PydanticAI runtime. The PydanticAI adapter supports only the wired `openai:` Responses and `openai-chat:` Chat Completions model families, returns strict project-owned types, and exposes only gateway-backed tools. Parallel/specialist scheduling, Docker/code execution, complete trust semantics, persistent chat, and operational FleetPatch remain later phases.
 
 ## 2. Layering and dependency rule
 
@@ -193,6 +193,8 @@ Fields:
 - initial repository identity hash;
 - created/updated UTC timestamps;
 - active FleetSpec version/hash;
+- selected runtime and opaque provider/model identifier;
+- the user-selected credential reference in Fleet-owned state only;
 - state directory.
 
 Project identity algorithm must be documented. A reasonable first version combines a stored random project ID in local state with repository metadata. Do not require committing a secret identifier into the repository.
@@ -465,9 +467,9 @@ The validator rejects missing or duplicate nodes/dependencies, noncanonical or c
 
 ### 3.13 EvidenceBundle and CompletionDecision
 
-`EvidenceBundle` is assembled by the control plane from authoritative state and content-addressed artifacts. It binds project/task/run identity, the exact ConfigSnapshot and TaskSpec artifact IDs/hashes, FleetPlan, required evidence IDs, base revision, canonical changed paths and patch hash, exact command records, verifier identity/verdict, the Verifier-owned command-evidence IDs, reported repairs/regressions/proof gaps, Verifier workspace-mutation detection, risks, and proof gaps. Each evidence item records provenance and strength as `simulated`, `observed`, or `independently_verified` in the Phase 1.5 contract. Inspection revalidates the stored bundle identity/hash and exposes a bounded evidence summary rather than only opaque artifact IDs.
+`EvidenceBundle` is assembled by the control plane from authoritative state and content-addressed artifacts. It binds project/task/run identity, the exact ConfigSnapshot and TaskSpec artifact IDs/hashes, FleetPlan, required evidence IDs, base revision, canonical changed paths and patch hash, exact command records, verifier identity/verdict, the Verifier-owned command-evidence IDs, reported repairs/regressions/proof gaps, Verifier workspace-mutation detection, risks, and proof gaps. Each evidence item records provenance and strength as `simulated`, `observed`, or `independently_verified`. Inspection revalidates the stored bundle identity/hash and exposes a bounded evidence summary rather than only opaque artifact IDs.
 
-`CompletionGate` evaluates every required criterion against those records and emits a `CompletionDecision`. Evidence strength cannot be asserted by an Agent or upgraded by serialization. Verifier evidence must be authoritative, owned by the recorded Verifier, and bound to the final patch; any reported proof gap, contradictory PASS with repairs/regressions, or detected Verifier-workspace mutation fails closed. Phase 1.5 can map its single scripted verdict only to a single acceptance criterion; a multi-criterion task produces inconclusive assessments and `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. In particular, FakeSandbox output is `simulated`, never executed proof, so an otherwise successful offline workflow reports `verified_complete=false` with a proof gap.
+`CompletionGate` evaluates every required criterion against those records and emits a `CompletionDecision`. Evidence strength cannot be asserted by an Agent or upgraded by serialization. Verifier evidence must be authoritative, owned by the recorded Verifier, and bound to the final patch; any reported proof gap, contradictory PASS with repairs/regressions, or detected Verifier-workspace mutation fails closed. Phase 2 can map one overall runtime verdict only to a single acceptance criterion; a multi-criterion task produces inconclusive assessments and `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. In particular, FakeSandbox output is `simulated`, never executed proof, so an otherwise successful fake or PydanticAI workflow reports `verified_complete=false` with a proof gap.
 
 ### 3.14 FleetPatch
 
@@ -479,9 +481,9 @@ Protocols should be small, project-owned, and tested by reusable contract suites
 
 ## 4.1 RuntimeAdapter
 
-The runtime adapter turns a typed role invocation into typed output while exposing only ToolGateway-backed tools.
+The runtime adapter turns a typed role invocation into one of the strict role outputs (`ScopeDecision`, `ImplementationReport`, or `VerifierVerdict`) while exposing only ToolGateway-backed tools. Runtime selection is exact; the registry never falls back to another adapter or infers a provider from ambient state.
 
-An invocation contains logical repository/workspace identifiers and bounded artifact references only. It never contains a host filesystem path, `SandboxHandle`, provider credential, permission grant, or callable executor. A runtime may return a typed proposed action; it cannot perform that action directly. Built-in runtime adapters must not import concrete repository/sandbox adapters or subprocess execution code.
+An invocation contains logical run/task/agent identity, role/stage/iteration, bounded relative content, and artifact references only. It never contains a host filesystem path, `SandboxHandle`, provider credential/reference, permission grant, or callable executor. A runtime may request a typed action through the supplied catalog; it cannot perform that action directly. Built-in runtime adapters must not import concrete repository/sandbox adapters or subprocess execution code.
 
 Conceptual interface:
 
@@ -498,41 +500,63 @@ class RuntimeCapability(str, Enum):
 class AgentInvocation(BaseModel):
     run_id: RunId
     task_id: TaskId
-    agent: AgentSpec
-    instructions: str
-    input: JsonValue
-    context_artifact_ids: list[ArtifactId]
+    agent_instance_id: AgentInstanceId
+    role: RoleId
+    stage: WorkflowStage
+    iteration: int
     max_steps: int
-    checkpoint_ref: str | None = None
+    instructions: str | None
+    context_artifact_ids: list[ArtifactId]
+    checkpoint_ref: ArtifactId | None
+    input: dict[str, JsonValue]
 
 
 class AgentInvocationResult(BaseModel):
-    output: JsonValue
+    output: ScopeDecision | ImplementationReport | VerifierVerdict
     usage: UsageRecord | None
     checkpoint_ref: str | None
-    provider_metadata: dict[str, JsonValue] = {}
+    provider_metadata: RuntimeProviderMetadata | None
+
+
+class RuntimeInvocationServices:
+    configuration: RuntimeConfiguration
+    tools: RuntimeToolCatalog
 
 
 class RuntimeAdapter(Protocol):
     @property
     def capabilities(self) -> frozenset[RuntimeCapability]: ...
 
+    def preflight(
+        self,
+        configuration: RuntimeConfiguration,
+        *,
+        credential_check: RuntimeCredentialCheck,
+    ) -> RuntimePreflight: ...
+
     async def invoke(
         self,
         request: AgentInvocation,
-        tools: ToolCatalog,
-        event_sink: EventSink,
+        services: RuntimeInvocationServices,
     ) -> AgentInvocationResult: ...
 ```
 
+`RuntimeCredentialCheck` separates three security-relevant paths:
+
+- `NONE` validates selection/reference shape without reading a credential; preview uses this mode and also avoids state migration/writes and provider network;
+- `INSPECT` reports configured/missing/invalid without returning the value; `fleet doctor` uses this mode and does not contact a provider;
+- `RESOLVE` obtains the value inside the trusted control plane and registers redaction before init/run proceeds.
+
 Do not force all harnesses to serialize their internal state into a common message format. Store an opaque checkpoint reference plus portable task/artifact context. A runtime without checkpoint support can resume by starting a new invocation with a system-generated summary, provided the workflow marks that degradation explicitly.
 
-The first implementations are:
+The implemented adapters are:
 
 - `FakeRuntimeAdapter` for deterministic tests;
 - `PydanticAIRuntimeAdapter` for real model calls.
 
-The PydanticAI adapter must translate project output models and tools without leaking PydanticAI objects into domain/application code.
+`PydanticAIRuntimeAdapter` translates PydanticAI output, usage, and bounded provider metadata into project-owned models without leaking PydanticAI/provider SDK objects into domain/application code. Its live construction allowlist is exactly `openai:<model>` through the Responses API model class and `openai-chat:<model>` through the Chat Completions model class. It constructs an explicit provider/client with the resolved credential, pins the official HTTPS API base and host, disables redirects, ambient proxy/CA discovery, and provider SDK retries, clears unrelated ambient OpenAI identity fields, and applies Fleet-owned request/tool/provider-reported-token/time/retry ceilings. A final request hook validates the SDK-merged endpoint, headers, length, and serialized body before transmission; a response hook rejects registered secrets and clears provider-controlled headers before OpenAI SDK handling. Unsupported prefixes fail before credential resolution or network.
+
+PydanticAI `ExternalToolset` is transport for the exact definitions supplied by `GatewayRuntimeToolCatalog`; it is not an authorization or execution plane. CoS receives no tools. Engineer may receive the bounded candidate-write and fake-verification tools (plus the approval probe only in the fake test scenario); Verifier receives fake verification only. Each call binds trusted run/task/agent/stage/workspace identity outside model arguments and crosses `ToolGateway -> PermissionBroker`. The complete deferred batch is schema-validated without side effects before execution. After authorization, candidate-file writes use a narrow Fleet-owned atomic candidate-worktree primitive; fake verification and approval fixtures use `FakeSandboxProvider`. Provider-native shell, filesystem, MCP, code execution, hosted tools, and arbitrary network tools are not registered.
 
 ## 4.2 ToolGateway
 
@@ -660,7 +684,7 @@ class SandboxProvider(Protocol):
 
 The adapter, not the model, selects host paths and Docker flags.
 
-Phase 1.5 validates intrinsic capability coherence and matches the exact immutable FakeSandbox descriptor before initialization or workflow resource creation. A mismatch fails closed; there is no fallback to a weaker provider. It reports the full descriptor at init and binds provider/security level into each command record. Per-plan `SandboxRequirements` matching and a complete immutable capability snapshot in run evidence are required with real providers in Phase 3.
+Phase 1.5 introduced intrinsic capability validation, and Phase 2 retains exact matching of the immutable FakeSandbox descriptor before initialization or workflow resource creation. A mismatch fails closed; there is no fallback to a weaker provider. Fleet reports the full descriptor at init and binds provider/security level into each command record. Per-plan `SandboxRequirements` matching and a complete immutable capability snapshot in run evidence are required with real providers in Phase 3.
 
 Implementations:
 
@@ -709,15 +733,15 @@ Important Docker/worktree consideration: a Git worktree’s `.git` file points t
 
 ```python
 class SecretStore(Protocol):
-    async def resolve(self, ref: SecretRef) -> SecretValue: ...
+    def inspect(self, ref: SecretRef) -> SecretInspection: ...
+    def resolve(self, ref: SecretRef) -> SecretValue: ...
 ```
 
-Initial ref schemes:
+Implemented Phase 2 reference scheme:
 
-- `env:VARIABLE_NAME`;
-- `keyring:SERVICE/ACCOUNT`.
+- `env:VARIABLE_NAME`.
 
-`SecretValue` must make accidental stringification difficult and support explicit redaction registration. Never persist the resolved value.
+Keyring and other secret backends remain roadmap work. `SecretValue` redacts string/repr/format output, rejects serialization, and exposes one explicit provider-only reveal method. `EnvironmentSecretStore.resolve` registers the raw value and bounded common encodings with the shared `Redactor` before returning it. Never persist the resolved value. The reference is persisted on Project/Run rows in Fleet state so a malicious repository cannot choose an unrelated ambient environment variable; `.fleet/` stores runtime and provider/model only. Workflow start/resume registers the active Project binding before configuration parsing, and patch apply registers both the current Project and historical Run bindings so credential-only rotation cannot expose an older still-configured value through parser failures.
 
 ## 4.8 StateStore
 
@@ -765,7 +789,7 @@ Each stage:
 - emits success/failure/pause event;
 - commits the next state.
 
-The Phase 1.5 `direct` strategy terminates after a control-plane presentation and is invalid if a proposed node requests a worker side effect. `single_engineer` may produce a candidate for review but cannot claim independent verification. `engineer_verifier` preserves a fresh verification context and bounded repair loop. Parallel and arbitrary specialist DAG execution remain unsupported until merge/join ownership and failure semantics are implemented and tested.
+The Phase 2 `direct` strategy terminates after a control-plane presentation and is invalid if a proposed node requests a worker side effect. `single_engineer` may produce a candidate for review but cannot claim independent verification. `engineer_verifier` preserves a fresh verification context and bounded repair loop. These paths work through either runtime adapter. Parallel and arbitrary specialist DAG execution remain unsupported until merge/join ownership and failure semantics are implemented and tested.
 
 ### Approval pause
 
@@ -784,7 +808,7 @@ Do not simply throw an in-memory exception and lose the run.
 
 ## 6. Agent orchestration target
 
-The rich role inputs below are the Phase 5 target. Phase 1.5 uses deterministic FakeRuntime scripts: CoS returns a bounded scope/strategy record, the application-owned FleetPlanner constructs and validates FleetPlan, and Engineer/Verifier receive only the minimal scripted goal/scenario/iteration/patch fields. This proves control-plane routing and evidence integrity, not model reasoning quality.
+The rich role inputs below remain the Phase 5 target. Phase 2 supports both deterministic FakeRuntime scripts and live PydanticAI role invocations. In either case CoS returns a strict bounded scope/strategy record, the application-owned FleetPlanner constructs and validates FleetPlan, and Engineer/Verifier receive bounded logical context without host paths, credentials, grants, or executor objects. This proves the real runtime/control-plane boundary; FakeSandbox still prevents claims about actual command execution or OS isolation.
 
 ## 6.1 CoS invocation
 
@@ -804,7 +828,7 @@ Output:
 - explicit ambiguities, risks, and required approvals;
 - selected workflow.
 
-The application validates and freezes the TaskSpec and FleetPlan. The CoS cannot invent undeclared tools or roles, raise limits, schedule unsupported topology, or claim assurance that the plan/evidence cannot provide.
+The application validates and freezes the TaskSpec and FleetPlan. The CoS cannot invent undeclared tools or roles, raise limits, schedule unsupported topology, or claim assurance that the plan/evidence cannot provide. Phase 2 validates proposed `allowed_paths` for canonical form, protected boundaries, and conflicts, but does not independently derive a semantic path ceiling from the natural-language goal; the accepted CoS paths become the TaskSpec candidate scope. This does not mutate the target checkout—explicit patch review/apply remains required—but a reviewed user-scope intersection is still Phase 4 work.
 
 ## 6.2 Engineer invocation
 
@@ -855,7 +879,9 @@ Never test the first model-powered write path against arbitrary user business co
 
 The profiler runs before configuration generation. Manifest content, package scripts, Make targets, and CI files are untrusted strings; they may identify candidate commands but are not executed or authorized during init. Static signals carry repository-relative source paths, and detected commands additionally carry structured provenance and confidence. ProjectKnowledge summary strings do not yet carry per-statement provenance. An absent command is left unknown rather than invented.
 
-Phase 1.5 implements items 1 and 2 and creates the disposable fixture for item 3. It does **not** execute that fixture during `fleet init` and does not emit a `BootstrapReport`; isolated canary execution and the bound report remain Phase 3 acceptance work.
+Phase 2 implements items 1 and 2 and creates the disposable fixture for item 3. It does **not** execute that fixture during `fleet init` and does not emit a `BootstrapReport`; isolated canary execution and the bound report remain Phase 3 acceptance work. A PydanticAI initialization validates and resolves the explicit BYOK reference before writes, but provider HTTPS begins only when a role is invoked by `fleet run`.
+
+Initialization stages and validates the complete generated tree before mutating active Project/artifact state. It may accept an identical existing tree, and a credential-reference-only update does not affect repository files. It does not merge or overwrite a differing `.fleet/` tree: a runtime/provider change that alters generated files fails before state/repository mutation, after which the user must review a new preview, move the whole conflicting generated tree aside, and rerun explicit init. This is the Phase 2 atomicity boundary, not a general configuration-update engine.
 
 When implemented, the canary run must use the same application planning, gateway, permission, sandbox, artifact, and completion path as ordinary runs. The current fake sandbox produces simulated evidence only, so a separately requested fake run can prove orchestration and patch integrity but cannot claim that project tests ran or that OS isolation exists.
 
@@ -891,7 +917,7 @@ Runtime state is outside the repository, selected through `platformdirs`, for ex
     canaries/
 ```
 
-Do not store API keys under `.fleet/` or the state database.
+Do not store API keys under `.fleet/` or the state database. Repository `.fleet/fleet.yaml` may store the reviewed runtime and provider/model identifier; only Fleet-owned state may store the `env:NAME` reference.
 
 ## 8. Configuration loading
 
@@ -904,7 +930,9 @@ Loading order:
 5. snapshot the effective non-secret configuration for the run;
 6. validate runtime and sandbox capability requirements before starting.
 
-The complete list is the target pipeline. Phase 1.5 implements steps 1–2, validates the FleetSpec and VerificationProfile schemas, and captures the exact bounded UTF-8 content/hash of `fleet.yaml` plus every referenced role, workflow, and project file in a sorted content-addressed `ConfigSnapshot`. The composition root injects the same Redactor used by state/artifacts; generated and loaded configuration is scanned before parsing, writing, or snapshotting, and secret-bearing parser failures are replaced by cause-free generic errors. Project and every TaskSpec/Run bind this snapshot. User settings/trust intersection and a broader effective configuration remain Phase 4 work.
+The complete list is the target pipeline. Phase 2 implements steps 1–2 plus exact runtime/capability selection and captures the exact bounded UTF-8 content/hash of `fleet.yaml` plus every referenced role, workflow, and project file in a sorted content-addressed `ConfigSnapshot`. The repository file may request `fake` or `pydantic-ai` and, for PydanticAI, an opaque provider/model ID. The user-selected `env:NAME` binding is loaded only from Fleet-owned state and must agree with explicit run overrides; repository files cannot select it. The composition root injects the same Redactor used by state/artifacts; generated and loaded configuration is scanned before parsing, writing, or snapshotting, and secret-bearing parser failures are replaced by cause-free generic errors. Project and every TaskSpec/Run bind this snapshot. User settings/trust intersection and a broader effective configuration remain Phase 4 work.
+
+`fleet init` is not an in-place merge mechanism. When the proposal differs from an existing generated tree, it fails before changing Project/artifact state or `.fleet/`; the recovery is whole-tree review and replacement by the user followed by explicit initialization. Operational review/apply/rollback for organization changes remains the Phase 6 FleetPatch responsibility.
 
 Unknown fields fail closed in v0.x unless a documented extension namespace exists.
 
@@ -932,6 +960,7 @@ resource_leases
 Key design points:
 
 - `run_events` has a monotonically increasing per-run sequence.
+- schema migration `0002` copies all v1 AgentInstance rows and permits a null `task_id` only for `role='cos'`, so the running CoS lifecycle can be persisted before its ScopeDecision creates TaskSpec; completed CoS rows are rebound afterward.
 - approvals have request state and resolution audit fields.
 - capability grants record exact scope, expiry, remaining uses, issuer, and consumption.
 - resource leases track worktrees/containers for crash recovery.
@@ -977,6 +1006,7 @@ CLI exit codes should be documented and stable by category. Human messages inclu
 - Redact before writing logs or events.
 - Cap command output and store large output as artifacts.
 - Record model token/cost metadata only when supplied; label estimates as estimates.
+- Phase 2 persists one content-addressed `runtime_usage` artifact for each invocation that reports usage; values are provider-neutral and no price is estimated.
 - Telemetry outside the machine is opt-in and out of scope for the initial MVP.
 - Provide `fleet logs` from event history, not from scraping terminal output.
 
@@ -994,7 +1024,7 @@ Every nondeterministic boundary is injectable:
 - ID generator;
 - user approval channel.
 
-A complete fake-adapter stack must execute the primary workflow without network, Docker, GitHub, or an API key. The same application services are used with real adapters; do not create a separate “demo” orchestration path.
+A complete fake-adapter stack executes the primary workflow without network, Docker, GitHub, or an API key. PydanticAI adapter and workflow tests use its explicit `TestModel`/`FunctionModel` facilities while live model requests and sockets are denied. The same application services are used with the live adapter; there is no separate “demo” orchestration path.
 
 ## 13. Initial repository files
 

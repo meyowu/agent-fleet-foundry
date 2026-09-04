@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import runpy
 from pathlib import Path
@@ -8,38 +7,108 @@ from pathlib import Path
 import pytest
 from conftest import FleetHarness
 
+from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.runtime.fake import FakeRuntimeAdapter
 from agent_fleet.adapters.sandbox.fake import FakeSandboxProvider
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
+from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.bootstrap import build_container
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import (
+    AgentInstance,
     AgentInvocation,
     AgentInvocationResult,
+    AgentRole,
+    AgentStatus,
     ArtifactKind,
     FakeScenario,
+    ImplementationReport,
     RunStatus,
     SandboxCapabilities,
     SandboxSecurityLevel,
+    ScopeDecision,
 )
 from agent_fleet.domain.offline_canary import BROKEN_CANARY, FIXED_CANARY
-from agent_fleet.domain.security import sha256_bytes
+from agent_fleet.domain.repository_profile import (
+    ProjectKnowledge,
+    RepositoryProfile,
+    RepositoryProfileResult,
+    RepositorySignal,
+)
+from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
+from agent_fleet.ports.runtime import RuntimeInvocationServices
 
 
 class MultiCriterionRuntime(FakeRuntimeAdapter):
-    async def invoke(self, request: AgentInvocation) -> AgentInvocationResult:
-        result = await super().invoke(request)
-        if request.role == "cos":
-            output = copy.deepcopy(result.output)
-            criteria = output["acceptance_criteria"]
-            assert isinstance(criteria, list)
+    async def invoke(
+        self,
+        request: AgentInvocation,
+        services: RuntimeInvocationServices,
+    ) -> AgentInvocationResult:
+        result = await super().invoke(request, services)
+        if request.role == AgentRole.COS:
+            assert isinstance(result.output, ScopeDecision)
+            output_data = result.output.model_dump(mode="json")
+            criteria = [item.model_dump(mode="json") for item in result.output.acceptance_criteria]
             criteria.append(
                 {
                     "criterion_id": "second-behavior",
                     "description": "A second criterion needs its own structured mapping.",
                 }
             )
-            return AgentInvocationResult(output=output)
+            output_data["acceptance_criteria"] = criteria
+            output = ScopeDecision.model_validate(output_data)
+            return AgentInvocationResult(
+                output=output,
+                usage=result.usage,
+                checkpoint_ref=result.checkpoint_ref,
+                provider_metadata=result.provider_metadata,
+            )
+        return result
+
+
+class InvalidResultRuntime(FakeRuntimeAdapter):
+    def __init__(self, mode: str, secret: str) -> None:
+        self.mode = mode
+        self.secret = secret
+        self.scope_output: ScopeDecision | None = None
+
+    async def invoke(
+        self,
+        request: AgentInvocation,
+        services: RuntimeInvocationServices,
+    ) -> AgentInvocationResult:
+        result = await super().invoke(request, services)
+        if request.role == AgentRole.COS:
+            assert isinstance(result.output, ScopeDecision)
+            self.scope_output = result.output
+            if self.mode == "wrong-cos-output":
+                return result.model_copy(
+                    update={
+                        "output": ImplementationReport(
+                            summary="Wrong role output.",
+                            intended_changed_paths=[],
+                            tests_added_or_changed=[],
+                            criterion_results=[],
+                            evidence_artifact_ids=[],
+                            unresolved_limitations=[],
+                            verifier_focus=[],
+                        )
+                    }
+                )
+        if request.role == AgentRole.ENGINEER:
+            if self.mode == "wrong-engineer-output":
+                assert self.scope_output is not None
+                return result.model_copy(update={"output": self.scope_output})
+            if self.mode == "secret-engineer-output":
+                assert isinstance(result.output, ImplementationReport)
+                return result.model_copy(
+                    update={
+                        "output": result.output.model_copy(
+                            update={"summary": f"Leaked {self.secret}"}
+                        )
+                    }
+                )
         return result
 
 
@@ -57,6 +126,77 @@ class IncoherentFakeSandbox(FakeSandboxProvider):
         )
 
 
+class OversizedRepositoryProfiler:
+    def profile(self, root: Path) -> RepositoryProfileResult:
+        del root
+        profile = RepositoryProfile(
+            ecosystems=["python"],
+            build_systems=["uv"],
+            boundaries=[],
+            signals=[
+                RepositorySignal(
+                    ecosystem="python",
+                    path="pyproject.toml",
+                    signal="manifest",
+                )
+                for _ in range(5000)
+            ],
+            commands=[],
+            ambiguities=[],
+            files_read=[],
+            bytes_read=0,
+        )
+        digest = canonical_json_hash(profile.model_dump(mode="json"))
+        return RepositoryProfileResult(
+            profile=profile,
+            project_knowledge=ProjectKnowledge(
+                source_profile_sha256=digest,
+                summary="Oversized but valid repository profile.",
+                ecosystems=["python"],
+                build_systems=["uv"],
+                repository_boundaries=[],
+                verification_commands=[],
+                ambiguities=[],
+            ),
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_oversized_repository_context_fails_run_without_raw_validation_error(
+    tmp_path: Path,
+) -> None:
+    repository = GitRepositoryAdapter(tmp_path, UuidIdGenerator()).create_canary_fixture(
+        tmp_path / "target-repository"
+    )
+    container = build_container(tmp_path / "fleet-state")
+    container.projects.profiler = OversizedRepositoryProfiler()
+    container.projects.initialize(repository, runtime_name="fake", sandbox_name="fake")
+
+    with pytest.raises(FleetError) as captured:
+        await container.workflow.start(
+            project_path=repository,
+            goal="Inspect the oversized repository context.",
+            runtime_name="fake",
+            sandbox_name="fake",
+            fake_scenario=FakeScenario.SUCCESS,
+        )
+
+    assert captured.value.code is ErrorCode.RUNTIME_BUDGET_EXCEEDED
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    with container.state._connect() as connection:
+        runs = connection.execute("SELECT run_id, status, stage FROM runs").fetchall()
+        agents = connection.execute("SELECT agent_instance_id FROM agent_instances").fetchall()
+    assert len(runs) == 1
+    assert runs[0]["status"] == RunStatus.FAILED.value
+    assert runs[0]["stage"] == "scoping"
+    assert agents == []
+    events = container.state.list_events(runs[0]["run_id"])
+    assert events[-1].event_type == "run.failed"
+    assert events[-1].payload["code"] == ErrorCode.RUNTIME_BUDGET_EXCEEDED.value
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_workflow_rejects_nonexact_fake_sandbox_descriptor(
@@ -68,6 +208,60 @@ async def test_workflow_rejects_nonexact_fake_sandbox_descriptor(
         await harness.start()
 
     assert captured.value.code is ErrorCode.SANDBOX_UNAVAILABLE
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "failed_role", "expected_code"),
+    [
+        ("wrong-cos-output", AgentRole.COS, ErrorCode.RUNTIME_OUTPUT_INVALID),
+        ("wrong-engineer-output", AgentRole.ENGINEER, ErrorCode.RUNTIME_OUTPUT_INVALID),
+        ("secret-engineer-output", AgentRole.ENGINEER, ErrorCode.COMMAND_DENIED),
+    ],
+)
+async def test_invalid_runtime_result_fails_agent_and_run_without_running_leak(
+    harness: FleetHarness,
+    mode: str,
+    failed_role: AgentRole,
+    expected_code: ErrorCode,
+) -> None:
+    sentinel = "registered-runtime-output-secret"
+    harness.container.workflow.redactor.register_secret(sentinel)
+    harness.container.workflow.runtimes = RuntimeRegistry(
+        {"fake": InvalidResultRuntime(mode, sentinel)}
+    )
+
+    with pytest.raises(FleetError) as captured:
+        await harness.start()
+
+    assert captured.value.code is expected_code
+    with harness.container.state._connect() as connection:
+        run_row = connection.execute(
+            "SELECT run_id FROM runs ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+        assert run_row is not None
+        agent_rows = connection.execute(
+            "SELECT data_json FROM agent_instances WHERE run_id = ? ORDER BY rowid",
+            (str(run_row["run_id"]),),
+        ).fetchall()
+    run = harness.container.state.get_run(str(run_row["run_id"]))
+    agents = [AgentInstance.model_validate_json(row["data_json"]) for row in agent_rows]
+    assert run.status is RunStatus.FAILED
+    assert all(agent.status is not AgentStatus.RUNNING for agent in agents)
+    failed_agents = [agent for agent in agents if agent.status is AgentStatus.FAILED]
+    assert [str(agent.role) for agent in failed_agents] == [failed_role.value]
+    if failed_role is AgentRole.COS:
+        assert failed_agents[0].task_id is None
+    failed_events = [
+        event
+        for event in harness.container.state.list_events(run.run_id)
+        if event.event_type == "agent.failed"
+    ]
+    assert failed_events[-1].payload == {
+        "role": failed_role.value,
+        "code": expected_code.value,
+    }
 
 
 @pytest.mark.integration
@@ -189,7 +383,7 @@ async def test_inconclusive_is_presented_with_proof_gap(harness: FleetHarness) -
 async def test_multiple_criteria_are_not_blanket_passed_by_one_overall_verdict(
     harness: FleetHarness,
 ) -> None:
-    harness.container.workflow.runtime = MultiCriterionRuntime()
+    harness.container.workflow.runtimes = RuntimeRegistry({"fake": MultiCriterionRuntime()})
 
     run = await harness.start(FakeScenario.SUCCESS)
 
@@ -214,10 +408,12 @@ async def test_verifier_mutation_is_detected_discarded_and_absent_from_patch(
     with pytest.raises(FleetError) as captured:
         await harness.start(FakeScenario.VERIFIER_MUTATION)
     assert captured.value.code is ErrorCode.COMMAND_DENIED
+    assert str(captured.value.details["run_id"]).startswith("run_")
     with harness.container.state._connect() as connection:
         row = connection.execute("SELECT run_id FROM runs ORDER BY rowid DESC LIMIT 1").fetchone()
     assert row is not None
     run = harness.container.state.get_run(str(row["run_id"]))
+    assert captured.value.details["run_id"] == run.run_id
     assert run.status is RunStatus.FAILED
     assert run.evidence_bundle_artifact_id is not None
     assert run.assurance_verdict is not None

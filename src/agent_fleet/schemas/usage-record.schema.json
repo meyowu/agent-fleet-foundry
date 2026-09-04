@@ -1,0 +1,109 @@
+{
+  "additionalProperties": false,
+  "description": "Only provider-reported, provider-neutral usage facts.",
+  "properties": {
+    "input_tokens": {
+      "anyOf": [
+        {
+          "maximum": 2000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input Tokens"
+    },
+    "output_tokens": {
+      "anyOf": [
+        {
+          "maximum": 2000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Tokens"
+    },
+    "provider_cost": {
+      "anyOf": [
+        {
+          "maximum": 1000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Cost"
+    },
+    "provider_currency": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Currency"
+    },
+    "requests": {
+      "anyOf": [
+        {
+          "maximum": 1000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Requests"
+    },
+    "tool_calls": {
+      "anyOf": [
+        {
+          "maximum": 1000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tool Calls"
+    },
+    "total_tokens": {
+      "anyOf": [
+        {
+          "maximum": 4000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Total Tokens"
+    }
+  },
+  "title": "UsageRecord",
+  "type": "object"
+}

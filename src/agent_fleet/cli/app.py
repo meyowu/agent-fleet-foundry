@@ -24,7 +24,10 @@ from agent_fleet.domain.security import Redactor
 
 app = typer.Typer(
     name="fleet",
-    help="Local deterministic Agent Fleet control plane (Phase 0/1.5: fake adapters only).",
+    help=(
+        "Local-first Agent Fleet control plane (Phase 2: fake or explicit BYOK "
+        "PydanticAI runtime; FakeSandbox only)."
+    ),
     no_args_is_help=True,
 )
 patch_app = typer.Typer(help="Inspect or explicitly apply candidate patches.")
@@ -42,7 +45,13 @@ def version(json_output: JsonFlag = False) -> None:
     _present(
         "fleet version",
         json_output,
-        lambda: {"version": __version__, "phase": "0/1.5", "runtime": "fake"},
+        lambda: {
+            "version": __version__,
+            "phase": "2",
+            "runtime": "fake",
+            "runtimes": ["fake", "pydantic-ai"],
+            "sandbox": "fake",
+        },
     )
 
 
@@ -55,20 +64,43 @@ def doctor(
 ) -> None:
     """Diagnose required local foundations and future optional capabilities."""
 
+    redactor = _environment_redactor()
+
     def operation() -> tuple[JsonValue, list[str]]:
-        report = build_container().doctor.inspect(path)
+        report = build_container(redactor=redactor).doctor.inspect(path)
         return report.model_dump(mode="json"), report.warnings
 
-    _present_with_warnings("fleet doctor", json_output, operation)
+    _present_with_warnings("fleet doctor", json_output, operation, redactor=redactor)
 
 
 @app.command("init")
 def init_command(
     path: Annotated[Path, typer.Argument(help="Git repository to initialize")] = Path("."),
-    runtime: Annotated[str, typer.Option("--runtime")] = "fake",
+    runtime: Annotated[
+        str,
+        typer.Option("--runtime", help="Runtime adapter: fake or pydantic-ai."),
+    ] = "fake",
+    provider_model: Annotated[
+        str | None,
+        typer.Option(
+            "--provider-model",
+            help="Explicit provider:model identifier required by pydantic-ai.",
+        ),
+    ] = None,
+    credential_ref: Annotated[
+        str | None,
+        typer.Option(
+            "--credential-ref",
+            help="Explicit env:NAME credential reference; never a raw secret.",
+        ),
+    ] = None,
     sandbox: Annotated[str, typer.Option("--sandbox")] = "fake",
     yes: Annotated[
-        bool, typer.Option("--yes", help="Apply only the displayed .fleet proposal.")
+        bool,
+        typer.Option(
+            "--yes",
+            help="Apply noninteractively; use --preview first to review the exact proposal.",
+        ),
     ] = False,
     preview: Annotated[
         bool,
@@ -80,11 +112,25 @@ def init_command(
 ) -> None:
     """Register a Git repository and apply a validated minimal `.fleet/` tree."""
 
-    def operation() -> JsonValue:
-        container = build_container(migrate=False)
-        preview_data = container.projects.preview(path)
+    redactor = _environment_redactor()
+
+    def operation() -> tuple[JsonValue, list[str]]:
+        if preview and yes:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "Initialization preview and apply confirmation are mutually exclusive.",
+                "Use `--preview` to inspect without writes, or `--yes` to apply.",
+            )
+        container = build_container(migrate=False, redactor=redactor)
+        preview_data = container.projects.preview(
+            path,
+            runtime_name=runtime,
+            provider_model=provider_model,
+            credential_ref=credential_ref,
+            sandbox_name=sandbox,
+        )
         if preview:
-            return jsonable(preview_data)
+            return _initialization_result(preview_data)
         if json_output and not yes:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
@@ -92,69 +138,128 @@ def init_command(
                 "Review the proposed files in human mode, then retry JSON mode with --yes.",
             )
         if not yes:
-            proposed = preview_data["proposed_paths"]
-            if not isinstance(proposed, list) or any(
-                not isinstance(item, str) for item in proposed
-            ):
+            proposal_patch = preview_data["proposal_patch"]
+            security_warning = preview_data["security_warning"]
+            if not isinstance(proposal_patch, str) or not isinstance(security_warning, str):
                 raise RuntimeError("invalid project preview")
-            console.print(Panel.fit("\n".join(proposed), title="Proposed files"))
-            if not typer.confirm("Apply this validated .fleet configuration?"):
+            access_summary = (
+                "Provider access: disabled; no model call will occur."
+                if runtime == "fake"
+                else (
+                    "Provider access: the control plane may contact the selected provider only "
+                    "after confirmation and credential validation."
+                )
+            )
+            summary = "\n".join(
+                [
+                    f"Runtime: {runtime}",
+                    f"Provider model: {provider_model or 'none'}",
+                    (
+                        "Credential reference: supplied; its value was not read during preview."
+                        if credential_ref is not None
+                        else "Credential reference: none"
+                    ),
+                    f"Sandbox: {sandbox} (security_level=fake)",
+                    access_summary,
+                    security_warning,
+                ]
+            )
+            console.print(Panel.fit(summary, title="Execution and access boundary"))
+            console.print(
+                Panel(proposal_patch, title="Exact .fleet proposal patch"),
+                markup=False,
+                highlight=False,
+            )
+            if not typer.confirm("Apply exactly this validated .fleet proposal?"):
                 raise typer.Abort()
-        return jsonable(
-            container.projects.initialize(path, runtime_name=runtime, sandbox_name=sandbox)
+        proposal_hash = preview_data.get("proposal_sha256")
+        if not isinstance(proposal_hash, str):
+            raise RuntimeError("invalid project proposal identity")
+        initialized = container.projects.initialize(
+            path,
+            runtime_name=runtime,
+            provider_model=provider_model,
+            credential_ref=credential_ref,
+            sandbox_name=sandbox,
+            expected_proposal_hash=proposal_hash,
         )
+        return _initialization_result(initialized)
 
-    _present("fleet init", json_output, operation)
+    _present_with_warnings("fleet init", json_output, operation, redactor=redactor)
 
 
 @app.command()
 def run(
     goal: Annotated[str, typer.Argument(help="Bounded code-change goal")],
     project: Annotated[Path, typer.Option("--project")] = Path("."),
-    runtime: Annotated[str, typer.Option("--runtime")] = "fake",
+    runtime: Annotated[
+        str | None,
+        typer.Option(
+            "--runtime",
+            help="Must match the reviewed project runtime; omitted uses project state.",
+        ),
+    ] = None,
+    provider_model: Annotated[
+        str | None,
+        typer.Option(
+            "--provider-model",
+            help="Must match the provider:model reviewed during fleet init.",
+        ),
+    ] = None,
+    credential_ref: Annotated[
+        str | None,
+        typer.Option(
+            "--credential-ref",
+            help="Must match the env:NAME reference reviewed during fleet init.",
+        ),
+    ] = None,
     sandbox: Annotated[str, typer.Option("--sandbox")] = "fake",
     fake_scenario: Annotated[
-        FakeScenario,
+        FakeScenario | None,
         typer.Option(
             "--fake-scenario",
             help=(
-                "Deterministic Phase 1 script: success, fail, repair, approval, "
+                "Explicit fake-runtime test script: success, fail, repair, approval, "
                 "inconclusive, verifier_mutation, direct, or single_engineer."
             ),
         ),
-    ] = FakeScenario.SUCCESS,
+    ] = None,
     json_output: JsonFlag = False,
 ) -> None:
-    """Run the deterministic fake workflow and persist its evidence."""
+    """Run the reviewed project runtime through FakeSandbox evidence boundaries."""
+
+    redactor = _environment_redactor()
 
     def operation() -> tuple[JsonValue, list[str]]:
-        container = build_container()
+        container = build_container(redactor=redactor)
         result = asyncio.run(
             container.workflow.start(
                 project_path=project,
                 goal=goal,
                 runtime_name=runtime,
+                provider_model=provider_model,
+                credential_ref=credential_ref,
                 sandbox_name=sandbox,
                 fake_scenario=fake_scenario,
             )
         )
         data = container.inspection.status(result.run_id)
-        warnings = [
-            "Fake runtime/sandbox: no model call, project execution, or OS isolation occurred."
-        ]
-        return jsonable(data), warnings
+        return jsonable(data), _runtime_warnings(data)
 
-    _present_with_warnings("fleet run", json_output, operation)
+    _present_with_warnings("fleet run", json_output, operation, redactor=redactor)
 
 
 @app.command()
 def status(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False) -> None:
     """Show one persisted run state."""
 
+    redactor = _environment_redactor()
+
     _present(
         "fleet status",
         json_output,
-        lambda: jsonable(build_container().inspection.status(run_id)),
+        lambda: jsonable(build_container(redactor=redactor).inspection.status(run_id)),
+        redactor=redactor,
     )
 
 
@@ -162,10 +267,13 @@ def status(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = Fal
 def logs(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False) -> None:
     """Read ordered append-only run events."""
 
+    redactor = _environment_redactor()
+
     _present(
         "fleet logs",
         json_output,
-        lambda: jsonable(build_container().inspection.logs(run_id)),
+        lambda: jsonable(build_container(redactor=redactor).inspection.logs(run_id)),
+        redactor=redactor,
     )
 
 
@@ -173,10 +281,13 @@ def logs(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False
 def artifacts(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False) -> None:
     """List persisted artifact metadata and hashes for a run."""
 
+    redactor = _environment_redactor()
+
     _present(
         "fleet artifacts",
         json_output,
-        lambda: jsonable(build_container().inspection.artifacts_for_run(run_id)),
+        lambda: jsonable(build_container(redactor=redactor).inspection.artifacts_for_run(run_id)),
+        redactor=redactor,
     )
 
 
@@ -184,11 +295,17 @@ def artifacts(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = 
 def patch_show(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False) -> None:
     """Show the canonical Git patch recorded for a run."""
 
+    redactor = _environment_redactor()
+
     _present(
         "fleet patch show",
         json_output,
-        lambda: {"run_id": run_id, "patch": build_container().patches.show(run_id)},
+        lambda: {
+            "run_id": run_id,
+            "patch": build_container(redactor=redactor).patches.show(run_id),
+        },
         raw_key="patch",
+        redactor=redactor,
     )
 
 
@@ -196,8 +313,10 @@ def patch_show(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag =
 def patch_apply(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False) -> None:
     """Explicitly apply a reviewed patch after identity/base/status checks."""
 
+    redactor = _environment_redactor()
+
     def operation() -> JsonValue:
-        container = build_container()
+        container = build_container(redactor=redactor)
         run_result, apply_result = container.patches.apply(run_id)
         return jsonable(
             {
@@ -209,7 +328,7 @@ def patch_apply(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag 
             }
         )
 
-    _present("fleet patch apply", json_output, operation)
+    _present("fleet patch apply", json_output, operation, redactor=redactor)
 
 
 @app.command()
@@ -220,6 +339,8 @@ def approve(
 ) -> None:
     """Approve one exact persisted Phase 1 intent."""
 
+    redactor = _environment_redactor()
+
     def operation() -> JsonValue:
         if not once:
             raise FleetError(
@@ -227,10 +348,10 @@ def approve(
                 "Phase 1 approvals require the explicit --once flag.",
                 "Retry with `fleet approve <request-id> --once`.",
             )
-        grant = build_container().approvals.approve_once(request_id)
+        grant = build_container(redactor=redactor).approvals.approve_once(request_id)
         return grant.model_dump(mode="json")
 
-    _present("fleet approve", json_output, operation)
+    _present("fleet approve", json_output, operation, redactor=redactor)
 
 
 @app.command()
@@ -241,38 +362,42 @@ def deny(
 ) -> None:
     """Deny one pending persisted intent."""
 
+    redactor = _environment_redactor()
+
     def operation() -> JsonValue:
-        build_container().approvals.deny(request_id, reason)
+        build_container(redactor=redactor).approvals.deny(request_id, reason)
         return {"request_id": request_id, "resolution": "denied"}
 
-    _present("fleet deny", json_output, operation)
+    _present("fleet deny", json_output, operation, redactor=redactor)
 
 
 @app.command()
 def resume(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False) -> None:
     """Resume a durable approved fake workflow without duplicating its logical action."""
 
-    def operation() -> tuple[JsonValue, list[str]]:
-        container = build_container()
-        result = asyncio.run(container.workflow.resume(run_id))
-        return (
-            jsonable(container.inspection.status(result.run_id)),
-            ["Fake runtime/sandbox remains non-isolating and did not execute project code."],
-        )
+    redactor = _environment_redactor()
 
-    _present_with_warnings("fleet resume", json_output, operation)
+    def operation() -> tuple[JsonValue, list[str]]:
+        container = build_container(redactor=redactor)
+        result = asyncio.run(container.workflow.resume(run_id))
+        data = container.inspection.status(result.run_id)
+        return jsonable(data), _runtime_warnings(data)
+
+    _present_with_warnings("fleet resume", json_output, operation, redactor=redactor)
 
 
 @app.command()
 def cancel(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False) -> None:
     """Cancel a non-completed run and clean only Fleet-owned resources."""
 
+    redactor = _environment_redactor()
+
     def operation() -> JsonValue:
-        container = build_container()
+        container = build_container(redactor=redactor)
         result = asyncio.run(container.cancellation.cancel(run_id))
         return jsonable(container.inspection.status(result.run_id))
 
-    _present("fleet cancel", json_output, operation)
+    _present("fleet cancel", json_output, operation, redactor=redactor)
 
 
 def _present(
@@ -281,11 +406,13 @@ def _present(
     operation: Callable[[], Any],
     *,
     raw_key: str | None = None,
+    redactor: Redactor | None = None,
 ) -> None:
+    active_redactor = redactor or _environment_redactor()
     try:
         data = operation()
     except FleetError as error:
-        _present_error(command, error, json_output)
+        _present_error(command, error, json_output, active_redactor)
         raise typer.Exit(code=_exit_code(error.code)) from error
     if json_output:
         _print_json(
@@ -307,11 +434,14 @@ def _present_with_warnings(
     command: str,
     json_output: bool,
     operation: Callable[[], tuple[JsonValue, list[str]]],
+    *,
+    redactor: Redactor | None = None,
 ) -> None:
+    active_redactor = redactor or _environment_redactor()
     try:
         data, warnings = operation()
     except FleetError as error:
-        _present_error(command, error, json_output)
+        _present_error(command, error, json_output, active_redactor)
         raise typer.Exit(code=_exit_code(error.code)) from error
     if json_output:
         _print_json(
@@ -329,10 +459,12 @@ def _present_with_warnings(
         console.print(f"[yellow]Warning:[/yellow] {warning}")
 
 
-def _present_error(command: str, error: FleetError, json_output: bool) -> None:
-    redactor = Redactor(
-        [item for item in os.environ.get("AGENT_FLEET_REDACT_VALUES", "").split(",") if item]
-    )
+def _present_error(
+    command: str,
+    error: FleetError,
+    json_output: bool,
+    redactor: Redactor,
+) -> None:
     message, _ = redactor.redact_text(error.message)
     remediation, _ = redactor.redact_text(error.remediation)
     details, _ = redactor.redact_data(error.details)
@@ -359,6 +491,42 @@ def _present_error(command: str, error: FleetError, json_output: bool) -> None:
                 border_style="red",
             )
         )
+
+
+def _environment_redactor() -> Redactor:
+    return Redactor(
+        [item for item in os.environ.get("AGENT_FLEET_REDACT_VALUES", "").split(",") if item]
+    )
+
+
+def _runtime_warnings(status: dict[str, object]) -> list[str]:
+    if status.get("runtime") == "pydantic-ai":
+        return [
+            "The configured model provider was contacted from the control plane; "
+            "FakeSandbox did not execute project code or provide OS isolation."
+        ]
+    return ["Fake runtime/sandbox: no model call, project execution, or OS isolation occurred."]
+
+
+def _initialization_result(data: dict[str, object]) -> tuple[JsonValue, list[str]]:
+    """Move all init/preview warnings into the standard envelope/presentation channel."""
+
+    warnings: list[str] = []
+    profile_warnings = data.get("warnings")
+    if isinstance(profile_warnings, list):
+        warnings.extend(item for item in profile_warnings if isinstance(item, str))
+    for key in ("security_warning", "warning"):
+        value = data.get(key)
+        if isinstance(value, str):
+            warnings.append(value)
+    if not any("sandbox" in warning.casefold() for warning in warnings):
+        warnings.extend(_runtime_warnings(data))
+    normalized = {
+        key: value
+        for key, value in data.items()
+        if key not in {"warnings", "security_warning", "warning"}
+    }
+    return jsonable(normalized), list(dict.fromkeys(warnings))
 
 
 def _print_json(envelope: JsonEnvelope) -> None:
@@ -392,7 +560,15 @@ def _print_human(data: Any) -> None:
 
 
 def _exit_code(code: ErrorCode) -> int:
-    if code in {ErrorCode.CONFIG_INVALID, ErrorCode.PATH_OUTSIDE_SCOPE}:
+    if code in {
+        ErrorCode.CONFIG_INVALID,
+        ErrorCode.CREDENTIAL_INVALID,
+        ErrorCode.CREDENTIAL_MISSING,
+        ErrorCode.PATH_OUTSIDE_SCOPE,
+        ErrorCode.PROVIDER_UNSUPPORTED,
+        ErrorCode.RUNTIME_CAPABILITY_MISSING,
+        ErrorCode.SANDBOX_UNAVAILABLE,
+    }:
         return 2
     if code in {
         ErrorCode.PROJECT_NOT_GIT,
@@ -403,6 +579,15 @@ def _exit_code(code: ErrorCode) -> int:
         return 3
     if code in {ErrorCode.APPROVAL_REQUIRED, ErrorCode.APPROVAL_DENIED, ErrorCode.APPROVAL_INVALID}:
         return 4
+    if code in {
+        ErrorCode.PROVIDER_FAILED,
+        ErrorCode.RUNTIME_BUDGET_EXCEEDED,
+        ErrorCode.RUNTIME_OUTPUT_INVALID,
+        ErrorCode.RUNTIME_RETRY_EXHAUSTED,
+        ErrorCode.RUNTIME_TIMEOUT,
+        ErrorCode.RUNTIME_UNAVAILABLE,
+    }:
+        return 5
     return 1
 
 

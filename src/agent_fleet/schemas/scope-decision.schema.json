@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "AcceptanceCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "description"
+      ],
+      "title": "AcceptanceCriterion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Untrusted CoS proposal accepted only after control-plane validation.",
+  "properties": {
+    "acceptance_criteria": {
+      "items": {
+        "$ref": "#/$defs/AcceptanceCriterion"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Acceptance Criteria",
+      "type": "array"
+    },
+    "allowed_paths": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^[^/\\\\\\x00][^\\\\\\x00]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Allowed Paths",
+      "type": "array"
+    },
+    "change_kind": {
+      "default": "code_change",
+      "enum": [
+        "read_only",
+        "code_change"
+      ],
+      "title": "Change Kind",
+      "type": "string"
+    },
+    "fleet_strategy": {
+      "enum": [
+        "direct",
+        "single_engineer",
+        "engineer_verifier",
+        "parallel_engineers",
+        "research_architect_engineer_verifier"
+      ],
+      "title": "Fleet Strategy",
+      "type": "string"
+    },
+    "forbidden_paths": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^[^/\\\\\\x00][^\\\\\\x00]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Forbidden Paths",
+      "type": "array"
+    },
+    "normalized_goal": {
+      "maxLength": 8192,
+      "minLength": 1,
+      "title": "Normalized Goal",
+      "type": "string"
+    },
+    "required_evidence": {
+      "items": {
+        "enum": [
+          "canonical_patch",
+          "command_evidence",
+          "control_plane_plan",
+          "independent_verifier_verdict"
+        ],
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Required Evidence",
+      "type": "array"
+    },
+    "workflow": {
+      "default": "code-change",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Workflow",
+      "type": "string"
+    }
+  },
+  "required": [
+    "normalized_goal",
+    "fleet_strategy",
+    "allowed_paths",
+    "forbidden_paths",
+    "acceptance_criteria",
+    "required_evidence"
+  ],
+  "title": "ScopeDecision",
+  "type": "object"
+}

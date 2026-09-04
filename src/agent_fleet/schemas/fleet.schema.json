@@ -187,24 +187,108 @@
       "title": "RequestedPermission",
       "type": "object"
     },
+    "RuntimeCapability": {
+      "enum": [
+        "structured_output",
+        "tool_calling",
+        "streaming",
+        "checkpoint",
+        "resume",
+        "usage_accounting"
+      ],
+      "title": "RuntimeCapability",
+      "type": "string"
+    },
     "RuntimeRequest": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "adapter": {
+                "const": "fake"
+              }
+            },
+            "required": [
+              "adapter"
+            ]
+          },
+          "then": {
+            "properties": {
+              "providerModel": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapter": {
+                "const": "pydantic-ai"
+              }
+            },
+            "required": [
+              "adapter"
+            ]
+          },
+          "then": {
+            "properties": {
+              "providerModel": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "providerModel"
+            ]
+          }
+        }
+      ],
       "properties": {
         "adapter": {
-          "const": "fake",
+          "enum": [
+            "fake",
+            "pydantic-ai"
+          ],
           "title": "Adapter",
           "type": "string"
         },
+        "providerModel": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 3,
+              "pattern": "^[a-z][a-z0-9-]*:[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Providermodel"
+        },
         "requiredCapabilities": {
+          "allOf": [
+            {
+              "contains": {
+                "const": "structured_output"
+              }
+            },
+            {
+              "contains": {
+                "const": "tool_calling"
+              }
+            }
+          ],
           "items": {
-            "enum": [
-              "structured_output",
-              "tool_calling"
-            ],
-            "type": "string"
+            "$ref": "#/$defs/RuntimeCapability"
           },
+          "maxItems": 8,
+          "minItems": 1,
           "title": "Requiredcapabilities",
-          "type": "array"
+          "type": "array",
+          "uniqueItems": true
         }
       },
       "required": [

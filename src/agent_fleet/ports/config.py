@@ -9,7 +9,12 @@ from agent_fleet.domain.repository_profile import RepositoryProfile
 
 class ConfigurationPort(Protocol):
     def default_files(
-        self, repository_name: str, profile: RepositoryProfile | None = None
+        self,
+        repository_name: str,
+        profile: RepositoryProfile | None = None,
+        *,
+        runtime_name: str = "fake",
+        provider_model: str | None = None,
     ) -> dict[str, str]: ...
 
     def validate_files(self, files: dict[str, str]) -> FleetSpec: ...
@@ -21,6 +26,8 @@ class ConfigurationPort(Protocol):
     def hash(self, spec: FleetSpec) -> str: ...
 
     def snapshot_hash(self, snapshot: ConfigSnapshot) -> str: ...
+
+    def check_apply(self, root: Path, files: dict[str, str]) -> FleetSpec: ...
 
     def stage(self, root: Path, files: dict[str, str]) -> FleetSpec: ...
 

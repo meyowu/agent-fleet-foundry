@@ -11,7 +11,9 @@ requires-python = ">=3.12,<3.15"
 authors = [{ name = "Agent Fleet contributors" }]
 dependencies = [
   "platformdirs>=4.2,<5",
-  "pydantic>=2.8,<3",
+  "openai>=3.8,<4",
+  "pydantic>=2.12,<3",
+  "pydantic-ai-slim[openai]>=2.39,<3",
   "PyYAML>=6.0,<7",
   "rich>=13.7,<15",
   "typer>=0.12,<1",
@@ -32,6 +34,13 @@ fleet = "agent_fleet.cli.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_fleet"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src/agent_fleet",
+  "/README.md",
+  "/pyproject.toml",
+]
 
 [tool.ruff]
 target-version = "py312"
@@ -59,6 +68,7 @@ asyncio_mode = "auto"
 markers = [
   "integration: tests multiple real adapters together",
   "e2e: subprocess-level end-to-end tests",
+  "live_provider: explicit opt-in test that contacts a configured model provider",
 ]
 
 [tool.coverage.run]

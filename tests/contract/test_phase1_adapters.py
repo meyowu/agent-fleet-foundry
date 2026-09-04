@@ -22,10 +22,17 @@ from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     AgentInvocation,
     AgentRole,
-    EngineerScript,
     FakeScenario,
+    ImplementationReport,
+    RuntimeConfiguration,
+    RuntimeCredentialCheck,
+    RuntimeToolCall,
+    RuntimeToolDefinition,
+    RuntimeToolExecutionRecord,
+    RuntimeToolResult,
+    ScopeDecision,
     Verdict,
-    VerifierScript,
+    VerifierVerdict,
     WorkflowStage,
     WorkspaceKind,
 )
@@ -38,7 +45,11 @@ from agent_fleet.ports.diagnostics import SystemDiagnostics
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.repository_profile import RepositoryProfilerPort
-from agent_fleet.ports.runtime import RuntimeAdapter
+from agent_fleet.ports.runtime import (
+    EMPTY_RUNTIME_TOOL_CATALOG,
+    RuntimeAdapter,
+    RuntimeInvocationServices,
+)
 from agent_fleet.ports.state_store import StateStore
 
 
@@ -141,8 +152,28 @@ def test_git_repository_workspace_patch_round_trip_does_not_run_checkout_hook(
         repository.cleanup_workspace(target, candidate)
 
 
+class _RecordingRuntimeToolCatalog:
+    def __init__(self) -> None:
+        self.calls: list[RuntimeToolCall] = []
+
+    @property
+    def definitions(self) -> tuple[RuntimeToolDefinition, ...]:
+        return ()
+
+    @property
+    def records(self) -> tuple[RuntimeToolExecutionRecord, ...]:
+        return ()
+
+    def validate(self, call: RuntimeToolCall) -> None:
+        del call
+
+    async def execute(self, call: RuntimeToolCall) -> RuntimeToolResult:
+        self.calls.append(call)
+        return RuntimeToolResult(call_id=call.call_id, name=call.name)
+
+
 @pytest.mark.asyncio
-async def test_fake_runtime_returns_typed_role_outputs_without_executing_actions(
+async def test_fake_runtime_returns_typed_outputs_and_delegates_actions(
     tmp_path: Path,
 ) -> None:
     runtime: RuntimeAdapter = FakeRuntimeAdapter()
@@ -152,6 +183,11 @@ async def test_fake_runtime_returns_typed_role_outputs_without_executing_actions
     workspace = tmp_path / "runtime-observation"
     workspace.mkdir()
     before = _snapshot(workspace)
+    configuration = RuntimeConfiguration()
+    catalog = _RecordingRuntimeToolCatalog()
+    preflight = runtime.preflight(configuration, credential_check=RuntimeCredentialCheck.RESOLVE)
+    assert preflight.ready is True
+    assert preflight.credential_status.value == "not_selected"
 
     cos_result = await runtime.invoke(
         AgentInvocation(
@@ -163,7 +199,8 @@ async def test_fake_runtime_returns_typed_role_outputs_without_executing_actions
             iteration=0,
             max_steps=10,
             input={"goal": "Fix the canary", "fake_scenario": FakeScenario.SUCCESS.value},
-        )
+        ),
+        RuntimeInvocationServices(configuration, EMPTY_RUNTIME_TOOL_CATALOG),
     )
     engineer_result = await runtime.invoke(
         AgentInvocation(
@@ -175,7 +212,8 @@ async def test_fake_runtime_returns_typed_role_outputs_without_executing_actions
             iteration=0,
             max_steps=20,
             input={"goal": "Fix the canary", "fake_scenario": FakeScenario.SUCCESS.value},
-        )
+        ),
+        RuntimeInvocationServices(configuration, catalog),
     )
     verifier_result = await runtime.invoke(
         AgentInvocation(
@@ -191,15 +229,20 @@ async def test_fake_runtime_returns_typed_role_outputs_without_executing_actions
                 "fake_scenario": FakeScenario.SUCCESS.value,
                 "repair_iterations": 0,
             },
-        )
+        ),
+        RuntimeInvocationServices(configuration, catalog),
     )
 
-    engineer = EngineerScript.model_validate(engineer_result.output)
-    verifier = VerifierScript.model_validate(verifier_result.output)
-    assert cos_result.output["fleet_strategy"] == "engineer_verifier"
-    assert engineer.actions
-    assert verifier.actions
-    assert verifier.verdict.verdict is Verdict.PASS
+    assert isinstance(cos_result.output, ScopeDecision)
+    assert isinstance(engineer_result.output, ImplementationReport)
+    assert isinstance(verifier_result.output, VerifierVerdict)
+    assert cos_result.output.fleet_strategy == "engineer_verifier"
+    assert verifier_result.output.verdict is Verdict.PASS
+    assert [call.name for call in catalog.calls] == [
+        "workspace_write_file",
+        "run_verification",
+        "run_verification",
+    ]
     assert _snapshot(workspace) == before
     assert not _runtime_imports_execution_bypass()
 
@@ -215,7 +258,7 @@ def test_sqlite_state_store_migrates_to_supported_version_and_reopens(tmp_path: 
         versions = connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-    assert versions == [(SUPPORTED_SCHEMA_VERSION,)]
+    assert versions == [(version,) for version in range(1, SUPPORTED_SCHEMA_VERSION + 1)]
 
 
 def test_local_diagnostics_clock_and_uuid_ids_satisfy_system_contracts(tmp_path: Path) -> None:

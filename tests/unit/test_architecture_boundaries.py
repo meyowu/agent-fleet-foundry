@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -52,3 +54,44 @@ def test_runtime_invocation_accepts_logical_artifact_and_patch_identity() -> Non
         },
     )
     assert request.input["patch_sha256"] == "a" * 64
+
+
+def test_pydantic_runtime_has_no_repository_sandbox_or_native_execution_import() -> None:
+    adapter_path = (
+        Path(__file__).parents[2]
+        / "src"
+        / "agent_fleet"
+        / "adapters"
+        / "runtime"
+        / "pydantic_ai.py"
+    )
+    source = adapter_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported_modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imported_modules.add(node.module)
+
+    forbidden_prefixes = (
+        "subprocess",
+        "agent_fleet.application",
+        "agent_fleet.adapters.repository",
+        "agent_fleet.adapters.sandbox",
+        "pydantic_ai.mcp",
+        "pydantic_ai.builtin_tools",
+    )
+    assert not any(
+        module == prefix or module.startswith(f"{prefix}.")
+        for module in imported_modules
+        for prefix in forbidden_prefixes
+    )
+    for forbidden_symbol in (
+        "MCPServer",
+        "ShellToolset",
+        "CodeExecutionTool",
+        "WebSearchTool",
+        "FunctionToolset",
+    ):
+        assert forbidden_symbol not in source

@@ -1,17 +1,31 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
+import sqlite3
 from pathlib import Path
+from types import TracebackType
 
 import pytest
+import typer
+from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from typer.testing import CliRunner
 
+import agent_fleet.adapters.runtime.pydantic_ai as runtime_module
+import agent_fleet.cli.app as cli_module
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
+from agent_fleet.adapters.runtime.fake import FakeRuntimeAdapter
 from agent_fleet.adapters.system import UuidIdGenerator
+from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.bootstrap import build_container
 from agent_fleet.cli.app import app
+from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.models import RuntimeCapability
+from agent_fleet.domain.offline_canary import FIXED_CANARY
 from agent_fleet.domain.security import canonical_json_hash
 
 
@@ -21,6 +35,12 @@ def _repository(tmp_path: Path) -> Path:
     )
 
 
+class MissingToolCallingRuntime(FakeRuntimeAdapter):
+    @property
+    def capabilities(self) -> frozenset[RuntimeCapability]:
+        return frozenset({RuntimeCapability.STRUCTURED_OUTPUT})
+
+
 def test_version_and_doctor_json_envelopes(tmp_path: Path) -> None:
     runner = CliRunner()
     environment = {"AGENT_FLEET_HOME": str(tmp_path / "state")}
@@ -28,7 +48,10 @@ def test_version_and_doctor_json_envelopes(tmp_path: Path) -> None:
     assert version.exit_code == 0, version.output
     version_data = json.loads(version.stdout)
     assert version_data["api_version"] == "agentfleet.dev/v1alpha1"
-    assert version_data["data"]["phase"] == "0/1.5"
+    assert version_data["data"]["phase"] == "2"
+    assert version_data["data"]["runtime"] == "fake"
+    assert version_data["data"]["runtimes"] == ["fake", "pydantic-ai"]
+    assert version_data["data"]["sandbox"] == "fake"
 
     doctor = runner.invoke(app, ["doctor", "--json", "--path", str(tmp_path)], env=environment)
     assert doctor.exit_code == 0, doctor.output
@@ -226,6 +249,733 @@ def test_cli_init_preview_profiles_and_writes_nothing(tmp_path: Path) -> None:
     assert ".fleet/project/verification.yaml" in data["proposed_files"]
     assert not (repository / ".fleet").exists()
     assert not state_root.exists()
+
+
+def test_cli_init_rejects_preview_with_yes_as_ambiguous(tmp_path: Path) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "ambiguous-init-state"
+
+    result = runner.invoke(
+        app,
+        ["init", str(repository), "--preview", "--yes", "--json"],
+        env={"AGENT_FLEET_HOME": str(state_root)},
+    )
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"]["code"] == "CONFIG_INVALID"
+    assert not state_root.exists()
+    assert not (repository / ".fleet").exists()
+
+
+def test_cli_human_init_shows_exact_patch_and_execution_boundary_before_confirmation(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "human-preview-state"
+
+    result = runner.invoke(
+        app,
+        ["init", str(repository)],
+        input="n\n",
+        env={"AGENT_FLEET_HOME": str(state_root)},
+    )
+
+    assert result.exit_code == 1
+    assert "Execution and access boundary" in result.stdout
+    assert "Runtime: fake" in result.stdout
+    assert "security_level=fake" in result.stdout
+    assert "Exact .fleet proposal patch" in result.stdout
+    assert "--- a/.fleet/fleet.yaml" in result.stdout
+    assert "workspace.write_file" in result.stdout
+    assert "Apply exactly this validated .fleet proposal?" in result.stdout
+    assert not state_root.exists()
+    assert not (repository / ".fleet").exists()
+
+
+def test_cli_human_init_rejects_proposal_drift_after_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "proposal-race-state"
+
+    def mutate_then_confirm(_prompt: str) -> bool:
+        (repository / "package.json").write_text(
+            '{"packageManager":"npm@11","scripts":{"test":"vitest run"}}\n',
+            encoding="utf-8",
+        )
+        (repository / "package-lock.json").write_text("{}\n", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(typer, "confirm", mutate_then_confirm)
+
+    result = runner.invoke(
+        app,
+        ["init", str(repository)],
+        env={"AGENT_FLEET_HOME": str(state_root)},
+    )
+
+    assert result.exit_code == 2
+    assert "proposal changed after it was reviewed" in result.output
+    assert not state_root.exists()
+    assert not (repository / ".fleet").exists()
+
+
+def test_cli_init_warnings_use_the_standard_envelope(tmp_path: Path) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["init", str(repository), "--yes", "--json"],
+        env={"AGENT_FLEET_HOME": str(tmp_path / "warning-state")},
+    )
+
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["warnings"]
+    assert "fake" in envelope["warnings"][0].casefold()
+    assert "warning" not in envelope["data"]
+    assert "warnings" not in envelope["data"]
+    assert "security_warning" not in envelope["data"]
+
+
+def test_cli_preview_maps_invalid_existing_utf8_to_stable_json(tmp_path: Path) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    fleet_root = repository / ".fleet"
+    fleet_root.mkdir()
+    (fleet_root / "fleet.yaml").write_bytes(b"\xff\xfe\x00")
+
+    result = runner.invoke(
+        app,
+        ["init", str(repository), "--preview", "--json"],
+        env={"AGENT_FLEET_HOME": str(tmp_path / "invalid-utf8-state")},
+    )
+
+    assert result.exit_code == 2
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "CONFIG_INVALID"
+    assert "Traceback" not in result.output
+    assert not (tmp_path / "invalid-utf8-state").exists()
+
+
+def test_cli_provider_preview_does_not_read_credential_or_write_state(tmp_path: Path) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "provider-preview-state"
+    credential_ref = "env:PHASE2_PREVIEW_KEY"
+
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "openai:gpt-5-mini",
+            "--credential-ref",
+            credential_ref,
+            "--preview",
+            "--json",
+        ],
+        env={"AGENT_FLEET_HOME": str(state_root)},
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)["data"]
+    serialized = json.dumps(data, sort_keys=True)
+    assert data["runtime"] == "pydantic-ai"
+    assert data["provider_model"] == "openai:gpt-5-mini"
+    assert credential_ref not in serialized
+    assert "credential" not in data["proposed_files"][".fleet/fleet.yaml"].casefold()
+    assert not state_root.exists()
+    assert not (repository / ".fleet").exists()
+
+
+def test_cli_preview_rejects_unavailable_sandbox_before_writes(tmp_path: Path) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "sandbox-preview-state"
+
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--sandbox",
+            "docker",
+            "--preview",
+            "--json",
+        ],
+        env={"AGENT_FLEET_HOME": str(state_root)},
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "SANDBOX_UNAVAILABLE"
+    assert not state_root.exists()
+    assert not (repository / ".fleet").exists()
+
+
+def test_cli_provider_init_missing_credential_is_stable_and_writes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "missing-provider-state"
+    variable_name = "PHASE2_DEFINITELY_MISSING_PROVIDER_KEY"
+    credential_ref = f"env:{variable_name}"
+    monkeypatch.delenv(variable_name, raising=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "openai:gpt-5-mini",
+            "--credential-ref",
+            credential_ref,
+            "--sandbox",
+            "fake",
+            "--yes",
+            "--json",
+        ],
+        env={"AGENT_FLEET_HOME": str(state_root)},
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "CREDENTIAL_MISSING"
+    assert credential_ref not in result.stdout
+    assert variable_name not in result.stdout
+    assert not state_root.exists()
+    assert not (repository / ".fleet").exists()
+
+
+def test_cli_malformed_credential_reference_is_rejected_without_echo(tmp_path: Path) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "malformed-reference-state"
+    malformed = "raw-provider-secret"
+
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "openai:gpt-5-mini",
+            "--credential-ref",
+            malformed,
+            "--preview",
+            "--json",
+        ],
+        env={"AGENT_FLEET_HOME": str(state_root)},
+    )
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"]["code"] == "CONFIG_INVALID"
+    assert malformed not in result.stdout
+    assert not state_root.exists()
+    assert not (repository / ".fleet").exists()
+
+
+def test_cli_unsupported_provider_fails_before_credential_read_or_state_write(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "unsupported-provider-state"
+    credential_ref = "env:PHASE2_UNREAD_PROVIDER_KEY"
+
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "anthropic:not-enabled",
+            "--credential-ref",
+            credential_ref,
+            "--yes",
+            "--json",
+        ],
+        env={"AGENT_FLEET_HOME": str(state_root)},
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "PROVIDER_UNSUPPORTED"
+    assert credential_ref not in result.stdout
+    assert not state_root.exists()
+    assert not (repository / ".fleet").exists()
+
+
+def test_cli_runtime_capability_mismatch_fails_before_state_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "capability-mismatch-state"
+    container = build_container(state_root, migrate=False)
+    container.projects.runtime_registry = RuntimeRegistry(
+        {"pydantic-ai": MissingToolCallingRuntime()}
+    )
+    monkeypatch.setattr(cli_module, "build_container", lambda *args, **kwargs: container)
+
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "openai:gpt-5-mini",
+            "--credential-ref",
+            "env:CAPABILITY_MISMATCH_KEY",
+            "--preview",
+            "--json",
+        ],
+        env={"AGENT_FLEET_HOME": str(state_root)},
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "RUNTIME_CAPABILITY_MISSING"
+    assert payload["error"]["details"]["missing_capabilities"] == ["tool_calling"]
+    assert not state_root.exists()
+    assert not (repository / ".fleet").exists()
+
+
+def test_cli_provider_run_rechecks_missing_credential_before_run_creation(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "provider-run-state"
+    variable_name = "PHASE2_TEMPORARY_PROVIDER_KEY"
+    credential_ref = f"env:{variable_name}"
+    sentinel = "phase2-temporary-provider-secret"
+    base_environment = {"AGENT_FLEET_HOME": str(state_root)}
+    configured_environment = {**base_environment, variable_name: sentinel}
+
+    initialized = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "openai:gpt-5-mini",
+            "--credential-ref",
+            credential_ref,
+            "--yes",
+            "--json",
+        ],
+        env=configured_environment,
+    )
+    assert initialized.exit_code == 0, initialized.output
+    assert credential_ref not in initialized.stdout
+    assert sentinel not in initialized.stdout
+
+    executed = runner.invoke(
+        app,
+        ["run", "Fix the canary behavior", "--project", str(repository), "--json"],
+        env=base_environment,
+    )
+
+    assert executed.exit_code == 2
+    payload = json.loads(executed.stdout)
+    assert payload["error"]["code"] == "CREDENTIAL_MISSING"
+    assert credential_ref not in executed.stdout
+    assert variable_name not in executed.stdout
+    assert sentinel not in executed.stdout
+    with sqlite3.connect(state_root / "state.db") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM runs").fetchone() == (0,)
+
+    doctor = runner.invoke(
+        app,
+        ["doctor", "--path", str(repository), "--json"],
+        env=base_environment,
+    )
+    assert doctor.exit_code == 0, doctor.output
+    report = json.loads(doctor.stdout)
+    assert report["data"]["healthy"] is False
+    credential_check = next(
+        item for item in report["data"]["checks"] if item["name"] == "provider_credential"
+    )
+    assert credential_check["required"] is True
+    assert credential_check["ok"] is False
+    assert "status=missing" in credential_check["detail"]
+    assert credential_ref not in doctor.stdout
+    assert variable_name not in doctor.stdout
+    assert sentinel not in doctor.stdout
+
+
+def test_cli_real_runtime_rejects_explicit_fake_scenario_before_run_creation(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "provider-fake-scenario-state"
+    variable_name = "PHASE2_FAKE_SCENARIO_PROVIDER_KEY"
+    environment = {
+        "AGENT_FLEET_HOME": str(state_root),
+        variable_name: "phase2-fake-scenario-provider-secret",
+    }
+    initialized = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "openai:gpt-5-mini",
+            "--credential-ref",
+            f"env:{variable_name}",
+            "--yes",
+            "--json",
+        ],
+        env=environment,
+    )
+    assert initialized.exit_code == 0, initialized.output
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "Fix the canary behavior",
+            "--project",
+            str(repository),
+            "--fake-scenario",
+            "success",
+            "--json",
+        ],
+        env=environment,
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "CONFIG_INVALID"
+    with sqlite3.connect(state_root / "state.db") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM runs").fetchone() == (0,)
+
+
+@pytest.mark.parametrize("option", ["--runtime", "--provider-model", "--credential-ref"])
+def test_cli_empty_provider_override_is_not_silently_ignored(
+    tmp_path: Path,
+    option: str,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / f"empty-{option.removeprefix('--')}-state"
+    variable_name = "PHASE2_EMPTY_OVERRIDE_PROVIDER_KEY"
+    environment = {
+        "AGENT_FLEET_HOME": str(state_root),
+        variable_name: "phase2-empty-override-provider-secret",
+    }
+    initialized = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "openai:gpt-5-mini",
+            "--credential-ref",
+            f"env:{variable_name}",
+            "--yes",
+            "--json",
+        ],
+        env=environment,
+    )
+    assert initialized.exit_code == 0, initialized.output
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "Fix the canary behavior",
+            "--project",
+            str(repository),
+            option,
+            "",
+            "--json",
+        ],
+        env=environment,
+    )
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"]["code"] == "CONFIG_INVALID"
+    with sqlite3.connect(state_root / "state.db") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM runs").fetchone() == (0,)
+
+
+def test_cli_provider_failure_redacts_registered_secret_before_goal_and_error_persistence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "provider-redaction-state"
+    variable_name = "PHASE2_DYNAMIC_REDACTION_KEY"
+    credential_ref = f"env:{variable_name}"
+    sentinel = "phase2-provider-secret+/="
+    encoded = base64.b64encode(sentinel.encode()).decode()
+    environment = {
+        "AGENT_FLEET_HOME": str(state_root),
+        variable_name: sentinel,
+    }
+    initialized = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "openai:gpt-5-mini",
+            "--credential-ref",
+            credential_ref,
+            "--yes",
+            "--json",
+        ],
+        env=environment,
+    )
+    assert initialized.exit_code == 0, initialized.output
+
+    def reject_client(**arguments: object) -> object:
+        assert arguments["api_key"] == sentinel
+        raise FleetError(
+            ErrorCode.PROVIDER_FAILED,
+            f"provider echoed {sentinel}",
+            f"upstream diagnostic contained {encoded}",
+            details={"raw": sentinel, "encoded": encoded},
+        )
+
+    monkeypatch.setattr(runtime_module, "AsyncOpenAI", reject_client)
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            f"Do not persist {sentinel} or {encoded}",
+            "--project",
+            str(repository),
+            "--json",
+        ],
+        env=environment,
+    )
+
+    assert result.exit_code == 5
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "PROVIDER_FAILED"
+    assert payload["error"]["details"]["run_id"].startswith("run_")
+    assert sentinel not in result.stdout
+    assert encoded not in result.stdout
+    with sqlite3.connect(state_root / "state.db") as connection:
+        [(stored_goal,)] = connection.execute("SELECT json_extract(data_json, '$.goal') FROM runs")
+    assert "<redacted:" in stored_goal
+    for path in state_root.rglob("*"):
+        if path.is_file():
+            content = path.read_bytes()
+            assert sentinel.encode() not in content, path
+            assert encoded.encode() not in content, path
+
+
+def test_cli_offline_pydantic_ai_run_reports_usage_and_fake_sandbox_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "offline-provider-state"
+    variable_name = "PHASE2_OFFLINE_PROVIDER_KEY"
+    sentinel = "phase2-offline-provider-secret"
+    environment = {
+        "AGENT_FLEET_HOME": str(state_root),
+        variable_name: sentinel,
+    }
+    calls: dict[str, int] = {}
+
+    async def model_function(
+        messages: list[ModelMessage],
+        info: AgentInfo,
+    ) -> ModelResponse:
+        assert messages
+        assert "fake_scenario" not in repr(messages)
+        output_name = info.output_tools[0].name
+        calls[output_name] = calls.get(output_name, 0) + 1
+        if output_name == "submit_scope_decision":
+            payload = {
+                "normalized_goal": "Fix the canary behavior.",
+                "workflow": "code-change",
+                "change_kind": "code_change",
+                "fleet_strategy": "engineer_verifier",
+                "allowed_paths": ["src/canary_calc/core.py"],
+                "forbidden_paths": [".git", ".fleet"],
+                "acceptance_criteria": [
+                    {
+                        "criterion_id": "canary-zero-division",
+                        "description": "divide by zero raises the stable ValueError",
+                    }
+                ],
+                "required_evidence": [
+                    "canonical_patch",
+                    "command_evidence",
+                    "independent_verifier_verdict",
+                ],
+            }
+        elif output_name == "submit_implementation_report" and calls[output_name] == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "workspace_write_file",
+                        {
+                            "path": "src/canary_calc/core.py",
+                            "content": FIXED_CANARY,
+                            "reason": "Apply the bounded canary repair.",
+                        },
+                        tool_call_id="cli-engineer-write",
+                    ),
+                    ToolCallPart(
+                        "run_verification",
+                        {"reason": "Record declared simulated evidence."},
+                        tool_call_id="cli-engineer-check",
+                    ),
+                ]
+            )
+        elif output_name == "submit_implementation_report":
+            payload = {
+                "summary": "Applied the bounded canary repair.",
+                "intended_changed_paths": ["src/canary_calc/core.py"],
+                "tests_added_or_changed": [],
+                "criterion_results": ["canary-zero-division: candidate updated"],
+                "evidence_artifact_ids": [],
+                "unresolved_limitations": ["FakeSandbox did not execute project code."],
+                "verifier_focus": ["Check the exact ValueError behavior."],
+            }
+        elif output_name == "submit_verifier_verdict" and calls[output_name] == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "run_verification",
+                        {"reason": "Record independent simulated evidence."},
+                        tool_call_id="cli-verifier-check",
+                    )
+                ]
+            )
+        else:
+            assert output_name == "submit_verifier_verdict"
+            payload = {
+                "verdict": "pass",
+                "criterion_results": ["canary-zero-division: passed review"],
+                "evidence_artifact_ids": [],
+                "regressions": [],
+                "required_repairs": [],
+                "proof_gaps": ["FakeSandbox did not execute project code."],
+                "rationale": "Review passed, but execution remains simulated.",
+            }
+        return ModelResponse(
+            parts=[ToolCallPart(output_name, payload, tool_call_id=f"cli-{output_name}")]
+        )
+
+    class OfflineClient:
+        async def __aenter__(self) -> OfflineClient:
+            return self
+
+        async def __aexit__(
+            self,
+            exception_type: type[BaseException] | None,
+            exception: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
+            del exception_type, exception, traceback
+
+    def client_factory(**arguments: object) -> OfflineClient:
+        assert arguments["api_key"] == sentinel
+        assert arguments["max_retries"] == 0
+        return OfflineClient()
+
+    def provider_factory(*, openai_client: object) -> object:
+        assert isinstance(openai_client, OfflineClient)
+        return object()
+
+    def model_factory(model_name: object, *, provider: object) -> Model:
+        assert model_name == "gpt-5-mini"
+        assert provider is not None
+        return FunctionModel(model_function)
+
+    monkeypatch.setattr(runtime_module, "AsyncOpenAI", client_factory)
+    monkeypatch.setattr(runtime_module, "OpenAIProvider", provider_factory)
+    monkeypatch.setattr(runtime_module, "OpenAIResponsesModel", model_factory)
+
+    initialized = runner.invoke(
+        app,
+        [
+            "init",
+            str(repository),
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            "openai:gpt-5-mini",
+            "--credential-ref",
+            f"env:{variable_name}",
+            "--yes",
+            "--json",
+        ],
+        env=environment,
+    )
+    assert initialized.exit_code == 0, initialized.output
+
+    executed = runner.invoke(
+        app,
+        ["run", "Fix the canary behavior", "--project", str(repository), "--json"],
+        env=environment,
+    )
+
+    assert executed.exit_code == 0, executed.output
+    envelope = json.loads(executed.stdout)
+    data = envelope["data"]
+    run_id = data["run_id"]
+    assert data["status"] == "ready_for_review"
+    assert data["runtime"] == "pydantic-ai"
+    assert data["provider_model"] == "openai:gpt-5-mini"
+    assert len(data["runtime_usage_artifact_ids"]) == 3
+    assert data["verified_complete"] is False
+    assert "SIMULATED_EVIDENCE_ONLY" in data["evidence"]["completion_reason_codes"]
+    assert "model provider was contacted" in envelope["warnings"][0]
+    assert "FakeSandbox" in envelope["warnings"][0]
+    assert calls == {
+        "submit_scope_decision": 1,
+        "submit_implementation_report": 2,
+        "submit_verifier_verdict": 2,
+    }
+    assert sentinel not in executed.stdout
+    assert variable_name not in executed.stdout
+
+    human = runner.invoke(app, ["resume", run_id], env=environment)
+    assert human.exit_code == 0, human.output
+    assert "model provider was contacted" in human.stdout
+    assert "FakeSandbox" in human.stdout
+    assert sentinel not in human.stdout
 
 
 def test_init_rejects_state_directory_inside_target_repository(tmp_path: Path) -> None:

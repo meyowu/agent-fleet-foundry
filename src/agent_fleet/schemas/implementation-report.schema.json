@@ -1,0 +1,82 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "criterion_results": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Criterion Results",
+      "type": "array"
+    },
+    "evidence_artifact_ids": {
+      "items": {
+        "pattern": "^art_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "maxItems": 256,
+      "title": "Evidence Artifact Ids",
+      "type": "array"
+    },
+    "intended_changed_paths": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^[^/\\\\\\x00][^\\\\\\x00]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Intended Changed Paths",
+      "type": "array"
+    },
+    "summary": {
+      "maxLength": 8192,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "tests_added_or_changed": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Tests Added Or Changed",
+      "type": "array"
+    },
+    "unresolved_limitations": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Unresolved Limitations",
+      "type": "array"
+    },
+    "verifier_focus": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Verifier Focus",
+      "type": "array"
+    }
+  },
+  "required": [
+    "summary",
+    "intended_changed_paths",
+    "tests_added_or_changed",
+    "criterion_results",
+    "evidence_artifact_ids",
+    "unresolved_limitations",
+    "verifier_focus"
+  ],
+  "title": "ImplementationReport",
+  "type": "object"
+}

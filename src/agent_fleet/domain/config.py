@@ -10,7 +10,9 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from agent_fleet.domain.models import (
     ActionId,
     AgentLifecycle,
+    ProviderModelId,
     RoleId,
+    RuntimeCapability,
     Sha256,
     StrictModel,
     WorkflowId,
@@ -32,10 +34,68 @@ class Metadata(ConfigModel):
 
 
 class RuntimeRequest(ConfigModel):
-    adapter: Literal["fake"]
-    required_capabilities: list[Literal["structured_output", "tool_calling"]] = Field(
-        alias="requiredCapabilities"
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=True,
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"adapter": {"const": "fake"}},
+                        "required": ["adapter"],
+                    },
+                    "then": {"properties": {"providerModel": {"type": "null"}}},
+                },
+                {
+                    "if": {
+                        "properties": {"adapter": {"const": "pydantic-ai"}},
+                        "required": ["adapter"],
+                    },
+                    "then": {
+                        "properties": {"providerModel": {"type": "string"}},
+                        "required": ["providerModel"],
+                    },
+                },
+            ]
+        },
     )
+
+    adapter: Literal["fake", "pydantic-ai"]
+    provider_model: ProviderModelId | None = Field(
+        default=None,
+        alias="providerModel",
+        min_length=3,
+        max_length=200,
+        pattern=r"^[a-z][a-z0-9-]*:[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+    )
+    required_capabilities: list[RuntimeCapability] = Field(
+        alias="requiredCapabilities",
+        min_length=1,
+        max_length=8,
+        json_schema_extra={
+            "uniqueItems": True,
+            "allOf": [
+                {"contains": {"const": "structured_output"}},
+                {"contains": {"const": "tool_calling"}},
+            ],
+        },
+    )
+
+    @model_validator(mode="after")
+    def validate_runtime_selection(self) -> RuntimeRequest:
+        if len(self.required_capabilities) != len(set(self.required_capabilities)):
+            raise ValueError("runtime capabilities must be unique")
+        required = {
+            RuntimeCapability.STRUCTURED_OUTPUT,
+            RuntimeCapability.TOOL_CALLING,
+        }
+        if not required.issubset(self.required_capabilities):
+            raise ValueError("runtime must require structured_output and tool_calling capabilities")
+        if self.adapter == "fake" and self.provider_model is not None:
+            raise ValueError("fake runtime cannot declare a provider model")
+        if self.adapter == "pydantic-ai" and self.provider_model is None:
+            raise ValueError("pydantic-ai runtime requires providerModel")
+        return self
 
 
 class SandboxRequest(ConfigModel):
