@@ -16,7 +16,7 @@ from threading import Barrier
 
 import pytest
 
-from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
+from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION, SqliteStateStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
@@ -469,13 +469,13 @@ def test_existing_claim_cannot_be_rebound_to_changed_hash(tmp_path: Path) -> Non
 def test_v3_upgrade_adds_claim_table_without_rewriting_existing_intent(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path, legacy=True)
     before = fixture.state.get_intent(fixture.intent.intent_id)
-    assert fixture.state.migrate() == 4
+    assert fixture.state.migrate() == SUPPORTED_SCHEMA_VERSION
     assert fixture.state.get_intent(fixture.intent.intent_id) == before
     assert _claims(fixture.state) == []
     assert fixture.state.claim_reserved_intent_for_dispatch(
         fixture.intent.intent_id, fixture.intent_hash
     )
-    assert fixture.reopen().migrate() == 4
+    assert fixture.reopen().migrate() == SUPPORTED_SCHEMA_VERSION
     assert (
         fixture.reopen().claim_reserved_intent_for_dispatch(
             fixture.intent.intent_id, fixture.intent_hash

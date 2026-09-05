@@ -9,6 +9,13 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from agent_fleet.domain.bootstrap import BootstrapReport
+from agent_fleet.domain.budgets import (
+    ModelRequestAccounting,
+    ModelRequestReservation,
+    RunBudgetLimits,
+    RunBudgetSnapshot,
+    RuntimeAttempt,
+)
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec, VerificationProfile
 from agent_fleet.domain.evidence import CommandEvidence, EvidenceBundle, ResourceCleanupReceipt
 from agent_fleet.domain.fleet_patch import FleetPatch
@@ -18,6 +25,7 @@ from agent_fleet.domain.models import (
     ApprovalRequest,
     CapabilityGrant,
     CommandSpec,
+    CriterionResult,
     ImplementationReport,
     JsonEnvelope,
     PermissionDecision,
@@ -54,6 +62,12 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "scope-decision.schema.json": ScopeDecision,
     "implementation-report.schema.json": ImplementationReport,
     "usage-record.schema.json": UsageRecord,
+    "run-budget-limits.schema.json": RunBudgetLimits,
+    "run-budget-snapshot.schema.json": RunBudgetSnapshot,
+    "runtime-attempt.schema.json": RuntimeAttempt,
+    "model-request-reservation.schema.json": ModelRequestReservation,
+    "model-request-accounting.schema.json": ModelRequestAccounting,
+    "criterion-result.schema.json": CriterionResult,
     "tool-intent.schema.json": ToolIntent,
     "approval-request.schema.json": ApprovalRequest,
     "capability-grant.schema.json": CapabilityGrant,

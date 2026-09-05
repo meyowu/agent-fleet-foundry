@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "attempt_id": {
+      "pattern": "^corr_[0-9a-f]{32}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "request_sequence": {
+      "maximum": 100000,
+      "minimum": 1,
+      "title": "Request Sequence",
+      "type": "integer"
+    },
+    "requested_tokens": {
+      "maximum": 100000000,
+      "minimum": 1,
+      "title": "Requested Tokens",
+      "type": "integer"
+    },
+    "reserved_at": {
+      "format": "date-time",
+      "title": "Reserved At",
+      "type": "string"
+    },
+    "token_allowance": {
+      "maximum": 100000000,
+      "minimum": 1,
+      "title": "Token Allowance",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "attempt_id",
+    "request_sequence",
+    "token_allowance",
+    "requested_tokens",
+    "reserved_at"
+  ],
+  "title": "ModelRequestReservation",
+  "type": "object"
+}

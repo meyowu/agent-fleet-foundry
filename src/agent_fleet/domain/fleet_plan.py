@@ -20,6 +20,7 @@ from agent_fleet.domain.models import (
     TaskSpec,
     _require_utc,
 )
+from agent_fleet.domain.paths import path_is_within
 
 NodeId = Annotated[
     str, StringConstraints(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
@@ -164,7 +165,10 @@ def validate_fleet_plan(
     for writer in writers:
         if not writer.requires_workspace or not writer.scope:
             raise _invalid("Every writer requires a workspace and a non-empty path scope.")
-        if any(path not in task.allowed_paths for path in writer.scope):
+        if any(
+            not path_is_within(path, task.allowed_paths, forbidden=task.forbidden_paths)
+            for path in writer.scope
+        ):
             raise _invalid(
                 f"Writer {writer.node_id!r} requests paths outside the TaskSpec allow-list."
             )
@@ -174,7 +178,10 @@ def validate_fleet_plan(
                 "Every independent Verifier must be read-only and requires a workspace "
                 "with a non-empty path scope."
             )
-        if any(path not in task.allowed_paths for path in verifier.scope):
+        if any(
+            not path_is_within(path, task.allowed_paths, forbidden=task.forbidden_paths)
+            for path in verifier.scope
+        ):
             raise _invalid(
                 f"Verifier {verifier.node_id!r} requests paths outside the TaskSpec allow-list."
             )

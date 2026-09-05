@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from agent_fleet.adapters.executable_resolution import (
     resolve_trusted_executable,
@@ -27,6 +29,7 @@ from agent_fleet.domain.offline_canary import (
     BOOTSTRAP_SANDBOX_PROBE_MARKER,
     BROKEN_CANARY,
 )
+from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import (
     MINIMUM_GIT_VERSION,
     canonical_json_hash,
@@ -38,6 +41,14 @@ from agent_fleet.domain.security import (
 from agent_fleet.ports.id_generator import IdGenerator
 
 _GIT_TIMEOUT_SECONDS = 30
+_MAX_NEW_FILE_BYTES = 2_000_000
+_MAX_NEW_FILES_BYTES = 8_000_000
+_MAX_NEW_FILES = 1024
+_MAX_PATCH_BYTES = 16_000_000
+_PROTECTED_PATCH_COMPONENTS = frozenset({".git", ".fleet"})
+_PROTECTED_PATCH_LEAVES = frozenset(
+    {".env", ".netrc", ".npmrc", ".pypirc", "credentials", "id_ed25519", "id_rsa"}
+)
 _EXECUTABLE_CONFIG_QUERY = (
     r"^(filter\..*\.(clean|smudge|process|required)|"
     r"diff\..*\.(command|textconv|cachetextconv)|"
@@ -53,10 +64,12 @@ _ALLOWED_GIT_SUBCOMMANDS = frozenset(
         "config",
         "diff",
         "init",
+        "hash-object",
         "ls-files",
         "read-tree",
         "rev-parse",
         "status",
+        "update-index",
         "worktree",
     }
 )
@@ -239,25 +252,48 @@ class GitRepositoryAdapter:
 
     def compute_patch(self, workspace: Workspace) -> PatchInfo:
         path = self._validated_workspace_path(workspace)
-        patch = self._run_bytes(
-            [
-                "git",
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--ignore-submodules=all",
-                "--no-renames",
-                "--src-prefix=a/",
-                "--dst-prefix=b/",
-            ],
-            cwd=path,
+        entries = self._run_bytes(["git", "ls-files", "--stage", "-z"], cwd=path)
+        tracked_modes = {
+            entry.split(b"\t", 1)[1].decode("utf-8", errors="surrogateescape"): entry.split(
+                b" ", 1
+            )[0].decode("ascii")
+            for entry in entries.split(b"\x00")
+            if entry
+        }
+        tracked_objects = {
+            entry.split(b"\t", 1)[1].decode("utf-8", errors="surrogateescape"): entry.split(
+                b" ", 2
+            )[1].decode("ascii")
+            for entry in entries.split(b"\x00")
+            if entry
+        }
+        _reject_special_files(
+            path, {name for name, mode in tracked_modes.items() if mode == "160000"}
         )
+        # Runtime tools do not stage changes. Reject a changed index instead of
+        # silently omitting staged content or producing different reconstruction
+        # hashes when that content becomes untracked in a fresh verifier.
+        if self._run_bytes(
+            ["git", "diff", "--cached", "--name-only", "-z", workspace.base_revision, "--"],
+            cwd=path,
+        ):
+            raise _unsafe_patch()
+        diff_argv = [
+            "git",
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--ignore-submodules=all",
+            "--no-renames",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+        ]
         changed = self._run_bytes(
             [
                 "git",
                 "diff",
-                "--name-only",
+                "--numstat",
                 "--no-ext-diff",
                 "--no-textconv",
                 "--ignore-submodules=all",
@@ -266,16 +302,138 @@ class GitRepositoryAdapter:
             ],
             cwd=path,
         )
-        changed_paths = sorted(
-            item.decode("utf-8", errors="surrogateescape")
-            for item in changed.split(b"\x00")
-            if item
+        changed_paths = _parse_numstat_paths(changed)
+        if any(field.startswith(b"-\t-\t") for field in changed.split(b"\x00") if field):
+            raise _unsafe_patch()
+        baseline_size = 0
+        for logical_path in changed_paths:
+            _validate_patch_path(logical_path)
+            if tracked_modes.get(logical_path) not in {"100644", "100755"}:
+                raise _unsafe_patch()
+            object_id = tracked_objects[logical_path]
+            size = int(self._run(["git", "cat-file", "-s", object_id], cwd=path).strip())
+            baseline_size += size
+            if size > _MAX_NEW_FILE_BYTES or baseline_size > _MAX_NEW_FILES_BYTES:
+                raise _unsafe_patch()
+        for logical_path in changed_paths:
+            _validate_text_patch_content(
+                self._run_bytes(
+                    ["git", "cat-file", "blob", tracked_objects[logical_path]], cwd=path
+                )
+            )
+        # A changed tracked leaf must also remain a regular bounded file. A
+        # deleted leaf is allowed; a symlink replacement must never be packaged.
+        existing_changed = [
+            name for name in changed_paths if (path / name).exists() or (path / name).is_symlink()
+        ]
+        snapshot_invalid = False
+        tracked_snapshots: list[tuple[str, str, bytes]] = []
+        try:
+            tracked_snapshots = _snapshot_new_files(path, existing_changed)
+        except OSError:
+            snapshot_invalid = True
+        if snapshot_invalid:
+            raise _unsafe_patch()
+        patch = self._run_bytes(diff_argv, cwd=path)
+        untracked = self._run_bytes(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=path
         )
+        invalid = False
+        try:
+            new_paths = sorted(
+                item.decode("utf-8", errors="strict") for item in untracked.split(b"\x00") if item
+            )
+            if len(new_paths) > _MAX_NEW_FILES:
+                raise _unsafe_patch()
+            snapshots = _snapshot_new_files(path, new_paths)
+            if snapshots:
+                patch += self._new_file_patch(snapshots)
+                # Detect mutation or replacement across Git generation, including
+                # file modes and newly appearing files. Never emit a mixed snapshot.
+                if snapshots != _snapshot_new_files(
+                    path, new_paths
+                ) or untracked != self._run_bytes(
+                    ["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=path
+                ):
+                    raise _unsafe_patch()
+            if len(patch) > _MAX_PATCH_BYTES:
+                raise _unsafe_patch()
+            if b"\nGIT binary patch\n" in patch or b"\x00" in patch:
+                raise _unsafe_patch()
+            if any(
+                line.startswith((b"new mode ", b"new file mode "))
+                and line.rsplit(b" ", 1)[-1] not in {b"100644", b"100755"}
+                for line in patch.splitlines()
+            ):
+                raise _unsafe_patch()
+            actual_paths = (
+                _parse_numstat_paths(
+                    self._run_bytes(
+                        ["git", "apply", "--numstat", "-z", "-"], cwd=path, input_bytes=patch
+                    )
+                )
+                if patch
+                else []
+            )
+            if (
+                actual_paths != sorted(set(changed_paths + new_paths))
+                or tracked_snapshots != _snapshot_new_files(path, existing_changed)
+                or entries != self._run_bytes(["git", "ls-files", "--stage", "-z"], cwd=path)
+            ):
+                raise _unsafe_patch()
+            content = patch.decode("utf-8", errors="strict")
+        except (OSError, UnicodeError, ValueError, subprocess.SubprocessError):
+            invalid = True
+        if invalid:
+            raise _unsafe_patch()
         return PatchInfo(
-            content=patch.decode("utf-8", errors="strict"),
+            content=content,
             sha256=sha256_bytes(patch),
-            changed_paths=changed_paths,
+            changed_paths=actual_paths,
         )
+
+    def _new_file_patch(self, snapshots: list[tuple[str, str, bytes]]) -> bytes:
+        # Only this private, disposable repository receives objects or index
+        # changes. No candidate filters, attributes, index or object DB are used.
+        with TemporaryDirectory(prefix="patch-", dir=self.state_root) as directory:
+            scratch = Path(directory)
+            self._run(["git", "init", "--template=", "--initial-branch=patch"], cwd=scratch)
+            for logical_path, mode, content in snapshots:
+                object_id = (
+                    self._run_bytes(
+                        ["git", "hash-object", "--no-filters", "-w", "--stdin"],
+                        cwd=scratch,
+                        input_bytes=content,
+                    )
+                    .decode("ascii")
+                    .strip()
+                )
+                if _OBJECT_ID.fullmatch(object_id) is None:
+                    raise _unsafe_patch()
+                self._run(
+                    [
+                        "git",
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        f"{mode},{object_id},{logical_path}",
+                    ],
+                    cwd=scratch,
+                )
+            return self._run_bytes(
+                [
+                    "git",
+                    "diff",
+                    "--cached",
+                    "--binary",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-renames",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                ],
+                cwd=scratch,
+            )
 
     def workspace_status_fingerprint(self, workspace: Workspace) -> str:
         path = self._validated_workspace_path(workspace)
@@ -371,6 +529,7 @@ class GitRepositoryAdapter:
         target.mkdir(parents=True, exist_ok=False)
         (target / "src/canary_calc").mkdir(parents=True)
         (target / "tests").mkdir()
+        (target / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
         (target / "pyproject.toml").write_text(
             "[build-system]\nrequires = []\nbuild-backend = 'builtins'\n\n"
             "[project]\nname = 'canary-calc'\nversion = '0.0.0'\nrequires-python = '>=3.12'\n\n"
@@ -394,6 +553,7 @@ class GitRepositoryAdapter:
                 "git",
                 "add",
                 "--",
+                ".gitignore",
                 "pyproject.toml",
                 "src/canary_calc/__init__.py",
                 "src/canary_calc/core.py",
@@ -431,6 +591,7 @@ class GitRepositoryAdapter:
         host_sentinel.write_text("Fleet-owned host sentinel\n", encoding="utf-8")
         (target / "src/canary_calc").mkdir(parents=True)
         (target / "tests").mkdir()
+        (target / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8")
         (target / "pyproject.toml").write_text(
             "[project]\nname = 'agent-fleet-bootstrap-canary'\n"
             "version = '0.0.0'\nrequires-python = '>=3.12'\n",
@@ -487,6 +648,7 @@ class GitRepositoryAdapter:
                 "git",
                 "add",
                 "--",
+                ".gitignore",
                 "pyproject.toml",
                 "src/canary_calc/__init__.py",
                 "src/canary_calc/core.py",
@@ -621,6 +783,151 @@ class GitRepositoryAdapter:
         return result.stdout
 
 
+def _snapshot_new_files(root: Path, logical_paths: list[str]) -> list[tuple[str, str, bytes]]:
+    snapshots: list[tuple[str, str, bytes]] = []
+    total = 0
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for logical_path in logical_paths:
+            parts = logical_path.split("/")
+            _validate_patch_path(logical_path)
+            parent_fd = os.dup(root_fd)
+            try:
+                for part in parts[:-1]:
+                    _check_patch_case(parent_fd, part)
+                    child_fd = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd
+                    )
+                    os.close(parent_fd)
+                    parent_fd = child_fd
+                    if any(name.casefold() == ".git" for name in os.listdir(parent_fd)):
+                        raise _unsafe_patch()
+                _check_patch_case(parent_fd, parts[-1])
+                descriptor = os.open(
+                    parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd
+                )
+                try:
+                    before = os.fstat(descriptor)
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or before.st_nlink != 1
+                        or before.st_size > _MAX_NEW_FILE_BYTES
+                        or before.st_mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX)
+                    ):
+                        raise _unsafe_patch()
+                    chunks: list[bytes] = []
+                    size = 0
+                    while chunk := os.read(descriptor, min(65536, _MAX_NEW_FILE_BYTES + 1 - size)):
+                        chunks.append(chunk)
+                        size += len(chunk)
+                        if size > _MAX_NEW_FILE_BYTES:
+                            raise _unsafe_patch()
+                    after = os.fstat(descriptor)
+                    current = os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+                    if (
+                        _file_identity(before) != _file_identity(after)
+                        or _file_identity(after) != _file_identity(current)
+                        or size != after.st_size
+                    ):
+                        raise _unsafe_patch()
+                    total += size
+                    if total > _MAX_NEW_FILES_BYTES:
+                        raise _unsafe_patch()
+                    mode = "100755" if before.st_mode & stat.S_IXUSR else "100644"
+                    content = b"".join(chunks)
+                    _validate_text_patch_content(content)
+                    snapshots.append((logical_path, mode, content))
+                finally:
+                    os.close(descriptor)
+            finally:
+                os.close(parent_fd)
+    finally:
+        os.close(root_fd)
+    return snapshots
+
+
+def _reject_special_files(root: Path, gitlinks: set[str]) -> None:
+    # Git omits FIFOs/sockets/device nodes from both ls-files and status. They
+    # must not become invisible verifier mutations, even when Git ignores them.
+    visited = 0
+
+    def visit(descriptor: int, prefix: str, depth: int) -> None:
+        nonlocal visited
+        if depth > 64:
+            raise _unsafe_patch()
+        for name in os.listdir(descriptor):
+            if name.casefold() == ".git":
+                continue
+            visited += 1
+            if visited > 100_000:
+                raise _unsafe_patch()
+            info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            logical_path = prefix + name
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(
+                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+                )
+                try:
+                    if logical_path in gitlinks and os.listdir(child):
+                        raise _unsafe_patch()
+                    visit(child, logical_path + "/", depth + 1)
+                finally:
+                    os.close(child)
+            elif not stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                raise _unsafe_patch()
+
+    invalid = False
+    try:
+        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            visit(descriptor, "", 0)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        invalid = True
+    if invalid:
+        raise _unsafe_patch()
+
+
+def _file_identity(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return info.st_dev, info.st_ino, info.st_size, info.st_mode, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _validate_patch_path(logical_path: str) -> None:
+    parts = logical_path.split("/")
+    if (
+        not path_is_within(logical_path, (".",))
+        or any(part.casefold() in _PROTECTED_PATCH_COMPONENTS for part in parts)
+        or parts[-1].casefold() in _PROTECTED_PATCH_LEAVES
+    ):
+        raise _unsafe_patch()
+
+
+def _validate_text_patch_content(content: bytes) -> None:
+    invalid = False
+    try:
+        if b"\x00" in content:
+            raise _unsafe_patch()
+        content.decode("utf-8", errors="strict")
+    except UnicodeError:
+        invalid = True
+    if invalid:
+        raise _unsafe_patch()
+
+
+def _check_patch_case(parent_fd: int, name: str) -> None:
+    if [entry for entry in os.listdir(parent_fd) if entry.casefold() == name.casefold()] != [name]:
+        raise _unsafe_patch()
+
+
+def _unsafe_patch() -> FleetError:
+    return FleetError(
+        ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+        "Candidate contains an unsafe, changed, binary, unbounded, or noncanonical patch input.",
+        "Use bounded UTF-8 regular text files in scope and leave the Git index unchanged.",
+    )
+
+
 def _git_environment(
     cwd: Path,
     state_root: Path,
@@ -668,6 +975,8 @@ def _base_git_config_args() -> list[str]:
         f"core.excludesFile={os.devnull}",
         "-c",
         "diff.external=",
+        "-c",
+        "diff.autoRefreshIndex=false",
         "-c",
         "commit.gpgSign=false",
         "-c",

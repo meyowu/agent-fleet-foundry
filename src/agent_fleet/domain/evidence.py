@@ -14,6 +14,7 @@ from agent_fleet.domain.models import (
     AgentInstanceId,
     ArtifactId,
     CriterionId,
+    CriterionResult,
     EvidenceRequirementId,
     ImageIdentity,
     LeaseId,
@@ -93,6 +94,117 @@ class CriterionAssessment(StrictModel):
     verdict: Verdict
     evidence_artifact_ids: list[ArtifactId] = Field(default_factory=list)
     explanation: str
+
+
+def assess_criterion_results(
+    results: list[CriterionResult],
+    *,
+    expected_criteria: set[str],
+    commands: list[CommandEvidence],
+    verifier_evidence_artifact_ids: list[str],
+    run_id: str,
+    task_id: str,
+    verifier_agent_instance_id: str | None,
+    base_revision: str,
+    config_snapshot_sha256: str,
+    patch_sha256: str | None,
+    command_hashes: dict[str, str],
+) -> tuple[list[CriterionAssessment], list[ProofGap]]:
+    """Resolve model references only against exact current control-plane records.
+
+    Each criterion selects one explicit artifact per command. Repeated execution
+    is supported, but only the uniquely latest current-patch artifact can prove a
+    command; an ambiguous timestamp or cherry-picked earlier result cannot pass.
+    """
+
+    identifiers = [result.criterion_id for result in results]
+    invalid_catalog = (
+        len(identifiers) != len(set(identifiers))
+        or set(identifiers) != expected_criteria
+        or len(commands) != len({command.evidence_id for command in commands})
+    )
+    catalog = {command.evidence_id: command for command in commands}
+    by_criterion = {result.criterion_id: result for result in results}
+    declared = set(verifier_evidence_artifact_ids)
+    assessments: list[CriterionAssessment] = []
+    gaps: list[ProofGap] = []
+    for criterion_id in sorted(expected_criteria):
+        result = by_criterion.get(criterion_id)
+        valid = not invalid_catalog and result is not None
+        selected: list[CommandEvidence] = []
+        if result is not None:
+            selected = [catalog[item] for item in result.evidence_artifact_ids if item in catalog]
+            valid = valid and (
+                bool(selected)
+                and len(selected) == len(result.evidence_artifact_ids)
+                and len(result.evidence_artifact_ids) == len(set(result.evidence_artifact_ids))
+                and len(result.command_ids) == len(set(result.command_ids))
+                and len(selected) == len(result.command_ids)
+                and {item.command_id for item in selected} == set(result.command_ids)
+                and set(result.evidence_artifact_ids).issubset(declared)
+            )
+        for command in selected:
+            matching = [
+                item
+                for item in commands
+                if item.command_id == command.command_id
+                and item.agent_instance_id == verifier_agent_instance_id
+                and item.candidate_patch_sha256 == patch_sha256
+            ]
+            latest = max((item.completed_at for item in matching), default=None)
+            valid = valid and (
+                command.run_id == run_id
+                and command.task_id == task_id
+                and command.agent_instance_id == verifier_agent_instance_id
+                and command.principal_role == "verifier"
+                and command.workflow_stage is WorkflowStage.VERIFYING
+                and command.workspace_kind is WorkspaceKind.VERIFICATION
+                and command.workspace_id is not None
+                and command.sandbox_id is not None
+                and command.workspace_base_revision == base_revision
+                and command.config_snapshot_sha256 == config_snapshot_sha256
+                and command.candidate_patch_sha256 == patch_sha256
+                and command.command_id in command_hashes
+                and command.command_spec_sha256 == command_hashes.get(command.command_id)
+                and command.strength is EvidenceStrength.INDEPENDENTLY_VERIFIED
+                and command.sandbox_security_level is SandboxSecurityLevel.ISOLATED
+                and command.sandbox_provider not in {"fake", "local-unsafe"}
+                and not command.workspace_mutated_during_execution
+                and not command.output_truncated
+                and command.completed_at >= command.started_at
+                and command.completed_at == latest
+                and sum(item.completed_at == latest for item in matching) == 1
+            )
+        if len({(item.workspace_id, item.sandbox_id) for item in selected}) > 1:
+            valid = False
+        verdict = Verdict.INCONCLUSIVE
+        if valid and result is not None:
+            verdict = result.verdict
+            if any(item.exit_code != 0 or item.timed_out for item in selected):
+                verdict = Verdict.FAIL
+        else:
+            gaps.append(
+                ProofGap(
+                    code="STRUCTURED_CRITERION_MAPPING_INVALID",
+                    description=(
+                        f"Criterion {criterion_id} lacks an exact current verifier mapping."
+                    ),
+                    required_strength=EvidenceStrength.INDEPENDENTLY_VERIFIED,
+                )
+            )
+        assessments.append(
+            CriterionAssessment(
+                criterion_id=criterion_id,
+                verdict=verdict,
+                evidence_artifact_ids=(result.evidence_artifact_ids if valid and result else []),
+                explanation=(
+                    "Exact current independent verifier command records resolve this criterion."
+                    if valid
+                    else "The criterion mapping is missing, ambiguous, or unbound."
+                ),
+            )
+        )
+    return assessments, gaps
 
 
 class RemainingRisk(StrictModel):
@@ -191,6 +303,7 @@ class EvidenceBundle(StrictModel):
     cleanup_receipt_sha256: Sha256 | None = None
     cleanup_complete: bool = False
     criterion_assessments: list[CriterionAssessment] = Field(min_length=1, max_length=128)
+    structured_criterion_results: list[CriterionResult] | None = Field(default=None, max_length=128)
     remaining_risks: list[RemainingRisk] = Field(default_factory=list)
     proof_gaps: list[ProofGap] = Field(default_factory=list)
     completion_decision: CompletionDecision | None = None
@@ -252,6 +365,28 @@ class CompletionGate:
         authoritative_artifact_ids: set[str],
     ) -> CompletionDecision:
         reasons: list[str] = []
+        if bundle.structured_criterion_results is not None:
+            mapped, mapping_gaps = assess_criterion_results(
+                bundle.structured_criterion_results,
+                expected_criteria=expected_criteria,
+                commands=bundle.command_evidence,
+                verifier_evidence_artifact_ids=bundle.verifier_evidence_artifact_ids,
+                run_id=bundle.run_id,
+                task_id=bundle.task_id,
+                verifier_agent_instance_id=bundle.verifier_agent_instance_id,
+                base_revision=bundle.base_revision,
+                config_snapshot_sha256=bundle.config_snapshot_sha256,
+                patch_sha256=bundle.patch_sha256,
+                command_hashes=bundle.verification_command_hashes,
+            )
+            if (
+                mapping_gaps
+                or sorted(bundle.criterion_assessments, key=lambda item: item.criterion_id)
+                != mapped
+            ):
+                reasons.append("STRUCTURED_CRITERION_MAPPING_INVALID")
+        elif len(expected_criteria) > 1:
+            reasons.append("STRUCTURED_CRITERION_MAPPING_UNAVAILABLE")
         if (
             not bundle.cleanup_complete
             or bundle.cleanup_receipt_artifact_id is None
@@ -549,7 +684,11 @@ class CompletionGate:
         command_failed = any(
             item.exit_code != 0 or item.timed_out for item in bundle.command_evidence
         )
-        if bundle.reported_verdict is Verdict.FAIL or command_failed:
+        if (
+            bundle.reported_verdict is Verdict.FAIL
+            or command_failed
+            or any(item.verdict is Verdict.FAIL for item in bundle.criterion_assessments)
+        ):
             effective = Verdict.FAIL
         elif verified:
             effective = Verdict.PASS

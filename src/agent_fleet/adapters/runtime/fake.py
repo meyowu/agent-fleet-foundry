@@ -90,6 +90,8 @@ class FakeRuntimeAdapter:
     ) -> AgentInvocationResult:
         if services.configuration.runtime_name != "fake":
             raise ValueError("FakeRuntimeAdapter requires runtime_name='fake'")
+        if services.accounting is not None:
+            services.accounting.record_simulated_step()
         scenario = FakeScenario(str(request.input["fake_scenario"]))
         if request.role == AgentRole.COS:
             if services.tools.definitions:
@@ -114,6 +116,12 @@ class FakeRuntimeAdapter:
         single_engineer = scenario is FakeScenario.SINGLE_ENGINEER
         return ScopeDecision(
             normalized_goal=goal,
+            response=(
+                "Offline fixture response: this read-only request was scoped without creating "
+                "specialists or executing project code."
+                if direct
+                else None
+            ),
             workflow="code-change",
             change_kind="read_only" if direct else "code_change",
             fleet_strategy=(
@@ -148,14 +156,20 @@ class FakeRuntimeAdapter:
         actions: tuple[_ScriptedAction, ...],
         services: RuntimeInvocationServices,
     ) -> None:
-        for action in actions:
-            result = await services.tools.execute(
-                RuntimeToolCall(
-                    call_id=action.call_id,
-                    name=action.tool_name,
-                    arguments=action.arguments,
-                )
+        calls = tuple(
+            RuntimeToolCall(
+                call_id=action.call_id,
+                name=action.tool_name,
+                arguments=action.arguments,
             )
+            for action in actions
+        )
+        for call in calls:
+            services.tools.validate(call)
+        if services.accounting is not None and calls:
+            services.accounting.reserve_tool_batch(1, tuple(call.call_id for call in calls))
+        for action, call in zip(actions, calls, strict=True):
+            result = await services.tools.execute(call)
             if result.call_id != action.call_id or result.name != action.tool_name:
                 raise RuntimeError("runtime tool result identity does not match its call")
             if result.outcome is not RuntimeToolOutcome.SUCCEEDED:

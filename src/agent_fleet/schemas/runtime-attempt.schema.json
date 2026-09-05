@@ -1,0 +1,184 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "enum": [
+        "CONFIG_INVALID",
+        "PROJECT_NOT_GIT",
+        "PROJECT_NOT_INITIALIZED",
+        "PROJECT_DIRTY",
+        "RUNTIME_UNAVAILABLE",
+        "RUNTIME_CAPABILITY_MISSING",
+        "RUNTIME_OUTPUT_INVALID",
+        "RUNTIME_TIMEOUT",
+        "RUNTIME_RETRY_EXHAUSTED",
+        "RUNTIME_BUDGET_EXCEEDED",
+        "PROVIDER_UNSUPPORTED",
+        "PROVIDER_FAILED",
+        "CREDENTIAL_INVALID",
+        "CREDENTIAL_MISSING",
+        "SANDBOX_UNAVAILABLE",
+        "SANDBOX_CAPABILITY_MISSING",
+        "SANDBOX_CREATION_FAILED",
+        "SANDBOX_INSPECTION_FAILED",
+        "SANDBOX_EXECUTION_FAILED",
+        "SANDBOX_TIMEOUT",
+        "SANDBOX_OUTPUT_LIMIT",
+        "SANDBOX_CLEANUP_FAILED",
+        "SANDBOX_REMOTE_DAEMON_DENIED",
+        "SANDBOX_IMAGE_UNAVAILABLE",
+        "UNSAFE_LOCAL_CONFIRMATION_REQUIRED",
+        "COMMAND_NOT_REVIEWED",
+        "COMMAND_OUTCOME_AMBIGUOUS",
+        "BOOTSTRAP_CANARY_FAILED",
+        "BOOTSTRAP_REPORT_INVALID",
+        "BOOTSTRAP_TARGET_DRIFTED",
+        "COMMAND_DENIED",
+        "APPROVAL_REQUIRED",
+        "APPROVAL_DENIED",
+        "APPROVAL_INVALID",
+        "PATH_OUTSIDE_SCOPE",
+        "WORKFLOW_INVALID_TRANSITION",
+        "PATCH_TARGET_DIVERGED",
+        "ARTIFACT_INTEGRITY_FAILED",
+        "STATE_SCHEMA_INCOMPATIBLE",
+        "STATE_UNAVAILABLE",
+        "RESOURCE_NOT_FOUND",
+        "RECOVERY_REQUIRED",
+        "INTERNAL_ERROR"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "RuntimeAttemptStatus": {
+      "enum": [
+        "running",
+        "completed",
+        "paused",
+        "failed",
+        "cancelled"
+      ],
+      "title": "RuntimeAttemptStatus",
+      "type": "string"
+    },
+    "WorkflowStage": {
+      "enum": [
+        "intake",
+        "scoping",
+        "workspace_preparation",
+        "implementing",
+        "verifying",
+        "repairing",
+        "presenting",
+        "applying",
+        "cleanup"
+      ],
+      "title": "WorkflowStage",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "agent_instance_id": {
+      "pattern": "^agent_[0-9a-f]{32}$",
+      "title": "Agent Instance Id",
+      "type": "string"
+    },
+    "attempt_id": {
+      "pattern": "^corr_[0-9a-f]{32}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished At"
+    },
+    "iteration": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "max_steps": {
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Max Steps",
+      "type": "integer"
+    },
+    "owner_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Owner Run Id",
+      "type": "string"
+    },
+    "role": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Role",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "runtime_name": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "title": "Runtime Name",
+      "type": "string"
+    },
+    "stage": {
+      "$ref": "#/$defs/WorkflowStage"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/RuntimeAttemptStatus",
+      "default": "running"
+    },
+    "task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Task Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "attempt_id",
+    "owner_run_id",
+    "run_id",
+    "agent_instance_id",
+    "task_id",
+    "role",
+    "stage",
+    "iteration",
+    "max_steps",
+    "runtime_name",
+    "started_at"
+  ],
+  "title": "RuntimeAttempt",
+  "type": "object"
+}

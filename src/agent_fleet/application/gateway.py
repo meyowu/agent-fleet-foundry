@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import cast
 
 from pydantic import JsonValue
@@ -51,6 +51,7 @@ from agent_fleet.domain.models import (
     Workspace,
     WorkspaceKind,
 )
+from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import Redactor, canonical_json_hash, sha256_bytes
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
@@ -1052,17 +1053,4 @@ def _task_command(
 
 
 def _path_in_task_scope(task: TaskSpec, logical_path: str) -> bool:
-    folded = tuple(part.casefold() for part in PurePosixPath(logical_path).parts)
-    forbidden = [
-        tuple(part.casefold() for part in PurePosixPath(path).parts)
-        for path in task.forbidden_paths
-    ]
-    if any(folded == item or folded[: len(item)] == item for item in forbidden):
-        return False
-    allowed = [
-        tuple(part.casefold() for part in PurePosixPath(path).parts) for path in task.allowed_paths
-    ]
-    return any(
-        folded == item or folded[: len(item)] == item or item[: len(folded)] == folded
-        for item in allowed
-    )
+    return path_is_within(logical_path, task.allowed_paths, forbidden=task.forbidden_paths)

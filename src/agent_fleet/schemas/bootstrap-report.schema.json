@@ -20,7 +20,8 @@
         "runtime_usage",
         "sandbox_inspection",
         "resource_cleanup",
-        "bootstrap_report"
+        "bootstrap_report",
+        "cos_response"
       ],
       "title": "ArtifactKind",
       "type": "string"

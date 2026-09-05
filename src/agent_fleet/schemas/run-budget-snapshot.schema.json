@@ -1,0 +1,196 @@
+{
+  "$defs": {
+    "RunBudgetLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_active_seconds": {
+          "default": 3600,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Max Active Seconds",
+          "type": "integer"
+        },
+        "max_agent_invocations": {
+          "default": 64,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Max Agent Invocations",
+          "type": "integer"
+        },
+        "max_model_requests": {
+          "default": 128,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Max Model Requests",
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 512,
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Max Tool Calls",
+          "type": "integer"
+        },
+        "max_total_tokens": {
+          "default": 262144,
+          "maximum": 100000000,
+          "minimum": 1,
+          "title": "Max Total Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "RunBudgetLimits",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "active_seconds": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Active Seconds",
+      "type": "number"
+    },
+    "agent_invocations": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Agent Invocations",
+      "type": "integer"
+    },
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "completeness": {
+      "enum": [
+        "complete",
+        "legacy_unknown",
+        "unknown_requests"
+      ],
+      "title": "Completeness",
+      "type": "string"
+    },
+    "exhausted": {
+      "default": false,
+      "title": "Exhausted",
+      "type": "boolean"
+    },
+    "kind": {
+      "const": "RunBudgetSnapshot",
+      "default": "RunBudgetSnapshot",
+      "title": "Kind",
+      "type": "string"
+    },
+    "limits": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunBudgetLimits"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "model_requests": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Model Requests",
+      "type": "integer"
+    },
+    "outstanding_requests": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Outstanding Requests",
+      "type": "integer"
+    },
+    "owner_run_id": {
+      "anyOf": [
+        {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Owner Run Id"
+    },
+    "reported_costs": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "maxProperties": 16,
+      "title": "Reported Costs",
+      "type": "object"
+    },
+    "reported_input_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Reported Input Tokens",
+      "type": "integer"
+    },
+    "reported_output_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Reported Output Tokens",
+      "type": "integer"
+    },
+    "reported_total_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Reported Total Tokens",
+      "type": "integer"
+    },
+    "reserved_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Reserved Tokens",
+      "type": "integer"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "simulated_steps": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Simulated Steps",
+      "type": "integer"
+    },
+    "token_limit_is_pre_spend_billing_cap": {
+      "const": false,
+      "default": false,
+      "title": "Token Limit Is Pre Spend Billing Cap",
+      "type": "boolean"
+    },
+    "tool_calls": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Tool Calls",
+      "type": "integer"
+    },
+    "unknown_requests": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Unknown Requests",
+      "type": "integer"
+    },
+    "unknown_tokens": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Unknown Tokens",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "run_id",
+    "completeness"
+  ],
+  "title": "RunBudgetSnapshot",
+  "type": "object"
+}

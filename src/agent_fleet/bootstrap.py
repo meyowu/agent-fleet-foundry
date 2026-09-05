@@ -15,6 +15,7 @@ from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
 from agent_fleet.adapters.diagnostics.system import LocalSystemDiagnostics
 from agent_fleet.adapters.executable_resolution import resolve_fixed_executable
 from agent_fleet.adapters.filesystem.workspace import BoundedWorkspaceFileSystem
+from agent_fleet.adapters.persistence.runtime_budgets import SqliteRuntimeBudgetStore
 from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.repository.profile import StaticRepositoryProfiler
@@ -60,6 +61,7 @@ _FIXED_DOCKER_EXECUTABLES = (
 class ApplicationContainer:
     state_root: Path
     state: SqliteStateStore
+    budgets: SqliteRuntimeBudgetStore
     artifacts: ArtifactService
     projects: ProjectService
     bootstrap: BootstrapService
@@ -184,6 +186,7 @@ def build_container(
     state = SqliteStateStore(root / "state.db", clock, ids, active_redactor)
     if migrate:
         state.migrate()
+    budgets = SqliteRuntimeBudgetStore(root / "state.db", clock, ids, active_redactor, state)
     local_artifacts = LocalArtifactStore(root / "artifacts")
     artifacts = ArtifactService(local_artifacts, state, clock, ids, active_redactor)
     repository = GitRepositoryAdapter(root, ids)
@@ -253,6 +256,7 @@ def build_container(
         clock,
         ids,
         active_redactor,
+        budgets=budgets,
         permission_policy=permissions,
     )
     projects = ProjectService(
@@ -287,6 +291,7 @@ def build_container(
     return ApplicationContainer(
         state_root=root,
         state=state,
+        budgets=budgets,
         artifacts=artifacts,
         projects=projects,
         bootstrap=bootstrap_service,
@@ -294,7 +299,7 @@ def build_container(
         approvals=ApprovalService(state, permissions),
         permissions=permissions,
         patches=PatchService(state, artifacts, repository, config, secrets, clock),
-        inspection=InspectionService(state, artifacts),
+        inspection=InspectionService(state, artifacts, budgets),
         cancellation=CancellationService(state, resources, clock),
         recovery=RecoveryService(state, resources),
         doctor=DoctorService(

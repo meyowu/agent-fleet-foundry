@@ -100,6 +100,20 @@
       "title": "Required Evidence",
       "type": "array"
     },
+    "response": {
+      "anyOf": [
+        {
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Response"
+    },
     "workflow": {
       "default": "code-change",
       "maxLength": 64,

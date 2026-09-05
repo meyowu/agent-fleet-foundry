@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "max_active_seconds": {
+      "default": 3600,
+      "maximum": 86400,
+      "minimum": 1,
+      "title": "Max Active Seconds",
+      "type": "integer"
+    },
+    "max_agent_invocations": {
+      "default": 64,
+      "maximum": 10000,
+      "minimum": 1,
+      "title": "Max Agent Invocations",
+      "type": "integer"
+    },
+    "max_model_requests": {
+      "default": 128,
+      "maximum": 100000,
+      "minimum": 1,
+      "title": "Max Model Requests",
+      "type": "integer"
+    },
+    "max_tool_calls": {
+      "default": 512,
+      "maximum": 100000,
+      "minimum": 0,
+      "title": "Max Tool Calls",
+      "type": "integer"
+    },
+    "max_total_tokens": {
+      "default": 262144,
+      "maximum": 100000000,
+      "minimum": 1,
+      "title": "Max Total Tokens",
+      "type": "integer"
+    }
+  },
+  "title": "RunBudgetLimits",
+  "type": "object"
+}

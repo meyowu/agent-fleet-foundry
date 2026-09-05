@@ -27,6 +27,7 @@ class FleetPlanner:
         strategy: FleetStrategy,
         *,
         known_roles: set[str],
+        role_max_steps: dict[str, int] | None = None,
     ) -> FleetPlan:
         if strategy is FleetStrategy.DIRECT:
             nodes: list[FleetPlanNode] = []
@@ -71,6 +72,18 @@ class FleetPlanner:
                 "Use direct, single_engineer, or engineer_verifier until the adaptive "
                 "parallel scheduler is implemented.",
             )
+        if role_max_steps is not None:
+            nodes = [
+                FleetPlanNode.model_validate(
+                    {
+                        **node.model_dump(),
+                        "max_steps": min(
+                            node.max_steps, role_max_steps.get(node.role_id, node.max_steps)
+                        ),
+                    }
+                )
+                for node in nodes
+            ]
         plan = FleetPlan(
             plan_id=self.ids.new(IdPrefix.FLEET_PLAN),
             run_id=run.run_id,

@@ -7,13 +7,20 @@ from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evidence import EvidenceBundle
 from agent_fleet.domain.models import ArtifactKind, Run
 from agent_fleet.domain.security import canonical_json_hash
+from agent_fleet.ports.runtime_accounting import RuntimeBudgetStore
 from agent_fleet.ports.state_store import StateStore
 
 
 class InspectionService:
-    def __init__(self, state: StateStore, artifacts: ArtifactService) -> None:
+    def __init__(
+        self,
+        state: StateStore,
+        artifacts: ArtifactService,
+        budgets: RuntimeBudgetStore | None = None,
+    ) -> None:
         self.state = state
         self.artifacts = artifacts
+        self.budgets = budgets
 
     def status(self, run_id: str) -> dict[str, object]:
         run = self.state.get_run(run_id)
@@ -44,6 +51,11 @@ class InspectionService:
             "runtime": run.runtime_name,
             "provider_model": run.provider_model,
             "runtime_usage_artifact_ids": run.runtime_usage_artifact_ids,
+            "runtime_budget": (
+                self.budgets.snapshot(run_id).model_dump(mode="json")
+                if self.budgets is not None
+                else None
+            ),
             "sandbox": run.sandbox_name,
             "security_level": (
                 run.sandbox_capabilities_snapshot.security_level.value

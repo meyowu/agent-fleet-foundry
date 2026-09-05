@@ -18,6 +18,7 @@ from agent_fleet.domain.evidence import (
     ProofGap,
     RemainingRisk,
     ResourceCleanupReceipt,
+    assess_criterion_results,
 )
 from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy
 from agent_fleet.domain.models import (
@@ -29,6 +30,7 @@ from agent_fleet.domain.models import (
     Verdict,
     VerifierVerdict,
 )
+from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.state_store import StateStore
@@ -282,7 +284,10 @@ class EvidenceAssembler:
                 changed_paths = sorted(path for path in encoded_paths.split(",") if path)
             else:
                 raise _integrity_error("Patch changed-path metadata is malformed.")
-            if not changed_paths or any(path not in task.allowed_paths for path in changed_paths):
+            if not changed_paths or any(
+                not path_is_within(path, task.allowed_paths, forbidden=task.forbidden_paths)
+                for path in changed_paths
+            ):
                 raise _integrity_error(
                     "Patch changed-path metadata is empty or outside the TaskSpec scope."
                 )
@@ -310,13 +315,31 @@ class EvidenceAssembler:
             command_evidence,
             verifier_proof_gaps=(verifier_verdict.proof_gaps if verifier_verdict else []),
         )
-        if len(task.acceptance_criteria) > 1:
+        structured_results = (
+            verifier_verdict.structured_criterion_results if verifier_verdict else None
+        )
+        if structured_results is not None:
+            assessments, mapping_gaps = assess_criterion_results(
+                structured_results,
+                expected_criteria={item.criterion_id for item in task.acceptance_criteria},
+                commands=command_evidence,
+                verifier_evidence_artifact_ids=verifier_evidence_artifact_ids,
+                run_id=run.run_id,
+                task_id=task.task_id,
+                verifier_agent_instance_id=run.verifier_agent_instance_id,
+                base_revision=run.base_revision,
+                config_snapshot_sha256=task.config_snapshot_hash,
+                patch_sha256=run.patch_sha256,
+                command_hashes=command_hashes,
+            )
+            proof_gaps.extend(mapping_gaps)
+        elif len(task.acceptance_criteria) > 1:
             proof_gaps.append(
                 ProofGap(
                     code="STRUCTURED_CRITERION_MAPPING_UNAVAILABLE",
                     description=(
-                        "The Phase 1 verifier contract does not bind evidence independently "
-                        "to multiple acceptance criteria."
+                        "The verifier did not provide a complete structured evidence mapping "
+                        "for multiple acceptance criteria."
                     ),
                     required_strength=EvidenceStrength.INDEPENDENTLY_VERIFIED,
                 )
@@ -362,6 +385,7 @@ class EvidenceAssembler:
             cleanup_receipt_sha256=run.cleanup_receipt_sha256,
             cleanup_complete=cleanup_complete,
             criterion_assessments=assessments,
+            structured_criterion_results=structured_results,
             remaining_risks=self._remaining_risks(run),
             proof_gaps=proof_gaps,
             assembled_at=assembled_at or self.clock.now(),

@@ -258,6 +258,7 @@ class AgentStatus(StrEnum):
     PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RuntimeCapability(StrEnum):
@@ -342,6 +343,7 @@ class ArtifactKind(StrEnum):
     SANDBOX_INSPECTION = "sandbox_inspection"
     RESOURCE_CLEANUP = "resource_cleanup"
     BOOTSTRAP_REPORT = "bootstrap_report"
+    COS_RESPONSE = "cos_response"
 
 
 class WorkspaceKind(StrEnum):
@@ -708,6 +710,7 @@ class ScopeDecision(StrictModel):
     """Untrusted CoS proposal accepted only after control-plane validation."""
 
     normalized_goal: BoundedSummary
+    response: BoundedSummary | None = None
     workflow: WorkflowId = "code-change"
     change_kind: Literal["read_only", "code_change"] = "code_change"
     fleet_strategy: FleetStrategyName
@@ -1298,6 +1301,14 @@ class ImplementationReport(StrictModel):
         return values
 
 
+class CriterionResult(StrictModel):
+    criterion_id: CriterionId
+    verdict: Verdict
+    evidence_artifact_ids: list[ArtifactId] = Field(max_length=64)
+    command_ids: list[ActionId] = Field(max_length=32)
+    explanation: BoundedText
+
+
 class VerifierVerdict(StrictModel):
     verdict: Verdict
     criterion_results: list[BoundedText] = Field(max_length=128)
@@ -1306,6 +1317,7 @@ class VerifierVerdict(StrictModel):
     required_repairs: list[BoundedText] = Field(max_length=128)
     proof_gaps: list[BoundedText] = Field(max_length=128)
     rationale: BoundedSummary
+    structured_criterion_results: list[CriterionResult] | None = Field(default=None, max_length=128)
 
     @field_validator("evidence_artifact_ids")
     @classmethod

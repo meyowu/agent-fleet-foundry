@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "Verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "command_ids": {
+      "items": {
+        "maxLength": 100,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_.-]*$",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Command Ids",
+      "type": "array"
+    },
+    "criterion_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Criterion Id",
+      "type": "string"
+    },
+    "evidence_artifact_ids": {
+      "items": {
+        "pattern": "^art_[0-9a-f]{32}$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Evidence Artifact Ids",
+      "type": "array"
+    },
+    "explanation": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Explanation",
+      "type": "string"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict"
+    }
+  },
+  "required": [
+    "criterion_id",
+    "verdict",
+    "evidence_artifact_ids",
+    "command_ids",
+    "explanation"
+  ],
+  "title": "CriterionResult",
+  "type": "object"
+}

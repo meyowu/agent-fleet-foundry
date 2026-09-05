@@ -41,7 +41,7 @@ from agent_fleet.domain.workflow import validate_transition
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
 
-SUPPORTED_SCHEMA_VERSION = 4
+SUPPORTED_SCHEMA_VERSION = 5
 
 
 class SqliteStateStore:

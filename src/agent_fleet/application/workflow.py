@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -21,6 +23,7 @@ from agent_fleet.application.sandboxes import (
     configuration_from_request,
     requirements_for_configuration,
 )
+from agent_fleet.domain.budgets import RunBudgetLimits, RuntimeAttemptStatus
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec
 from agent_fleet.domain.errors import (
     ApprovalDeniedError,
@@ -65,6 +68,7 @@ from agent_fleet.domain.models import (
     WorkflowStage,
     WorkspaceKind,
 )
+from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import Redactor
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
@@ -75,6 +79,7 @@ from agent_fleet.ports.runtime import (
     RuntimeAdapter,
     RuntimeInvocationServices,
 )
+from agent_fleet.ports.runtime_accounting import RuntimeAccounting, RuntimeBudgetStore
 from agent_fleet.ports.sandbox import SandboxProvider
 from agent_fleet.ports.state_store import StateStore
 
@@ -104,6 +109,7 @@ class WorkflowEngine:
         ids: IdGenerator,
         redactor: Redactor,
         *,
+        budgets: RuntimeBudgetStore,
         permission_policy: PermissionPolicyService | None = None,
     ) -> None:
         self.state = state
@@ -118,6 +124,7 @@ class WorkflowEngine:
         self.config = config
         self.clock = clock
         self.ids = ids
+        self.budgets = budgets
         self.redactor = redactor
         self.permission_policy = permission_policy
 
@@ -132,6 +139,7 @@ class WorkflowEngine:
         provider_model: str | None = None,
         credential_ref: str | None = None,
         allow_unsafe_local: bool = False,
+        budget_limits: RunBudgetLimits | None = None,
     ) -> Run:
         self._reject_untrusted_secrets(
             {
@@ -302,6 +310,7 @@ class WorkflowEngine:
         )
         self.state.create_run(run)
         try:
+            self.budgets.initialize_run(run.run_id, budget_limits or RunBudgetLimits())
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.INTAKE)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.SCOPING)
             run = await self._scope(
@@ -514,7 +523,7 @@ class WorkflowEngine:
             role=AgentRole.COS,
             stage=WorkflowStage.SCOPING,
             iteration=0,
-            max_steps=10,
+            max_steps=min(10, fleet_spec.spec.agents["cos"].max_steps),
             instructions=guidance,
             context_artifact_ids=context_artifact_ids,
             input=invocation_input,
@@ -581,7 +590,39 @@ class WorkflowEngine:
             created_at=self.clock.now(),
         )
         strategy = FleetStrategy(decision.fleet_strategy)
-        plan = self.planner.create(run, task, strategy, known_roles=known_roles)
+        plan = self.planner.create(
+            run,
+            task,
+            strategy,
+            known_roles=known_roles,
+            role_max_steps={
+                role: request.max_steps for role, request in fleet_spec.spec.agents.items()
+            },
+        )
+        if {node.role_id for node in plan.nodes} - set(
+            fleet_spec.spec.agents["cos"].may_delegate_to
+        ):
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "The proposed team exceeds the reviewed CoS delegation ceiling.",
+                "Select a permitted smaller team or explicitly review an organization update.",
+            )
+        if strategy is FleetStrategy.DIRECT:
+            if decision.response is None:
+                raise FleetError(
+                    ErrorCode.RUNTIME_OUTPUT_INVALID,
+                    "The direct CoS turn did not provide a bounded response.",
+                    "Return a factual response with explicit limitations, not only a task plan.",
+                )
+            self.artifacts.create_text(
+                kind=ArtifactKind.COS_RESPONSE,
+                project_id=run.project_id,
+                run_id=run.run_id,
+                task_id=task.task_id,
+                producer=f"{run.runtime_name}-runtime:cos",
+                content=decision.response,
+                metadata={"assurance": "model_response_not_execution_evidence"},
+            )
         plan_artifact = self.artifacts.create_text(
             kind=ArtifactKind.FLEET_PLAN,
             project_id=run.project_id,
@@ -779,6 +820,8 @@ class WorkflowEngine:
                         f"provider_model={run.provider_model or 'none'}\n"
                         f"sandbox={run.sandbox_name}\n"
                         f"security_level={sandbox_security_level}\n"
+                        f"runtime_budget={self.budgets.snapshot(run.run_id).model_dump_json()}\n"
+                        f"delivery_evidence={self._delivery_evidence_summary(bundle)}\n"
                         f"{sandbox_notes}"
                     ),
                 )
@@ -797,6 +840,43 @@ class WorkflowEngine:
                 )
                 return ready
             return run
+
+    @staticmethod
+    def _delivery_evidence_summary(bundle: EvidenceBundle) -> str:
+        return json.dumps(
+            {
+                "changed_files": bundle.changed_paths,
+                "patch_artifact_id": bundle.patch_artifact_id,
+                "patch_sha256": bundle.patch_sha256,
+                "commands": [
+                    {
+                        "command_id": command.command_id,
+                        "executable": command.executable,
+                        "argv": command.argv,
+                        "cwd": command.cwd,
+                        "exit_code": command.exit_code,
+                        "timed_out": command.timed_out,
+                        "output_truncated": command.output_truncated,
+                        "evidence_artifact_id": command.evidence_id,
+                        "transcript_artifact_id": command.transcript_artifact_id,
+                        "strength": command.strength.value,
+                    }
+                    for command in bundle.command_evidence
+                ],
+                "criterion_assessments": [
+                    item.model_dump(mode="json") for item in bundle.criterion_assessments
+                ],
+                "verifier_verdict_artifact_id": bundle.verifier_verdict_artifact_id,
+                "reported_verdict": (
+                    bundle.reported_verdict.value if bundle.reported_verdict is not None else None
+                ),
+                "remaining_risks": [
+                    item.model_dump(mode="json") for item in bundle.remaining_risks
+                ],
+                "proof_gaps": [item.model_dump(mode="json") for item in bundle.proof_gaps],
+            },
+            sort_keys=True,
+        )
 
     async def _engineer(self, run: Run) -> None:
         if run.task_id is None:
@@ -859,7 +939,7 @@ class WorkflowEngine:
             role=AgentRole.ENGINEER,
             stage=run.stage or WorkflowStage.IMPLEMENTING,
             iteration=run.repair_iterations,
-            max_steps=20,
+            max_steps=self._active_role_max_steps(run, AgentRole.ENGINEER, ceiling=20),
             instructions=guidance,
             context_artifact_ids=[
                 item
@@ -867,6 +947,7 @@ class WorkflowEngine:
                     run.task_spec_artifact_id,
                     run.fleet_plan_artifact_id,
                     run.config_snapshot_artifact_id,
+                    run.verifier_verdict_artifact_id if run.repair_iterations else None,
                 )
                 if item is not None
             ],
@@ -875,6 +956,7 @@ class WorkflowEngine:
                 {
                     "task_spec": task.model_dump(mode="json"),
                     "repair_iterations": run.repair_iterations,
+                    "previous_verifier_feedback": self._repair_feedback(run),
                 },
             ),
         )
@@ -914,7 +996,8 @@ class WorkflowEngine:
         )
         patch = self.repository.compute_patch(workspace)
         if not patch.changed_paths or any(
-            path not in task.allowed_paths for path in patch.changed_paths
+            not path_is_within(path, task.allowed_paths, forbidden=task.forbidden_paths)
+            for path in patch.changed_paths
         ):
             raise FleetError(
                 ErrorCode.COMMAND_DENIED,
@@ -1060,7 +1143,7 @@ class WorkflowEngine:
             role=AgentRole.VERIFIER,
             stage=WorkflowStage.VERIFYING,
             iteration=run.repair_iterations,
-            max_steps=10,
+            max_steps=self._active_role_max_steps(run, AgentRole.VERIFIER, ceiling=10),
             instructions=guidance,
             context_artifact_ids=[
                 item
@@ -1162,9 +1245,33 @@ class WorkflowEngine:
         request: AgentInvocation,
         services: RuntimeInvocationServices,
     ) -> AgentInvocationResult:
+        accounting: RuntimeAccounting | None = None
+        attempt_finished = False
         try:
-            result = await adapter.invoke(request, services)
-            self._reject_untrusted_secrets(result.model_dump(mode="json"))
+            accounting = self.budgets.begin_attempt(request)
+            try:
+                async with asyncio.timeout(accounting.remaining_active_seconds()):
+                    result = await adapter.invoke(request, replace(services, accounting=accounting))
+            except TimeoutError:
+                raise FleetError(
+                    ErrorCode.RUNTIME_BUDGET_EXCEEDED,
+                    "The remaining active runtime time budget was exhausted.",
+                    "Review preserved usage and artifacts; approval does not reset this limit.",
+                ) from None
+            raw_result = result.model_dump(mode="json", warnings=False)
+            self._reject_untrusted_secrets(raw_result)
+            validated_result: AgentInvocationResult | None = None
+            with suppress(ValueError, TypeError):
+                # A harness returns data, not an already-trusted domain object.
+                # Reparse even model_copy/model_construct results at this boundary.
+                validated_result = AgentInvocationResult.model_validate(raw_result)
+            if validated_result is None:
+                raise FleetError(
+                    ErrorCode.RUNTIME_OUTPUT_INVALID,
+                    "The runtime returned data outside the bounded output contract.",
+                    "Use the exact structured output schema for the active role.",
+                ) from None
+            result = validated_result
             expected_outputs: dict[
                 str,
                 type[ScopeDecision] | type[ImplementationReport] | type[VerifierVerdict],
@@ -1180,6 +1287,8 @@ class WorkflowEngine:
                     f"The {agent.role} runtime returned the wrong structured output type.",
                     "Use a runtime that returns the project schema for the active role.",
                 )
+            accounting.finish(RuntimeAttemptStatus.COMPLETED)
+            attempt_finished = True
             completed = agent.model_copy(
                 update={"status": AgentStatus.COMPLETED, "completed_at": self.clock.now()}
             )
@@ -1192,6 +1301,8 @@ class WorkflowEngine:
             )
             return result
         except ApprovalRequiredError:
+            if accounting is not None and not attempt_finished:
+                accounting.finish(RuntimeAttemptStatus.PAUSED)
             self.state.save_agent_instance(agent.model_copy(update={"status": AgentStatus.PAUSED}))
             self._emit(
                 run,
@@ -1201,15 +1312,36 @@ class WorkflowEngine:
             )
             raise
         except FleetError as error:
+            if accounting is not None and not attempt_finished:
+                accounting.finish(RuntimeAttemptStatus.FAILED, error_code=error.code)
             self._mark_agent_failed(run, agent, error.code)
             raise
+        except asyncio.CancelledError:
+            if accounting is not None and not attempt_finished:
+                accounting.finish(RuntimeAttemptStatus.CANCELLED)
+            self.state.save_agent_instance(
+                agent.model_copy(
+                    update={"status": AgentStatus.CANCELLED, "completed_at": self.clock.now()}
+                )
+            )
+            self._emit(
+                run,
+                "agent.cancelled",
+                {"role": str(agent.role), "iteration": agent.iteration},
+                agent_id=agent.agent_instance_id,
+            )
+            raise
         except Exception:
+            if accounting is not None and not attempt_finished:
+                accounting.finish(RuntimeAttemptStatus.FAILED, error_code=ErrorCode.INTERNAL_ERROR)
             self._mark_agent_failed(run, agent, ErrorCode.INTERNAL_ERROR)
-            raise FleetError(
-                ErrorCode.INTERNAL_ERROR,
-                f"The {agent.role} runtime invocation failed unexpectedly.",
-                "Inspect redacted run events and retry with a healthy runtime.",
-            ) from None
+        # Leave the exception handler before raising so even inspectable
+        # __context__ cannot retain a raw provider/harness exception.
+        raise FleetError(
+            ErrorCode.INTERNAL_ERROR,
+            f"The {agent.role} runtime invocation failed unexpectedly.",
+            "Inspect redacted run events and retry with a healthy runtime.",
+        ) from None
 
     def _mark_agent_failed(
         self,
@@ -1362,6 +1494,14 @@ class WorkflowEngine:
         return invocation
 
     def _active_role_guidance(self, run: Run, role: AgentRole) -> str:
+        spec, snapshot = self._active_role_configuration(run)
+        return self._role_guidance(spec, snapshot, role)
+
+    def _active_role_max_steps(self, run: Run, role: AgentRole, *, ceiling: int) -> int:
+        spec, _ = self._active_role_configuration(run)
+        return min(ceiling, spec.spec.agents[role.value].max_steps)
+
+    def _active_role_configuration(self, run: Run) -> tuple[FleetSpec, ConfigSnapshot]:
         project = self.state.get_project(run.project_id)
         spec, snapshot = self.config.load_snapshot(
             Path(project.canonical_root) / ".fleet" / "fleet.yaml"
@@ -1373,7 +1513,42 @@ class WorkflowEngine:
                 "The Fleet role guidance changed after the task was bound.",
                 "Restore the exact Run-bound configuration or start a new run.",
             )
-        return self._role_guidance(spec, snapshot, role)
+        return spec, snapshot
+
+    def _repair_feedback(self, run: Run) -> JsonValue:
+        if not run.repair_iterations:
+            return None
+        artifact_id = run.verifier_verdict_artifact_id
+        if artifact_id is None:
+            raise FleetError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                "Repair requires the preceding independent verifier verdict.",
+                "Recover this run instead of reconstructing feedback from model claims.",
+            )
+        metadata = self.state.get_artifact(artifact_id)
+        if (
+            metadata.kind is not ArtifactKind.VERIFIER_VERDICT
+            or metadata.run_id != run.run_id
+            or metadata.task_id != run.task_id
+            or metadata.project_id != run.project_id
+        ):
+            raise FleetError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                "Repair feedback is not bound to this task.",
+                "Do not reuse another task's verifier artifact.",
+            )
+        try:
+            verdict = VerifierVerdict.model_validate_json(self.artifacts.read_text(artifact_id))
+        except ValueError:
+            raise FleetError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                "Repair feedback does not match the verifier schema.",
+                "Inspect the redacted artifact and recover this run.",
+            ) from None
+        feedback = verdict.model_dump(mode="json")
+        self._reject_untrusted_secrets(feedback)
+        self._bounded_runtime_text(json.dumps(feedback), max_bytes=32_768)
+        return feedback
 
     @staticmethod
     def _role_guidance(spec: FleetSpec, snapshot: ConfigSnapshot, role: AgentRole) -> str:
