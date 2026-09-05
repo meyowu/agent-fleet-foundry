@@ -14,6 +14,7 @@ from pydantic import JsonValue
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from agent_fleet import __version__
 from agent_fleet.bootstrap import build_container
@@ -24,7 +25,6 @@ from agent_fleet.domain.models import (
     FakeScenario,
     JsonEnvelope,
     JsonError,
-    RunStatus,
     jsonable,
 )
 from agent_fleet.domain.security import Redactor
@@ -638,17 +638,26 @@ def recover(
                 details={"run_id": run_id},
             )
         container = build_container(redactor=redactor)
-        before = [lease.lease_id for lease in container.state.outstanding_leases(run_id)]
+        owned_run_ids = container.recovery.owned_run_ids(run_id)
+        before = [
+            lease.lease_id
+            for identity in owned_run_ids
+            for lease in container.state.outstanding_leases(identity)
+        ]
         original_status = container.state.get_run(run_id).status
         result = asyncio.run(container.recovery.recover_run(run_id))
-        after = [lease.lease_id for lease in container.state.outstanding_leases(run_id)]
+        after = [
+            lease.lease_id
+            for identity in owned_run_ids
+            for lease in container.state.outstanding_leases(identity)
+        ]
         after_set = set(after)
         return jsonable(
             {
                 "run_id": result.run_id,
                 "status": result.status.value,
-                "recovered": bool(set(before) - after_set)
-                or original_status in {RunStatus.RUNNING, RunStatus.APPLYING},
+                "recovered": bool(set(before) - after_set) or original_status is not result.status,
+                "child_run_ids": list(owned_run_ids[1:]),
                 "recovered_lease_ids": [item for item in before if item not in after_set],
                 "outstanding_lease_ids": after,
             }
@@ -746,9 +755,11 @@ def _present_error(
             )
         )
     else:
+        parent_id = details.get("parent_run_id") if isinstance(details, dict) else None
+        parent_note = f"\nParent run: {parent_id}" if isinstance(parent_id, str) else ""
         error_console.print(
             Panel.fit(
-                f"[bold]{error.code.value}[/bold]\n{message}\n\n{remediation}",
+                Text(f"{error.code.value}\n{message}\n\n{remediation}{parent_note}"),
                 title="Agent Fleet error",
                 border_style="red",
             )

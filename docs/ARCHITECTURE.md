@@ -32,7 +32,7 @@ The control plane is deterministic application code. The LLM/harness adapter is 
 
 The architecture implements a project-specific organization runtime, not a generic agent chat bus. Role instances are created from a validated per-run FleetPlan. The plan may be adaptive, but the execution graph, budgets, workspace ownership, and assurance rules remain system-controlled.
 
-Implementation boundary: Phase 0–3 provides durable state/artifacts, hardened Git worktrees, bounded repository intelligence, direct/single/pair plans, guarded patch application, exact fake/Docker/local-unsafe dispatch, bounded gateway operations, recovery and evidence-gated bootstrap. Phase 4's independently injected current-policy broker, reviewed paths, exact once/run/project approvals, external trust store and management CLI were accepted on 2026-09-05: default suite `1001 passed, 10 skipped`, with nine separately passing real-Docker tests; full results are in `MVP_ACCEPTANCE.md`. The fake and BYOK PydanticAI runtimes share project-owned contracts and gateway-backed tools; the live adapter supports only wired `openai:` and `openai-chat:` families, but live-provider acceptance was not run. Docker is the sole current isolated provider; fake is simulated and local-unsafe non-isolating. Persistent chat/parallel/specialist execution (Phase 5), operational FleetPatch (Phase 6) and release hardening (Phase 7) remain unimplemented. Remote sandboxes are post-MVP, and the full MVP/license gates remain open.
+Implementation boundary: Phase 0–3 provides durable state/artifacts, hardened Git worktrees, bounded repository intelligence, direct/single/pair plans, guarded patch application, exact fake/Docker/local-unsafe dispatch, bounded gateway operations, recovery and evidence-gated bootstrap. Phase 4's independently injected current-policy broker, reviewed paths, exact once/run/project approvals, external trust store and management CLI were accepted on 2026-09-05: default suite `1001 passed, 10 skipped`, with nine separately passing real-Docker tests; full results are in `MVP_ACCEPTANCE.md`. The fake and BYOK PydanticAI runtimes share project-owned contracts and gateway-backed tools; the live adapter supports only wired `openai:` and `openai-chat:` families, but live-provider acceptance was not run. Docker is the sole current isolated provider; fake is simulated and local-unsafe non-isolating. Phase 5 Milestone 1 accepted cumulative accounting and criterion evidence; Milestone 2 accepted parallel/specialist graph execution (section 13). Persistent chat, operational FleetPatch (Phase 6) and release hardening (Phase 7) remain unimplemented. Remote sandboxes are post-MVP, and the full MVP/license gates remain open.
 
 ## 2. Layering and dependency rule
 
@@ -975,7 +975,8 @@ Key design points:
 - approvals have request state and resolution audit fields.
 - migration `0004` preserves prior grants and makes their approval reference nullable for persistent-rule receipts. Grants record exact scope hash, source rule, expiry, uses, issuer and consumption/revocation. Request-free receipts are bounded and consumed during reservation, not invented approvals or reusable run grants.
 - migration `0004` also adds `tool_dispatch_claims(intent_id PRIMARY KEY, intent_hash, claimed_at)`. Claims are permanent at-most-once execution ownership, with no timeout/reclaim path; interrupted dispatch requires reconciliation rather than replay.
-- project settings and persistent exact rules live in the separately validated/revisioned trust store, not SQLite; policy mutation events record the cross-store publication protocol. FleetPatch persistence and conversation/node tables are still future work.
+- migration `0005` adds durable aggregate budget/attempt/request/tool accounting; migration `0006` adds exact graph/child/node/join/driver state. Graph details are in section 13.
+- project settings and persistent exact rules live in the separately validated/revisioned trust store, not SQLite; policy mutation events record the cross-store publication protocol. FleetPatch persistence and conversation tables remain future work.
 - resource leases track worktrees/containers for crash recovery.
 - exact ConfigSnapshot and TaskSpec serializations are content-addressed, immutable, and identity-bound to Project/Run artifacts.
 - artifact rows point to content-addressed local files.
@@ -1039,7 +1040,21 @@ Every nondeterministic boundary is injectable:
 
 A complete fake-adapter stack executes the primary workflow without network, Docker, GitHub, or an API key. PydanticAI adapter and workflow tests use its explicit `TestModel`/`FunctionModel` facilities while live model requests and sockets are denied. The same application services are used with the live adapter; there is no separate “demo” orchestration path.
 
-## 13. Initial repository files
+## 13. Adaptive graph implementation boundary (Phase 5 Milestone 2)
+
+The development branch implements all five plan strategies. Milestone 2 acceptance passed: 1344 default tests, twelve separately enabled Docker tests, nine offline E2E cases and eleven independent delivery-audit cases. Exact overlapping selections and results are tracked in `.agent/plans/2026-09-05-adaptive-graph.md`; this closes neither persistent chat nor the remaining MVP release gates.
+
+`application/graph.py` owns dependency scheduling through `ports/graph.py` and injected execution hooks. `application/graph_workflow.py` bridges those hooks to the existing workflow/runtime/gateway/resource services without recursively starting new public tasks. `adapters/persistence/graphs.py` uses migration 6 to atomically bind the parent plan, internal child Run/Task rows, immutable independent child identities, node revisions, ordered join receipts and non-reclaimable driver claims. It checks duplicated SQL/JSON identities and journal hashes on authority-bearing reads; local SQLite is still not tamper-proof against the OS account.
+
+The independent final Verifier retains parent Run/Task identity. Other nodes receive exact scoped children, their own approvals, and the parent's cumulative budget owner. Concurrency bounds active children while allowing queued writers. Read-only Researcher/Architect reports are typed, size-bounded artifact dependencies, never instructions that can grant a permission. Models cannot change node dependencies, join order, sandbox choice or the effective role/scope ceiling.
+
+Graph ownership spans child dispatch and join. A separate claim generation serializes joined-parent verification, repair and approved resume, including stale simultaneous pause snapshots. Ownership losers cannot fail or clean the winner. Claims have no TTL. A failure after resume preparation but before its Run update remains an uncertain claimed pause; operator-stopped recovery abandons it and cleans exact owned resources rather than replaying it.
+
+RepositoryPort now separates pure `prepare_workspace` identity allocation from `materialize_workspace`. ResourceService persists its exact CREATING lease before any Git effect. Cleanup checks both the path and exact Git worktree registration. Ordered child patches are reapplied to a new parent candidate at the original base; scope/path metadata must agree with actual patch paths. Every final verification uses the normal fresh-workspace path. Sequential parent repair remains bounded and emits `graph.repair_fallback`, preserving the initial join and child provenance.
+
+EvidenceAssembler reads back the graph, exact parent join artifact, child outputs and current terminal cleanup receipts. EvidenceBundle embeds `GraphDeliveryEvidence`; CompletionGate rejects missing or incoherent graph delivery and preserves parent-only verification identities. A child's full-suite failure does not establish joined failure or success: only a fresh parent verifier can test the combined result. Failed pre-join work emits explicit unavailable-evidence diagnostics instead of fabricating a completed graph bundle.
+
+## 14. Initial repository files
 
 The first implementation phase should create at minimum:
 

@@ -14,6 +14,8 @@ from pydantic import JsonValue, ValidationError
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.application.evidence import EvidenceAssembler
 from agent_fleet.application.gateway import ToolGateway
+from agent_fleet.application.graph import GraphCoordinator
+from agent_fleet.application.graph_workflow import GraphWorkflowExecution
 from agent_fleet.application.permission_policy import PermissionPolicyService
 from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.resources import ResourceService
@@ -30,13 +32,15 @@ from agent_fleet.domain.errors import (
     ApprovalRequiredError,
     ErrorCode,
     FleetError,
+    GraphOwnershipUnavailableError,
 )
 from agent_fleet.domain.evidence import (
     CleanupLeaseRecord,
     EvidenceBundle,
     ResourceCleanupReceipt,
 )
-from agent_fleet.domain.fleet_plan import FleetStrategy
+from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy
+from agent_fleet.domain.graph import GraphDriverClaim, GraphStatus
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     AgentExecutionCheckpoint,
@@ -61,6 +65,7 @@ from agent_fleet.domain.models import (
     SandboxSecurityLevel,
     SandboxSpec,
     ScopeDecision,
+    SpecialistReport,
     TaskSpec,
     Verdict,
     VerificationCheckpoint,
@@ -72,6 +77,7 @@ from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import Redactor
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
+from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.runtime import (
@@ -110,6 +116,7 @@ class WorkflowEngine:
         redactor: Redactor,
         *,
         budgets: RuntimeBudgetStore,
+        graphs: GraphStore,
         permission_policy: PermissionPolicyService | None = None,
     ) -> None:
         self.state = state
@@ -125,8 +132,11 @@ class WorkflowEngine:
         self.clock = clock
         self.ids = ids
         self.budgets = budgets
+        self.graphs = graphs
         self.redactor = redactor
         self.permission_policy = permission_policy
+        self.graph_execution = GraphWorkflowExecution(self)
+        self.graph_coordinator = GraphCoordinator(graphs, state, self.graph_execution, clock)
 
     async def start(
         self,
@@ -324,6 +334,16 @@ class WorkflowEngine:
             if run.fleet_strategy == FleetStrategy.DIRECT.value:
                 run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
                 return await self._continue(run)
+            if self._is_adaptive_graph(run):
+                if run.fleet_plan_artifact_id is None:
+                    raise RuntimeError("The accepted graph has no FleetPlan artifact")
+                plan = FleetPlan.model_validate_json(
+                    self.artifacts.read_text(run.fleet_plan_artifact_id)
+                )
+                self.graph_execution.initialize(run, plan)
+                run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
+                run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
+                return await self._continue(run)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
             await self._prepare_workspace(run)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
@@ -347,7 +367,16 @@ class WorkflowEngine:
             raise
 
     async def resume(self, run_id: str) -> Run:
+        continuation_claim: GraphDriverClaim | None = None
         run = self.state.get_run(run_id)
+        child_binding = self.graphs.child_binding(run_id)
+        if child_binding is not None:
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "An internal child cannot be resumed outside its claimed parent coordinator.",
+                "Resume the parent run to preserve dependency and concurrency controls.",
+                details={"parent_run_id": child_binding.parent_run_id},
+            )
         if run.status in {
             RunStatus.COMPLETED,
             RunStatus.REJECTED,
@@ -357,6 +386,10 @@ class WorkflowEngine:
             RunStatus.READY_FOR_REVIEW,
         }:
             return run
+        if self._is_adaptive_graph(run) and run.status is RunStatus.RUNNING:
+            # A released child-graph claim does not mean the parent's verifier
+            # stopped. Public resume cannot take over an executing parent.
+            raise GraphOwnershipUnavailableError()
         runtime_configuration = self._runtime_configuration(run)
         self.runtimes.require(
             runtime_configuration,
@@ -403,6 +436,8 @@ class WorkflowEngine:
                 )
                 await self.resources.cleanup_run(rejected)
                 return rejected
+            if self._is_adaptive_graph(run):
+                continuation_claim = self._claim_parent_continuation(run)
             if run.engineer_checkpoint is None and run.stage in {
                 WorkflowStage.IMPLEMENTING,
                 WorkflowStage.REPAIRING,
@@ -436,7 +471,29 @@ class WorkflowEngine:
                     "engineering.checkpoint_adopted",
                     checkpoint.model_dump(mode="json"),
                 )
-            await self.resources.rehydrate_paused_sandboxes(run)
+            try:
+                await self.resources.rehydrate_paused_sandboxes(run)
+            except asyncio.CancelledError:
+                if continuation_claim is not None:
+                    await self.graph_execution.cancel_parent(run.run_id)
+                raise
+            except FleetError as error:
+                if continuation_claim is not None:
+                    latest = self.state.get_run(run_id)
+                    self.state.save_run(
+                        latest.model_copy(
+                            update={"status": RunStatus.FAILED, "updated_at": self.clock.now()}
+                        ),
+                        "run.failed",
+                        {"code": error.code.value, "reason": "parent_resume_rehydration_failed"},
+                    )
+                    try:
+                        graph = self.graphs.get(run_id)
+                        if graph is not None and graph.cancel_requested_at is None:
+                            self.graphs.request_cancel(run_id, expected_revision=graph.revision)
+                    finally:
+                        await self.resources.cleanup_run(self.state.get_run(run_id))
+                raise
             run = run.model_copy(
                 update={
                     "status": RunStatus.RUNNING,
@@ -450,7 +507,7 @@ class WorkflowEngine:
                 {"request_id": request.request_id, "stage": run.stage.value if run.stage else None},
             )
         try:
-            return await self._continue(run)
+            return await self._continue(run, continuation_claim=continuation_claim)
         except ApprovalRequiredError:
             return self.state.get_run(run_id)
         except ApprovalDeniedError as error:
@@ -466,6 +523,8 @@ class WorkflowEngine:
             await self.resources.cleanup_run(rejected)
             return rejected
         except FleetError as error:
+            if isinstance(error, GraphOwnershipUnavailableError):
+                raise
             latest = self.state.get_run(run_id)
             if latest.status is not RunStatus.PAUSED_FOR_APPROVAL:
                 latest = self._persist_failure_evidence(latest, error)
@@ -503,7 +562,12 @@ class WorkflowEngine:
             created_at=self.clock.now(),
         )
         project = self.state.get_project(run.project_id)
-        invocation_input: dict[str, JsonValue] = {"goal": run.goal}
+        invocation_input: dict[str, JsonValue] = {
+            "goal": run.goal,
+            "available_roles": cast(JsonValue, sorted(fleet_spec.spec.agents)),
+            "delegation_roles": cast(JsonValue, fleet_spec.spec.agents["cos"].may_delegate_to),
+            "max_parallel_agents": fleet_spec.spec.workflows["code-change"].max_parallel_agents,
+        }
         if run.runtime_name == "fake":
             invocation_input["fake_scenario"] = run.fake_scenario.value
         context_artifact_ids: list[str] = []
@@ -598,6 +662,11 @@ class WorkflowEngine:
             role_max_steps={
                 role: request.max_steps for role, request in fleet_spec.spec.agents.items()
             },
+            writer_assignments=decision.writer_assignments,
+            max_parallel_agents=decision.max_parallel_agents,
+            configured_max_parallel_agents=fleet_spec.spec.workflows[
+                decision.workflow
+            ].max_parallel_agents,
         )
         if {node.role_id for node in plan.nodes} - set(
             fleet_spec.spec.agents["cos"].may_delegate_to
@@ -698,14 +767,7 @@ class WorkflowEngine:
         return run
 
     async def _prepare_workspace(self, run: Run) -> None:
-        project = self.state.get_project(run.project_id)
-        candidate = self.repository.create_workspace(
-            Path(project.canonical_root),
-            run.run_id,
-            run.base_revision,
-            WorkspaceKind.CANDIDATE,
-        )
-        self.resources.lease_workspace(candidate)
+        candidate, _ = self.resources.create_workspace(run, WorkspaceKind.CANDIDATE)
         if run.sandbox_configuration is None or run.sandbox_requirements is None:
             raise RuntimeError("Run sandbox binding was not materialized")
         await self.resources.create_sandbox(
@@ -722,11 +784,67 @@ class WorkflowEngine:
             ),
         )
 
-    async def _continue(self, run: Run) -> Run:
+    async def _continue(
+        self, run: Run, *, continuation_claim: GraphDriverClaim | None = None
+    ) -> Run:
+        claim = continuation_claim
+        if (
+            self._is_adaptive_graph(run)
+            and run.stage
+            in {
+                WorkflowStage.VERIFYING,
+                WorkflowStage.REPAIRING,
+                WorkflowStage.PRESENTING,
+            }
+            and claim is None
+        ):
+            claim = self._claim_parent_continuation(run)
+        try:
+            return await self._continue_steps(run, continuation_claim=claim)
+        except asyncio.CancelledError:
+            if self._is_adaptive_graph(run):
+                await self.graph_execution.cancel_parent(run.run_id)
+            raise
+        finally:
+            if claim is not None:
+                self._release_parent_continuation(claim)
+
+    def _claim_parent_continuation(self, run: Run) -> GraphDriverClaim:
+        try:
+            graph = self.graphs.get(run.run_id)
+            if graph is not None:
+                return self.graphs.claim_continuation(run.run_id, expected_revision=graph.revision)
+        except Exception:
+            pass
+        # A failed ownership CAS is not an authorization to fail or clean the
+        # winning owner's resources. Keep underlying storage details private.
+        raise GraphOwnershipUnavailableError()
+
+    def _release_parent_continuation(self, claim: GraphDriverClaim) -> None:
+        graph = self.graphs.get(claim.parent_run_id)
+        if graph is None:
+            raise GraphOwnershipUnavailableError()
+        if graph.cancel_requested_at is not None:
+            return
+        if graph.driver_claim == claim:
+            self.graphs.release_driver(
+                claim, expected_revision=graph.revision, status=GraphStatus.JOINED
+            )
+        elif graph.driver_claim is not None or graph.status is not GraphStatus.JOINED:
+            raise GraphOwnershipUnavailableError()
+
+    async def _continue_steps(
+        self, run: Run, *, continuation_claim: GraphDriverClaim | None = None
+    ) -> Run:
         while True:
             run = self.state.get_run(run.run_id)
             if run.status is RunStatus.PAUSED_FOR_APPROVAL:
                 return run
+            if self._is_adaptive_graph(run) and run.stage is WorkflowStage.IMPLEMENTING:
+                run = await self.graph_coordinator.drive(run.run_id)
+                if run.status is not RunStatus.RUNNING or run.stage is not WorkflowStage.VERIFYING:
+                    return run
+                return await self._continue(run)
             if run.stage in {WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING}:
                 await self._engineer(run)
                 run = self.state.get_run(run.run_id)
@@ -744,6 +862,15 @@ class WorkflowEngine:
                 run = self.state.get_run(run.run_id)
                 if verifier.verdict is Verdict.FAIL:
                     if run.repair_iterations < run.max_repair_iterations:
+                        if self._is_adaptive_graph(run):
+                            self._emit(
+                                run,
+                                "graph.repair_fallback",
+                                {
+                                    "mode": "sequential_parent_engineer",
+                                    "iteration": run.repair_iterations + 1,
+                                },
+                            )
                         run = run.model_copy(
                             update={
                                 "status": RunStatus.RUNNING,
@@ -758,6 +885,8 @@ class WorkflowEngine:
                             {"repair_iteration": run.repair_iterations},
                         )
                         continue
+                    if continuation_claim is not None:
+                        self._release_parent_continuation(continuation_claim)
                     run = self._persist_evidence(run)[0]
                     rejected = run.model_copy(
                         update={"status": RunStatus.REJECTED, "updated_at": self.clock.now()}
@@ -772,6 +901,8 @@ class WorkflowEngine:
                 run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
                 continue
             if run.stage is WorkflowStage.PRESENTING:
+                if self._is_adaptive_graph(run):
+                    await self.graph_execution.cleanup_graph_children(run)
                 await self.resources.cleanup_run(run)
                 if self.state.outstanding_leases(run.run_id):
                     raise FleetError(
@@ -780,6 +911,8 @@ class WorkflowEngine:
                         "Run Fleet recovery before trusting or publishing this result.",
                     )
                 run = self._persist_cleanup_receipt(run)
+                if continuation_claim is not None:
+                    self._release_parent_continuation(continuation_claim)
                 run, bundle = self._persist_evidence(run)
                 if bundle.completion_decision is None:
                     raise RuntimeError("EvidenceBundle has no completion decision")
@@ -840,6 +973,13 @@ class WorkflowEngine:
                 )
                 return ready
             return run
+
+    @staticmethod
+    def _is_adaptive_graph(run: Run) -> bool:
+        return run.fleet_strategy in {
+            FleetStrategy.PARALLEL_ENGINEERS.value,
+            FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER.value,
+        }
 
     @staticmethod
     def _delivery_evidence_summary(bundle: EvidenceBundle) -> str:
@@ -950,13 +1090,15 @@ class WorkflowEngine:
                     run.verifier_verdict_artifact_id if run.repair_iterations else None,
                 )
                 if item is not None
-            ],
+            ]
+            + self.graph_execution.context_artifact_ids(run),
             input=self._runtime_input(
                 run,
                 {
                     "task_spec": task.model_dump(mode="json"),
                     "repair_iterations": run.repair_iterations,
                     "previous_verifier_feedback": self._repair_feedback(run),
+                    "graph_context": self.graph_execution.model_context(run),
                 },
             ),
         )
@@ -1040,19 +1182,14 @@ class WorkflowEngine:
             raise RuntimeError("run has no task or patch")
         task = self.state.get_task(run.task_id)
         guidance = self._active_role_guidance(run, AgentRole.VERIFIER)
-        project = self.state.get_project(run.project_id)
         patch = self.artifacts.read_text(run.patch_artifact_id).encode()
         if run.sandbox_configuration is None or run.sandbox_requirements is None:
             raise RuntimeError("Run sandbox binding was not materialized")
         checkpoint = run.verification_checkpoint
         if checkpoint is None:
-            workspace = self.repository.create_workspace(
-                Path(project.canonical_root),
-                run.run_id,
-                run.base_revision,
-                WorkspaceKind.VERIFICATION,
+            workspace, workspace_lease = self.resources.create_workspace(
+                run, WorkspaceKind.VERIFICATION
             )
-            workspace_lease = self.resources.lease_workspace(workspace)
             self.repository.apply_patch_to_workspace(workspace, patch)
             before = self.repository.workspace_status_fingerprint(workspace)
             handle = await self.resources.create_sandbox(
@@ -1274,11 +1411,16 @@ class WorkflowEngine:
             result = validated_result
             expected_outputs: dict[
                 str,
-                type[ScopeDecision] | type[ImplementationReport] | type[VerifierVerdict],
+                type[ScopeDecision]
+                | type[ImplementationReport]
+                | type[VerifierVerdict]
+                | type[SpecialistReport],
             ] = {
                 AgentRole.COS.value: ScopeDecision,
                 AgentRole.ENGINEER.value: ImplementationReport,
                 AgentRole.VERIFIER.value: VerifierVerdict,
+                AgentRole.RESEARCHER.value: SpecialistReport,
+                AgentRole.ARCHITECT.value: SpecialistReport,
             }
             expected_output = expected_outputs.get(str(request.role))
             if expected_output is None or not isinstance(result.output, expected_output):
@@ -1693,7 +1835,22 @@ class WorkflowEngine:
             or error.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
         ):
             return run
-        return self._persist_evidence(run)[0]
+        try:
+            return self._persist_evidence(run)[0]
+        except FleetError as evidence_error:
+            if evidence_error.code not in {
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                ErrorCode.RECOVERY_REQUIRED,
+            }:
+                raise
+            # Incomplete or corrupted provenance must not interrupt the original
+            # failed-run transition and cleanup with a second assembly error.
+            self._emit(
+                run,
+                "evidence.unavailable",
+                {"code": evidence_error.code.value, "original_failure_code": error.code.value},
+            )
+            return run
 
     def _reject_untrusted_secrets(self, value: object) -> None:
         if self.redactor.contains_secret_data(value):

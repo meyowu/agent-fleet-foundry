@@ -171,6 +171,89 @@ def test_bounded_engineer_write_is_allowed() -> None:
     assert decision.protected is False
 
 
+@pytest.mark.parametrize("role", ["researcher", "architect"])
+@pytest.mark.parametrize(
+    "action", ["repo.list_files", "repo.read_file", "repo.search_text", "workspace.get_diff"]
+)
+def test_read_only_specialists_have_exact_observation_baseline(role: str, action: str) -> None:
+    task = _task().model_copy(
+        update={
+            "change_kind": "read_only",
+            "verification_commands": [],
+            "required_verification_command_ids": [],
+            "required_evidence": ["control_plane_plan"],
+        }
+    )
+    intent = _intent(
+        action=action,
+        role=role,
+        side_effect=False,
+        resource=(
+            CanonicalResource(kind="workspace_path", identifier="src/canary_calc/core.py")
+            if action == "repo.read_file"
+            else CanonicalResource(kind="workspace_view", identifier=".")
+        ),
+        parameters={"query": "divide"} if action == "repo.search_text" else {},
+    )
+    decision = BaselinePermissionBroker().evaluate(intent, task, _fake_capabilities())
+    assert decision.outcome is PermissionOutcome.ALLOW
+    assert not decision.protected
+    for stage in (WorkflowStage.SCOPING, WorkflowStage.REPAIRING, WorkflowStage.VERIFYING):
+        assert (
+            BaselinePermissionBroker()
+            .evaluate(intent.model_copy(update={"stage": stage}), task, _fake_capabilities())
+            .outcome
+            is PermissionOutcome.DENY
+        )
+
+
+@pytest.mark.parametrize("role", ["researcher", "architect"])
+def test_specialists_cannot_write_run_approve_or_read_outside_scope(role: str) -> None:
+    _assert_default_deny(_write_intent(role=role))
+    _assert_default_deny(_command_intent(role=role))
+    for action, resource, parameters, effect in [
+        (
+            "fixture.record_side_effect",
+            CanonicalResource(kind="fake_side_effect", identifier="fixture://approval-proof"),
+            {"record": "forbidden"},
+            True,
+        ),
+        (
+            "repo.read_file",
+            CanonicalResource(kind="workspace_path", identifier="src/foreign.py"),
+            {},
+            False,
+        ),
+        (
+            "repo.read_file",
+            CanonicalResource(kind="workspace_path", identifier=".fleet/config"),
+            {},
+            False,
+        ),
+        (
+            "repo.list_files",
+            CanonicalResource(kind="workspace_view", identifier="."),
+            {"path": "/"},
+            False,
+        ),
+        (
+            "repo.search_text",
+            CanonicalResource(kind="workspace_view", identifier="."),
+            {"query": "divide"},
+            True,
+        ),
+    ]:
+        _assert_default_deny(
+            _intent(
+                action=action,
+                role=role,
+                resource=resource,
+                parameters=dict(parameters),
+                side_effect=effect,
+            )
+        )
+
+
 @pytest.mark.parametrize(
     ("role", "stage"),
     [

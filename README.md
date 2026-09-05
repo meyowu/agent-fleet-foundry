@@ -8,7 +8,7 @@ This repository implements **Phase 0 through Phase 4**: deterministic repository
 
 **Phase 4 was accepted on 2026-09-05:** the final default suite passed 1,001 tests, and the separately enabled real-Docker suite passed nine. Phase 5–7 remain open; this is not a completed MVP release. The [completion plan](.agent/plans/2026-09-05-mvp-completion.md) and [acceptance ledger](docs/MVP_ACCEPTANCE.md) distinguish accepted behavior from remaining requirements, including the unrun live-provider gate and owner license decision.
 
-The development branch has accepted the first [Phase 5 slice](.agent/plans/2026-09-05-adaptive-workflow-chat.md): durable cumulative runtime budgets, configured role/delegation ceilings, bounded repair feedback, substantive direct responses, structured criterion evidence, and text-only new-file patches. Its frozen default suite passed 1,170 tests; the separate real-Docker suite passed ten. The last accepted whole phase remains Phase 4 at commit `2e93092`; parallel/specialist execution and persistent chat remain unimplemented.
+The development branch has accepted two [Phase 5 slices](.agent/plans/2026-09-05-adaptive-workflow-chat.md): Milestone 1 (`ab28aaa`) adds durable budgets, role/delegation ceilings, repair feedback, substantive direct responses, criterion evidence and text-only new-file patches; Milestone 2 adds [adaptive graph execution](.agent/plans/2026-09-05-adaptive-graph.md). M2's frozen default suite passed 1,344 tests and its separate real-Docker suite passed twelve. Its checkpoint commit is pending. Phase 4 (`2e93092`) remains the last accepted whole phase; persistent chat remains unimplemented. The development branch `codex/mvp-completion` has been pushed through M1 with remote read-back at `ab28aaa`; `main` remains `c700de1`. Neither slice is a completed MVP or a new main-branch merge.
 
 Three sandbox providers are registered. `DockerSandboxProvider` is the isolated path and creates one inspected, resource-bounded, network-disabled container per reviewed command from an already-local immutable image. `FakeSandboxProvider` records commands without executing them. `LocalUnsafeSandboxProvider` executes directly on the host only after a separate `--allow-unsafe-local` confirmation and can never count as isolated evidence. Provider selection is exact and immutable for a project/run; Docker failure never falls back to host execution.
 
@@ -19,10 +19,10 @@ Six capabilities determine whether Agent Fleet provides differentiated value:
 | Capability | Current implementation boundary | Remaining target |
 |---|---|---|
 | Repository-aware bootstrap | **Enforced:** bounded static inspection finds supported ecosystems, build systems, boundaries, exact candidate commands, provenance, confidence, and ambiguities; preview is read-only; init stages the proposal, runs a disposable canary through the normal Docker workflow, validates a hash-linked `BootstrapReport`, proves cleanup, and only then publishes `.fleet/`. | The canary is a deterministic Fleet-owned fixture; executing arbitrary target-repository setup or networked commands remains out of scope. |
-| Adaptive Fleet | **Enforced subset:** every fake or PydanticAI run persists a validated `FleetPlan`; repository scopes use canonical, case-insensitive conflict checks; `direct`, `single_engineer`, and `engineer_verifier` create only their planned role instances. | Parallel and Researcher/Architect scheduling remain unimplemented and fail closed, although their domain shapes are validated. |
+| Adaptive Fleet | **M2 accepted:** every run persists a validated `FleetPlan`; direct/single/pair create only planned roles. Parallel Engineers use separate scoped child runs and stable patch joins; read-only Researcher/Architect reports flow through declared dependencies. | Persistent CoS chat remains the next Phase 5 slice; graph checkpoint commit remains pending. |
 | Independent permission control plane | **Phase 4 accepted:** ToolGateway re-evaluates current role/workflow/task/user/sandbox ceilings; exact once/run/project rules, explain/revoke/reset, private user-owned trust and durable single-winner dispatch are verified. Phase 5 Milestone 1 preserves cumulative budgets across approval pauses. | Arbitrary shell and approved isolated-worker networking remain unavailable; general provider-history restoration is not implemented. |
 | Independent sandbox abstraction | **Enforced local slice:** strict `SandboxRequirements` matching dispatches exact fake, Docker, or separately confirmed local-unsafe providers. Docker pins a local Unix daemon and image ID, inspects effective configuration before start, bounds execution, and recovers exact labeled resources. | Modal and hosted providers, approved network modes, and a multi-user/remote-daemon trust model remain unimplemented. |
-| Evidence-first delivery | **Enforced:** exact ConfigSnapshot, TaskSpec, FleetPlan, patch, command inspection/transcript, verdict, cleanup, BootstrapReport, risk, and proof-gap links form content-addressed evidence. Milestone 1 resolves typed criterion references to current independent verifier records. Only fresh non-mutating Docker evidence can verify; fake/local-unsafe cannot. | Joined parallel-candidate verification and broader project command/tool coverage remain future work. |
+| Evidence-first delivery | **Enforced:** exact ConfigSnapshot, TaskSpec, FleetPlan, patch, command inspection/transcript, verdict, cleanup, BootstrapReport, risk, and proof-gap links form content-addressed evidence. Accepted M1 resolves typed criterion references; accepted M2 binds joined-candidate and descendant-cleanup provenance. Only fresh non-mutating Docker evidence can verify; fake/local-unsafe cannot. | Preserve these boundaries through chat and configuration evolution; broader project command/tool coverage remains tracked work. |
 | Versioned Fleet evolution | **Contract only:** FleetPatch has dedicated ID prefixes, case-insensitive unique paths, base-hash/protected-path checks, exact content hashes, and required pre-parse plus typed whole-proposal registered-secret scanning. | Proposal persistence, semantic/text diff commands, apply, audit, and rollback remain Phase 6; there is no operational FleetPatch CLI. |
 
 “Enforced” means a property is checked by code and tests at the named boundary. “Partial” means a real subset exists but does not yet satisfy the complete product claim. “Roadmap” means documentation or schema direction only; it must not be presented as executable behavior. See [ADR 0001](docs/adr/0001-product-north-star.md) for the decision and tradeoffs.
@@ -144,7 +144,7 @@ Fake mode remains deterministic test infrastructure and supports legacy Phase 0�
 
 The init/run path safely tolerates only the exact unchanged `.fleet/` status and referenced configuration contents produced by initialization. Configuration loading accepts only bounded regular non-symlink files. A changed referenced file is rejected before run creation even when Git's untracked-file status is textually unchanged, and explicit patch apply rechecks the run-bound ConfigSnapshot as well as repository/base/status identity. Differing `.fleet/` reinitialization also fails before Fleet state changes rather than overwriting the existing tree. Repository and Fleet-state roots must be disjoint in both directions. Real and fake runtimes use the same workflow, artifacts, gateway, permission broker, and completion gate.
 
-The code-change scripted workflow expects `src/canary_calc/core.py` in the target repository. It changes `divide(a, b)` so division by zero raises `ValueError("division by zero is not allowed")`. `--fake-scenario direct` creates no specialist workspace, `single_engineer` creates one Engineer, and the default creates Engineer plus fresh Verifier. `repair`, `fail`, `approval`, `inconclusive`, and `verifier_mutation` exercise bounded negative paths. The mutation scenario is denied by PermissionBroker before a write. These are test/demonstration scripts, not model judgments.
+The code-change scripted workflow expects `src/canary_calc/core.py` in the target repository. It changes `divide(a, b)` so division by zero raises `ValueError("division by zero is not allowed")`. `--fake-scenario direct` creates no specialist workspace, `single_engineer` creates one Engineer, and the default creates Engineer plus fresh Verifier. `parallel_engineers` additionally creates a separately scoped `metadata.py`; `specialist` runs the declared read-only research/architecture chain before one Engineer. `repair`, `fail`, `approval`, `inconclusive`, and `verifier_mutation` exercise bounded negative paths. The mutation scenario is denied by PermissionBroker before a write. These are test/demonstration scripts, not model judgments; arbitrary repositories require the real runtime and reviewed command profile.
 
 For an existing fake registration or the test harness, the approval scenario is:
 
@@ -192,18 +192,30 @@ uv run fleet recover <run-id> --confirm-owner-stopped --json
 
 The command marks an interrupted `RUNNING`/`APPLYING` Run failed and reconciles only its
 persisted leases. It is idempotent for an already terminal, fully cleaned Run and refuses durable
-states such as `PAUSED_FOR_APPROVAL`, which must use `resume` or `cancel` instead.
+ordinary states such as `PAUSED_FOR_APPROVAL`, which must use `resume` or `cancel` instead. An adaptive parent with a retained uncertain driver/continuation claim is an exception: after confirming its owner stopped, recovery may abandon the claimed pause and clean its exact descendants. It never takes over the old execution.
+
+## Adaptive graph execution (Phase 5 Milestone 2 accepted)
+
+CoS proposes a strategy; trusted code checks the reviewed role, scope, delegation, step and concurrency ceilings. Parallel assignments must have explicit subgoals, non-overlapping paths and complete acceptance-criterion coverage. The reviewed workflow `maxParallelAgents` (default 2, maximum 8) limits active children, not total queued tasks. Legacy advanced plans without operational subgoals/criteria remain readable but cannot execute.
+
+Each worker has its own durable Run, TaskSpec, approval principal, workspace and artifact ownership. All workers share the parent's cumulative budget, but not once/run grants. Researcher and Architect may list/read/search/diff their candidate view; they cannot write files, execute commands or request an approval through their tool catalog. Their bounded reports are explicitly untrusted reasoning, not test evidence.
+
+Inspect the parent with `fleet status <parent-id> --json`. The graph includes node/dependency state, child IDs, ordered join receipts and the exact `pending_child_approval_ids`. Approve each displayed child request, then `fleet resume <parent-id>`. `WAITING_FOR_CHILDREN` does not invent a parent approval. Public child resume/apply/cancel/recover are refused; lifecycle operations use the parent. Approved requests preserve original child agent/workspace/sandbox identities across reconstruction.
+
+Independent writers finish in any order; patches join in stable node-ID order into a fresh parent candidate. The parent Verifier checks the complete original task in another clean workspace. A child's full test suite may fail because another child's file is absent; only the joined parent verification can establish completion. Bounded sequential parent repair is explicitly audited and never replays successful children. Explicit `fleet patch apply <parent-id>` still changes only the target working tree.
+
+Driver and parent-continuation claims are durable and have no automatic expiry. Duplicate resume cannot acquire the same work or clean the winning owner's resources. If an owner crashes after dispatch or resume preparation, use exact operator-confirmed recovery, not an automatic retry. Cancellation fences the graph and retains dependency-ordered cleanup; cleanup failures remain recoverable leases. EvidenceBundle includes typed graph/join/child-cleanup provenance, while its verification commands remain parent-owned.
 
 ## What is enforced now
 
 - strict Pydantic v2 persistent/external models and safe YAML loading;
 - type-specific stable ID prefixes for persistent and public identity fields, including project, run, task, agent, event, approval, grant, artifact, intent, lease, workspace, sandbox, plan, and FleetPatch IDs;
 - explicit workflow transitions with transactional per-run events;
-- SQLite migrations `0001`–`0004`, durable exact once/run/always approval grants, per-action persistent-rule capability receipts, provider/image/daemon-bound Projects and Runs, and recoverable worktree/sandbox/execution leases;
+- SQLite migrations `0001`–`0006`, durable exact once/run/always approval grants, per-action persistent-rule capability receipts, provider/image/daemon-bound Projects and Runs, cumulative budget accounting, graph ownership and recoverable worktree/sandbox/execution leases;
 - repository-aware no-execution profiling with provenance, ambiguity, read/entry/depth limits, and symlink defenses;
 - repository-specific FleetSpec/verification proposals plus immutable profile/knowledge artifacts;
 - exact content-addressed ConfigSnapshot and TaskSpec bindings for each run, status inspection, and patch apply;
-- validated per-run FleetPlans and dynamic direct/single/pair role instantiation;
+- validated per-run FleetPlans, dynamic direct/single/pair roles, accepted bounded parallel/specialist child graphs and deterministic parent joins;
 - model-style writes routed through ToolGateway and an independently injected PermissionBroker;
 - permission-decision events and exact role/stage/action/resource/sandbox matching;
 - intrinsically coherent sandbox capability reporting and exact requirement matching across fake, Docker, and separately confirmed local-unsafe providers, with no fallback;
@@ -235,7 +247,7 @@ On POSIX, the bounded Docker CLI runner starts a private process group, sends at
 
 Only `network=none` is accepted by the isolated Phase 3 path. Images must already exist locally and may expose only the allowlisted environment defaults; Fleet does not build, pull, patch, or attest their supply chain. Cgroup-v2 daemons may report `MemorySwappiness=null`; Fleet accepts that only while the inspected memory and memory-swap hard limits are equal, which proves no container swap allocation. A crash after the durable create-dispatch checkpoint but before an exact Docker ID is persisted is intentionally conservative: zero label matches remain `FAILED`, parent resources stay intact, and no command is replayed. If the resource appears later, the operator reruns exact-run recovery after confirming the old owner stopped; a permanent zero remains outstanding for diagnosis rather than becoming an unsafe absence claim. Phase 3 has no cross-process owner-liveness lock, so it intentionally does not run destructive recovery automatically on every CLI startup.
 
-One overall model verdict cannot independently establish multiple acceptance criteria. Milestone 1 adds `structured_criterion_results` with exact current independent-verifier command/artifact references; missing mappings remain inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`, and invalid mappings cannot establish PASS. The normal two-criterion/new-module Docker journey now proves this boundary; the same fake-sandbox mapping remains inconclusive. The policy surface covers bounded candidate operations, exact reviewed verification commands, and one explicit fake approval fixture. Phase 4 adds a separately reviewed user path ceiling, not an inference of path intent from natural language; target-checkout mutation still requires explicit patch review/apply. There is no approved isolated-worker networking, remote/hosted sandbox, arbitrary shell surface, external write, persistent CoS chat, parallel specialist scheduler, keyring/second-provider integration, or operational FleetPatch apply/rollback workflow.
+One overall model verdict cannot independently establish multiple acceptance criteria. Milestone 1 adds `structured_criterion_results` with exact current independent-verifier command/artifact references; missing mappings remain inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`, and invalid mappings cannot establish PASS. The normal two-criterion/new-module Docker journey now proves this boundary; the same fake-sandbox mapping remains inconclusive. The policy surface covers bounded candidate operations, exact reviewed verification commands, and one explicit fake approval fixture. Phase 4 adds a separately reviewed user path ceiling, not an inference of path intent from natural language; target-checkout mutation still requires explicit patch review/apply. There is no approved isolated-worker networking, remote/hosted sandbox, arbitrary shell surface, external write, persistent CoS chat, keyring/second-provider integration, or operational FleetPatch apply/rollback workflow.
 
 The Phase 5 candidate delivery path is intentionally text-only: changed or deleted binary files, unsafe file types, protected paths and changed Git indexes fail closed. New regular UTF-8 files are included in canonical patches; unchanged binary assets may remain in a repository. This avoids concealing registered secrets inside Git's encoded binary-patch format. Ignored paths retain Git ignore semantics; there is no global cache-name exclusion. Generated test fixtures explicitly ignore their Python test caches. New-file snapshots are bounded to 1,024 files, 2 MB per file and 8 MB total; emitted patches are limited to 16 MB, while model patch context retains its smaller 120 KB bound.
 
@@ -253,11 +265,11 @@ Patch application updates the original working tree only. It does not stage, com
 - Phase 2: implemented explicit BYOK `env:NAME` references and the PydanticAI runtime behind the project-owned runtime/tool contracts.
 - Phase 3: completed local Docker sandbox, bounded file/command tools, deterministic recovery, and evidence-gated bootstrap.
 - Phase 4: accepted three-state policy, exact once/run/project trust, audited revocation and safe approval resume.
-- Phase 5: persistent CoS chat and full real role workflow.
+- Phase 5: budgets/evidence (M1) and all five execution strategies (M2) accepted; persistent CoS chat and whole-phase acceptance remain open.
 - Phase 6: reviewable FleetPatch organization updates.
 - Phase 7: release hardening, cross-platform evidence, and owner license decision.
 
-Phase 0–4 establishes the local execution, exact-permission and evidence foundation. Persistent chat/adaptive execution, operational FleetPatch, release hardening and the remaining live-provider/license gates are still required for the complete MVP.
+Phase 0–4 establishes the local execution, exact-permission and evidence foundation; M1/M2 extend it with accepted budgets and adaptive execution. Persistent chat, operational FleetPatch, release hardening and the remaining live-provider/license gates are still required for the complete MVP.
 
 ## Quality gates
 
@@ -271,6 +283,23 @@ AGENT_FLEET_ENABLE_DOCKER_TESTS=1 \
 AGENT_FLEET_DOCKER_TEST_IMAGE=agent-fleet-runner:phase3 \
 uv run pytest -q -m docker_integration tests/docker
 ```
+
+## Verification snapshot (Phase 5 Milestone 2 accepted, 2026-09-05)
+
+The frozen graph slice passed on the local macOS arm64/Colima environment. Its source/test aggregate checksum remained `4cbef9616084ad1465ee5fd84b97f81763f282bc95b96c11b5bb7d35cfeafeb9` throughout final testing; this is a byte-checksum, not a Git commit. The [graph acceptance log](.agent/plans/2026-09-05-adaptive-graph.md#final-acceptance-evidence) records the gates without adding overlapping test counts.
+
+| Gate | Result |
+| --- | --- |
+| Complete default suite | `1344 passed, 13 skipped in 1160.72s`; twelve gated Docker cases and one gated live-provider case. Both opt-ins were explicitly disabled. |
+| Separately enabled real Docker | `12 passed, 3 deselected in 140.05s`; zero managed containers and zero active leases across all 22 test state databases. |
+| Subprocess E2E | `9 passed in 214.64s`. |
+| Artifact/delivery/normal graph regression | `16 passed in 164.85s`; independent delivery audit separately passed `11 passed in 144.48s`. |
+| Static/dependency/schema gates | Lock resolved 51 packages; sync checked 49; final Ruff format refresh checked 203 files (202 at initial freeze), lint passed, mypy passed 172 source files, and all 55 schemas passed drift checking. |
+| Package checks | Documentation-final archive/schema checks: `4 passed in 4.37s` (preceding source-only refresh: `4 passed in 2.82s`). Both archives match source and README bytes; the installed-wheel smoke passes against existing locked dependencies. Archives contain 161 package files, 55 schemas, six migrations and five prompts. |
+
+The pre-final marked integration attempt failed (`2 failed, 212 passed, 85 deselected in 823.08s`): terminal rehydration could not release its owner, and missing child evidence leaked a raw filesystem error. Those defects and embedded plan/join/cleanup consistency gaps were repaired and re-proved by the focused and final frozen suites. The failed attempt is retained, not counted as acceptance.
+
+Normal offline FunctionModel and real-Docker journeys prove scoped parallel/specialist execution, fresh joined-patch verification and explicit parent-only application. Child test results cannot replace parent evidence; FakeSandbox remains INCONCLUSIVE. Unknown dispatched ownership is not replayable and requires operator-confirmed recovery. No live provider or actual provider credential was used. The M2 checkpoint is pending; chat, full Phase 5, Phase 6/7, fresh-user/cross-platform installation, final GitHub merge and owner-license/live-provider release gates remain open.
 
 ## Verification snapshot (Phase 5 Milestone 1 accepted, 2026-09-05)
 
@@ -286,7 +315,7 @@ This frozen development-slice acceptance covers simple-path budgets and evidence
 
 The new normal PydanticAI protocol test uses an offline FunctionModel with actual gateway operations. Separate Docker Engineer and fresh Verifier commands each run three fixture tests; exact references establish two PASS criteria and verify a new text module in the canonical patch. The target remains unchanged until explicit apply after control-plane reconstruction. FakeSandbox remains INCONCLUSIVE. Budgets survive restarts and unknown requests; they are not a guaranteed pre-spend billing cap.
 
-No live provider or actual provider credential was used. A clean network-disabled installation was attempted but remains unproven because required packages, including PyYAML, are absent from the local cache. Graph/specialist execution, persistent chat, full Phase 5, Phase 6/7, fresh-user/cross-platform release proof and the owner license decision remain open. No new commit, merge or published release is claimed here.
+No live provider or actual provider credential was used. A clean network-disabled installation was attempted but remains unproven because required packages, including PyYAML, are absent from the local cache. This historical snapshot predates graph acceptance, which is recorded above. M1 was committed as `ab28aaa` and subsequently pushed to the development branch; persistent chat, full Phase 5, Phase 6/7, fresh-user/cross-platform release proof and the owner license decision remain open. No main-branch merge or published release is claimed.
 
 ## Verification snapshot (Phase 4 accepted, 2026-09-05)
 

@@ -9,6 +9,7 @@ from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import ApplyResult, Run, RunStatus, WorkflowStage
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
+from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.secret_store import SecretNotConfiguredError, SecretStore, SecretStoreError
 from agent_fleet.ports.state_store import StateStore
@@ -23,6 +24,7 @@ class PatchService:
         config: ConfigurationPort,
         secrets: SecretStore,
         clock: Clock,
+        graphs: GraphStore,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
@@ -30,6 +32,7 @@ class PatchService:
         self.config = config
         self.secrets = secrets
         self.clock = clock
+        self.graphs = graphs
 
     def show(self, run_id: str) -> str:
         run = self.state.get_run(run_id)
@@ -43,6 +46,14 @@ class PatchService:
 
     def apply(self, run_id: str) -> tuple[Run, ApplyResult]:
         run = self.state.get_run(run_id)
+        child = self.graphs.child_binding(run_id)
+        if child is not None:
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "An internal child patch cannot be applied independently.",
+                "Review and explicitly apply the independently verified parent candidate.",
+                details={"parent_run_id": child.parent_run_id},
+            )
         if run.status is RunStatus.COMPLETED and run.applied_revision is not None:
             return run, ApplyResult(
                 applied=False,

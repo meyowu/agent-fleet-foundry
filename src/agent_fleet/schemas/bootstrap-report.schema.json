@@ -6,6 +6,8 @@
         "config_snapshot",
         "task_spec",
         "implementation_report",
+        "specialist_report",
+        "graph_join",
         "patch",
         "test_report",
         "verifier_verdict",
@@ -90,6 +92,7 @@
       "enum": [
         "created",
         "running",
+        "waiting_for_children",
         "paused_for_approval",
         "ready_for_review",
         "applying",

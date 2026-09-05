@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import cast
 
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.graph_evidence import assemble_graph_delivery
 from agent_fleet.domain.config import ConfigSnapshot
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evidence import (
@@ -33,6 +34,7 @@ from agent_fleet.domain.models import (
 from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 from agent_fleet.ports.clock import Clock
+from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.state_store import StateStore
 
 
@@ -42,10 +44,12 @@ class EvidenceAssembler:
         state: StateStore,
         artifacts: ArtifactService,
         clock: Clock,
+        graphs: GraphStore | None = None,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
         self.clock = clock
+        self.graphs = graphs
 
     def assemble(
         self,
@@ -344,6 +348,17 @@ class EvidenceAssembler:
                     required_strength=EvidenceStrength.INDEPENDENTLY_VERIFIED,
                 )
             )
+        graph_delivery = None
+        graph_artifact_ids: set[str] = set()
+        if plan.strategy in {
+            FleetStrategy.PARALLEL_ENGINEERS,
+            FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER,
+        }:
+            if self.graphs is None:
+                raise _integrity_error("Adaptive graph provenance store is unavailable.")
+            graph_delivery, graph_artifact_ids = assemble_graph_delivery(
+                self.state, self.artifacts, self.graphs, run, task, plan
+            )
         bundle = EvidenceBundle(
             run_id=run.run_id,
             project_id=run.project_id,
@@ -356,6 +371,7 @@ class EvidenceAssembler:
             fleet_plan_artifact_id=run.fleet_plan_artifact_id,
             fleet_plan_sha256=run.fleet_plan_hash,
             fleet_strategy=plan.strategy,
+            graph_delivery=graph_delivery,
             required_evidence=plan.required_evidence,
             sandbox_provider=run.sandbox_name,
             sandbox_security_level=capabilities.security_level,
@@ -395,7 +411,8 @@ class EvidenceAssembler:
             expected_criteria={item.criterion_id for item in task.acceptance_criteria},
             authoritative_artifact_ids={
                 artifact.artifact_id for artifact in self.state.list_artifacts(run.run_id)
-            },
+            }
+            | graph_artifact_ids,
         )
         return bundle.model_copy(update={"completion_decision": decision})
 

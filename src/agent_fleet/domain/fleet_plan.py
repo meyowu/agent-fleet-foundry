@@ -11,6 +11,8 @@ from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import (
+    BoundedSummary,
+    CriterionId,
     EvidenceRequirementId,
     FleetPlanId,
     RoleId,
@@ -48,6 +50,8 @@ class FleetStrategy(StrEnum):
 class FleetPlanNode(StrictModel):
     node_id: NodeId
     role_id: RoleId
+    goal: BoundedSummary | None = None
+    criterion_ids: list[CriterionId] = Field(default_factory=list, max_length=128)
     depends_on: list[NodeId] = Field(default_factory=list, max_length=16)
     scope: list[PlanScopePath] = Field(default_factory=list, max_length=128)
     can_write: bool = False
@@ -79,6 +83,13 @@ class FleetPlanNode(StrictModel):
     def validate_dependencies(cls, values: list[NodeId]) -> list[NodeId]:
         if len(values) != len(set(values)):
             raise ValueError("fleet plan dependencies must be unique")
+        return values
+
+    @field_validator("criterion_ids")
+    @classmethod
+    def validate_criteria(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("fleet plan criterion IDs must be unique")
         return values
 
 
@@ -142,6 +153,9 @@ def validate_fleet_plan(
         missing_roles = {node.role_id for node in plan.nodes} - known_roles
         if missing_roles:
             raise _invalid(f"FleetPlan references undeclared roles: {sorted(missing_roles)}.")
+    task_criteria = {criterion.criterion_id for criterion in task.acceptance_criteria}
+    if any(set(node.criterion_ids) - task_criteria for node in plan.nodes):
+        raise _invalid("FleetPlan nodes must not introduce acceptance criterion IDs.")
     writers = [node for node in plan.nodes if node.can_write]
     verifiers = [node for node in plan.nodes if node.independent_verifier]
     requires_independent_verification = (
@@ -232,6 +246,13 @@ def validate_fleet_plan(
                 raise _invalid(
                     "A parallel-plan verifier must be read-only and depend on every writer."
                 )
+        # Legacy persisted plans omit these optional fields. New operational plans
+        # populate every writer, so partial or foreign mappings cannot be accepted.
+        if any(node.criterion_ids for node in plan.nodes) and (
+            any(not writer.criterion_ids or writer.goal is None for writer in writers)
+            or {item for writer in writers for item in writer.criterion_ids} != task_criteria
+        ):
+            raise _invalid("Parallel writer assignments must cover exactly the task criteria.")
     if plan.strategy is FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER:
         if not requires_independent_verification:
             raise _invalid("The specialist plan requires independent_verifier_verdict evidence.")
@@ -258,8 +279,12 @@ def validate_fleet_plan(
             or not by_role["verifier"].independent_verifier
         ):
             raise _invalid("The specialist plan dependency and authority chain is invalid.")
-    if len(writers) > plan.max_parallel_agents:
-        raise _invalid("Fleet plan writers exceed the declared parallel-agent limit.")
+        for role in ("researcher", "architect"):
+            specialist = by_role[role]
+            if not specialist.requires_workspace or specialist.scope != task.allowed_paths:
+                raise _invalid(
+                    "Read-only specialists require a workspace with the full task scope."
+                )
     for index, left in enumerate(writers):
         for right in writers[index + 1 :]:
             if _scopes_overlap(left.scope, right.scope):

@@ -15,6 +15,7 @@ from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
 from agent_fleet.adapters.diagnostics.system import LocalSystemDiagnostics
 from agent_fleet.adapters.executable_resolution import resolve_fixed_executable
 from agent_fleet.adapters.filesystem.workspace import BoundedWorkspaceFileSystem
+from agent_fleet.adapters.persistence.graphs import SqliteGraphStore
 from agent_fleet.adapters.persistence.runtime_budgets import SqliteRuntimeBudgetStore
 from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
@@ -62,6 +63,7 @@ class ApplicationContainer:
     state_root: Path
     state: SqliteStateStore
     budgets: SqliteRuntimeBudgetStore
+    graphs: SqliteGraphStore
     artifacts: ArtifactService
     projects: ProjectService
     bootstrap: BootstrapService
@@ -189,6 +191,7 @@ def build_container(
     budgets = SqliteRuntimeBudgetStore(root / "state.db", clock, ids, active_redactor, state)
     local_artifacts = LocalArtifactStore(root / "artifacts")
     artifacts = ArtifactService(local_artifacts, state, clock, ids, active_redactor)
+    graphs = SqliteGraphStore(root / "state.db", clock, ids, active_redactor, local_artifacts)
     repository = GitRepositoryAdapter(root, ids)
     profiler = StaticRepositoryProfiler()
     config = YamlConfigurationAdapter(active_redactor)
@@ -230,7 +233,7 @@ def build_container(
     )
     permission_broker = PolicyPermissionBroker(permissions)
     planner = FleetPlanner(clock, ids)
-    evidence = EvidenceAssembler(state, artifacts, clock)
+    evidence = EvidenceAssembler(state, artifacts, clock, graphs)
     gateway = ToolGateway(
         state,
         artifacts,
@@ -257,6 +260,7 @@ def build_container(
         ids,
         active_redactor,
         budgets=budgets,
+        graphs=graphs,
         permission_policy=permissions,
     )
     projects = ProjectService(
@@ -292,16 +296,17 @@ def build_container(
         state_root=root,
         state=state,
         budgets=budgets,
+        graphs=graphs,
         artifacts=artifacts,
         projects=projects,
         bootstrap=bootstrap_service,
         workflow=workflow,
         approvals=ApprovalService(state, permissions),
         permissions=permissions,
-        patches=PatchService(state, artifacts, repository, config, secrets, clock),
-        inspection=InspectionService(state, artifacts, budgets),
-        cancellation=CancellationService(state, resources, clock),
-        recovery=RecoveryService(state, resources),
+        patches=PatchService(state, artifacts, repository, config, secrets, clock, graphs),
+        inspection=InspectionService(state, artifacts, budgets, graphs),
+        cancellation=CancellationService(state, resources, clock, graphs),
+        recovery=RecoveryService(state, resources, graphs),
         doctor=DoctorService(
             root,
             state,

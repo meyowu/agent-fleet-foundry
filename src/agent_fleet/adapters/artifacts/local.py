@@ -38,8 +38,16 @@ class LocalArtifactStore:
     def get(self, content_ref: str, expected_sha256: str) -> bytes:
         if not self.root.exists():
             raise _integrity_error(content_ref)
-        path = resolve_logical_path(self.root, content_ref, allow_missing=False)
-        content = path.read_bytes()
+        content: bytes | None = None
+        try:
+            path = resolve_logical_path(self.root, content_ref, allow_missing=False)
+            content = path.read_bytes()
+        except (OSError, ValueError):
+            pass
+        if content is None:
+            # Preserve a typed cause-free boundary for missing/raced/corrupt
+            # storage, without exposing an OS exception's absolute state path.
+            raise _integrity_error(content_ref)
         if sha256_bytes(content) != expected_sha256:
             raise _integrity_error(content_ref)
         return content

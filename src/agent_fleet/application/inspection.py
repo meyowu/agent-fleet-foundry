@@ -5,8 +5,9 @@ from __future__ import annotations
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evidence import EvidenceBundle
-from agent_fleet.domain.models import ArtifactKind, Run
+from agent_fleet.domain.models import ApprovalStatus, ArtifactKind, Run, RunStatus
 from agent_fleet.domain.security import canonical_json_hash
+from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.runtime_accounting import RuntimeBudgetStore
 from agent_fleet.ports.state_store import StateStore
 
@@ -17,13 +18,26 @@ class InspectionService:
         state: StateStore,
         artifacts: ArtifactService,
         budgets: RuntimeBudgetStore | None = None,
+        graphs: GraphStore | None = None,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
         self.budgets = budgets
+        self.graphs = graphs
 
     def status(self, run_id: str) -> dict[str, object]:
         run = self.state.get_run(run_id)
+        graph = self.graphs.get(run_id) if self.graphs is not None else None
+        pending_children: list[str] = []
+        if graph is not None:
+            for node in graph.nodes:
+                child = self.state.get_run(node.binding.child_run_id)
+                request_id = child.pending_approval_id
+                if request_id is not None and (
+                    child.status is RunStatus.PAUSED_FOR_APPROVAL
+                    and self.state.get_approval(request_id).status is ApprovalStatus.PENDING
+                ):
+                    pending_children.append(request_id)
         return {
             "run_id": run.run_id,
             "project_id": run.project_id,
@@ -31,6 +45,10 @@ class InspectionService:
             "stage": run.stage.value if run.stage else None,
             "repair_iterations": run.repair_iterations,
             "pending_approval_id": run.pending_approval_id,
+            "pending_child_approval_ids": pending_children,
+            "parent_run_id": run.parent_run_id,
+            "parent_node_id": run.parent_node_id,
+            "graph": graph.model_dump(mode="json") if graph is not None else None,
             "patch_artifact_id": run.patch_artifact_id,
             "patch_sha256": run.patch_sha256,
             "config_snapshot_artifact_id": run.config_snapshot_artifact_id,

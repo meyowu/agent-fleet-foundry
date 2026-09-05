@@ -28,7 +28,7 @@ def test_default_fleet_spec_round_trips_strictly() -> None:
     files = default_fleet_files("canary-project")
     spec = validate_fleet_files(files)
     assert spec.spec.runtime.adapter == "fake"
-    assert set(spec.spec.agents) == {"cos", "engineer", "verifier"}
+    assert set(spec.spec.agents) == {"cos", "engineer", "verifier", "researcher", "architect"}
     assert spec.spec.agents["cos"].allowed_tools == []
     assert spec.spec.agents["engineer"].allowed_tools == [
         "repo.list_files",
@@ -48,6 +48,41 @@ def test_default_fleet_spec_round_trips_strictly() -> None:
         "workspace.get_diff",
         "command.run",
     ]
+    assert spec.spec.workflows["code-change"].max_parallel_agents == 2
+    for role in ("researcher", "architect"):
+        agent = spec.spec.agents[role]
+        assert agent.lifecycle.value == "per_task"
+        assert agent.max_steps == 10
+        assert agent.may_delegate_to == []
+        assert agent.instructions in files
+        assert agent.allowed_tools == [
+            "repo.list_files",
+            "repo.read_file",
+            "repo.search_text",
+            "workspace.get_diff",
+        ]
+        requests = [item for item in spec.spec.requested_permissions if item.principal_role == role]
+        assert {item.action for item in requests} == set(agent.allowed_tools)
+        assert {item.resource for item in requests} == {"workspace://candidate/**"}
+
+
+@pytest.mark.parametrize("capacity", [0, 9, -1])
+def test_reviewed_workflow_parallel_capacity_is_bounded(capacity: int) -> None:
+    files = default_fleet_files("bounded-capacity")
+    data = yaml.safe_load(files["fleet.yaml"])
+    data["spec"]["workflows"]["code-change"]["maxParallelAgents"] = capacity
+    files["fleet.yaml"] = yaml.safe_dump(data)
+    with pytest.raises(FleetError) as caught:
+        validate_fleet_files(files)
+    assert caught.value.code is ErrorCode.CONFIG_INVALID
+
+
+def test_old_reviewed_workflow_gets_safe_parallel_default() -> None:
+    files = default_fleet_files("legacy-capacity")
+    data = yaml.safe_load(files["fleet.yaml"])
+    del data["spec"]["workflows"]["code-change"]["maxParallelAgents"]
+    files["fleet.yaml"] = yaml.safe_dump(data)
+    assert validate_fleet_files(files).spec.workflows["code-change"].max_parallel_agents == 2
 
 
 def test_pydantic_ai_fleet_spec_requires_and_preserves_opaque_provider_model() -> None:

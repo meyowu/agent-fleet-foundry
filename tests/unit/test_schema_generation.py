@@ -14,7 +14,7 @@ from agent_fleet.domain.models import (
     ToolIntent,
     UsageRecord,
 )
-from agent_fleet.schemas.generate import generate
+from agent_fleet.schemas.generate import SCHEMAS, generate
 
 
 def test_schema_regeneration_has_no_diff() -> None:
@@ -83,3 +83,48 @@ def test_generated_wire_schemas_expose_representable_security_constraints() -> N
     bundle = EvidenceBundle.model_json_schema()
     assert bundle["properties"]["project_id"]["pattern"] == r"^prj_[0-9a-f]{32}$"
     assert bundle["properties"]["config_snapshot_artifact_id"]["pattern"] == (r"^art_[0-9a-f]{32}$")
+
+
+def test_adaptive_graph_public_schema_catalog_is_complete_and_bounded() -> None:
+    expected = {
+        "writer-assignment.schema.json",
+        "specialist-report.schema.json",
+        "graph-snapshot.schema.json",
+        "graph-child-seed.schema.json",
+        "graph-child-binding.schema.json",
+        "graph-driver-claim.schema.json",
+        "graph-artifact-ref.schema.json",
+        "graph-node-record.schema.json",
+        "graph-join-input.schema.json",
+        "graph-join-preparation.schema.json",
+        "graph-join-completion.schema.json",
+        "graph-delivery-evidence.schema.json",
+    }
+    assert expected <= SCHEMAS.keys()
+    for name in expected:
+        assert SCHEMAS[name].model_json_schema()["additionalProperties"] is False
+    graph = SCHEMAS["graph-snapshot.schema.json"].model_json_schema()
+    assert graph["properties"]["nodes"]["maxItems"] == 16
+    assert graph["properties"]["parent_run_id"]["pattern"] == r"^run_[0-9a-f]{32}$"
+    assert set(graph["$defs"]["GraphStatus"]["enum"]) == {
+        "ready",
+        "running",
+        "paused",
+        "joined",
+        "failed",
+        "cancelled",
+    }
+    node = SCHEMAS["graph-node-record.schema.json"].model_json_schema()
+    assert node["properties"]["revision"]["minimum"] == 0
+    assert node["properties"]["input_artifacts"]["maxItems"] == 64
+    seed = SCHEMAS["graph-child-seed.schema.json"].model_json_schema()
+    assert seed["properties"]["iteration"]["const"] == 0
+    assert {"parent_run_id", "parent_plan_sha256", "parent_node_id", "parent_iteration"} <= (
+        seed["$defs"]["Run"]["properties"].keys()
+    )
+    specialist = SCHEMAS["specialist-report.schema.json"].model_json_schema()
+    assert specialist["properties"]["role"]["enum"] == ["researcher", "architect"]
+    assert specialist["properties"]["findings"]["maxItems"] == 32
+    delivery = SCHEMAS["graph-delivery-evidence.schema.json"].model_json_schema()
+    assert delivery["properties"]["child_cleanup_receipts"]["maxItems"] == 16
+    assert delivery["properties"]["sequential_repair_iterations"]["maximum"] == 5

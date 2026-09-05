@@ -12,3 +12,11 @@ unknowns and proof gaps instead of inventing facts.
 For a direct read-only task, include a substantive bounded `response` answering the user.
 Distinguish observed repository facts from inferences and missing context. A task description
 alone is not a response. This response is not evidence of executed tests or code changes.
+
+Use only roles declared in available_roles. For parallel_engineers, provide two to eight
+writer_assignments with stable unique node_id values (never verifier), a bounded goal,
+disjoint relative path scopes and exact original criterion_ids covering every criterion.
+Request max_parallel_agents within the reviewed ceiling; extra writers may queue. Never
+widen the original task or replace independent joined-patch verification. Choose the fixed
+research_architect_engineer_verifier chain only when read-only research and architecture
+are needed; these roles cannot run commands or perform external research.

@@ -1,0 +1,117 @@
+{
+  "$defs": {
+    "GraphJoinInput": {
+      "additionalProperties": false,
+      "properties": {
+        "child_run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Child Run Id",
+          "type": "string"
+        },
+        "child_task_id": {
+          "pattern": "^task_[0-9a-f]{32}$",
+          "title": "Child Task Id",
+          "type": "string"
+        },
+        "node_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "patch_artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Patch Artifact Id",
+          "type": "string"
+        },
+        "patch_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Patch Sha256",
+          "type": "string"
+        },
+        "report_artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Report Artifact Id",
+          "type": "string"
+        },
+        "report_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Report Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "child_run_id",
+        "child_task_id",
+        "patch_artifact_id",
+        "patch_sha256",
+        "report_artifact_id",
+        "report_sha256"
+      ],
+      "title": "GraphJoinInput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "base_revision": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "config_snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Snapshot Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "iteration": {
+      "const": 0,
+      "default": 0,
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "ordered_inputs": {
+      "items": {
+        "$ref": "#/$defs/GraphJoinInput"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Ordered Inputs",
+      "type": "array"
+    },
+    "parent_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Parent Run Id",
+      "type": "string"
+    },
+    "parent_task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Parent Task Id",
+      "type": "string"
+    },
+    "plan_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Plan Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "parent_run_id",
+    "parent_task_id",
+    "config_snapshot_sha256",
+    "plan_sha256",
+    "base_revision",
+    "ordered_inputs",
+    "created_at"
+  ],
+  "title": "GraphJoinPreparation",
+  "type": "object"
+}

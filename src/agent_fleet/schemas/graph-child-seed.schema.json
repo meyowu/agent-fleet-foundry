@@ -1,0 +1,1210 @@
+{
+  "$defs": {
+    "AcceptanceCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "criterion_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "description"
+      ],
+      "title": "AcceptanceCriterion",
+      "type": "object"
+    },
+    "AgentExecutionCheckpoint": {
+      "additionalProperties": false,
+      "description": "Identity-bound specialist session retained across approval pauses.",
+      "properties": {
+        "agent_instance_id": {
+          "pattern": "^agent_[0-9a-f]{32}$",
+          "title": "Agent Instance Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "iteration": {
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Iteration",
+          "type": "integer"
+        },
+        "sandbox_id": {
+          "pattern": "^sandbox_[0-9a-f]{32}$",
+          "title": "Sandbox Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "pattern": "^ws_[0-9a-f]{32}$",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_instance_id",
+        "workspace_id",
+        "sandbox_id",
+        "iteration",
+        "created_at"
+      ],
+      "title": "AgentExecutionCheckpoint",
+      "type": "object"
+    },
+    "CommandSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Argv",
+          "type": "array"
+        },
+        "command_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "environment": {
+          "maxProperties": 32,
+          "patternProperties": {
+            "^[A-Z][A-Z0-9_]{0,63}$": {
+              "maxLength": 4096,
+              "type": "string"
+            }
+          },
+          "title": "Environment",
+          "type": "object"
+        },
+        "executable": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^(?:[A-Za-z0-9._+-]+|\\./[A-Za-z0-9._+-]+)$",
+          "title": "Executable",
+          "type": "string"
+        },
+        "logical_cwd": {
+          "default": ".",
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Logical Cwd",
+          "type": "string"
+        },
+        "max_output_bytes": {
+          "default": 64000,
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Max Output Bytes",
+          "type": "integer"
+        },
+        "network_requirement": {
+          "default": "none",
+          "enum": [
+            "none",
+            "required"
+          ],
+          "title": "Network Requirement",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command_id",
+        "executable"
+      ],
+      "title": "CommandSpec",
+      "type": "object"
+    },
+    "FakeScenario": {
+      "enum": [
+        "success",
+        "fail",
+        "repair",
+        "approval",
+        "inconclusive",
+        "verifier_mutation",
+        "direct",
+        "single_engineer",
+        "parallel_engineers",
+        "specialist"
+      ],
+      "title": "FakeScenario",
+      "type": "string"
+    },
+    "Run": {
+      "additionalProperties": false,
+      "properties": {
+        "applied_revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Applied Revision"
+        },
+        "assurance_verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Verdict"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "base_revision": {
+          "title": "Base Revision",
+          "type": "string"
+        },
+        "cleanup_receipt_artifact_id": {
+          "anyOf": [
+            {
+              "pattern": "^art_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cleanup Receipt Artifact Id"
+        },
+        "cleanup_receipt_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cleanup Receipt Sha256"
+        },
+        "command_evidence_artifact_ids": {
+          "items": {
+            "pattern": "^art_[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "title": "Command Evidence Artifact Ids",
+          "type": "array"
+        },
+        "config_snapshot_artifact_id": {
+          "anyOf": [
+            {
+              "pattern": "^art_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config Snapshot Artifact Id"
+        },
+        "config_snapshot_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config Snapshot Hash"
+        },
+        "correlation_id": {
+          "pattern": "^corr_[0-9a-f]{32}$",
+          "title": "Correlation Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "credential_ref": {
+          "anyOf": [
+            {
+              "maxLength": 132,
+              "minLength": 5,
+              "pattern": "^env:[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credential Ref"
+        },
+        "engineer_checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentExecutionCheckpoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence_bundle_artifact_id": {
+          "anyOf": [
+            {
+              "pattern": "^art_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Bundle Artifact Id"
+        },
+        "evidence_bundle_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Bundle Hash"
+        },
+        "fake_scenario": {
+          "$ref": "#/$defs/FakeScenario",
+          "default": "success"
+        },
+        "fleet_plan_artifact_id": {
+          "anyOf": [
+            {
+              "pattern": "^art_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fleet Plan Artifact Id"
+        },
+        "fleet_plan_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fleet Plan Hash"
+        },
+        "fleet_strategy": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fleet Strategy"
+        },
+        "goal": {
+          "title": "Goal",
+          "type": "string"
+        },
+        "max_repair_iterations": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Max Repair Iterations",
+          "type": "integer"
+        },
+        "parent_iteration": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Iteration"
+        },
+        "parent_node_id": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Node Id"
+        },
+        "parent_plan_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Plan Sha256"
+        },
+        "parent_run_id": {
+          "anyOf": [
+            {
+              "pattern": "^run_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Run Id"
+        },
+        "patch_artifact_id": {
+          "anyOf": [
+            {
+              "pattern": "^art_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Patch Artifact Id"
+        },
+        "patch_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Patch Sha256"
+        },
+        "pending_approval_id": {
+          "anyOf": [
+            {
+              "pattern": "^perm_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pending Approval Id"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "provider_model": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Model"
+        },
+        "repair_iterations": {
+          "default": 0,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Repair Iterations",
+          "type": "integer"
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "runtime_name": {
+          "default": "fake",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "title": "Runtime Name",
+          "type": "string"
+        },
+        "runtime_usage_artifact_ids": {
+          "items": {
+            "pattern": "^art_[0-9a-f]{32}$",
+            "type": "string"
+          },
+          "title": "Runtime Usage Artifact Ids",
+          "type": "array"
+        },
+        "sandbox_capabilities_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sandbox Capabilities Hash"
+        },
+        "sandbox_capabilities_snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SandboxCapabilities"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sandbox_configuration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SandboxConfiguration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "sandbox_configuration_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sandbox Configuration Hash"
+        },
+        "sandbox_daemon_identity": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sandbox Daemon Identity"
+        },
+        "sandbox_image_identity": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sandbox Image Identity"
+        },
+        "sandbox_name": {
+          "default": "fake",
+          "enum": [
+            "fake",
+            "docker",
+            "local-unsafe"
+          ],
+          "title": "Sandbox Name",
+          "type": "string"
+        },
+        "sandbox_requirements": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SandboxRequirements"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "specialist_checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentExecutionCheckpoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowStage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus",
+          "default": "created"
+        },
+        "target_status_fingerprint": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Target Status Fingerprint",
+          "type": "string"
+        },
+        "task_id": {
+          "anyOf": [
+            {
+              "pattern": "^task_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Id"
+        },
+        "task_spec_artifact_id": {
+          "anyOf": [
+            {
+              "pattern": "^art_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Spec Artifact Id"
+        },
+        "task_spec_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Spec Hash"
+        },
+        "unsafe_local_confirmed": {
+          "default": false,
+          "title": "Unsafe Local Confirmed",
+          "type": "boolean"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "verification_checkpoint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerificationCheckpoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "verified_complete": {
+          "default": false,
+          "title": "Verified Complete",
+          "type": "boolean"
+        },
+        "verifier_agent_instance_id": {
+          "anyOf": [
+            {
+              "pattern": "^agent_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verifier Agent Instance Id"
+        },
+        "verifier_verdict_artifact_id": {
+          "anyOf": [
+            {
+              "pattern": "^art_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verifier Verdict Artifact Id"
+        },
+        "verifier_workspace_mutated": {
+          "default": false,
+          "title": "Verifier Workspace Mutated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "run_id",
+        "project_id",
+        "correlation_id",
+        "goal",
+        "base_revision",
+        "target_status_fingerprint",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "Run",
+      "type": "object"
+    },
+    "RunStatus": {
+      "enum": [
+        "created",
+        "running",
+        "waiting_for_children",
+        "paused_for_approval",
+        "ready_for_review",
+        "applying",
+        "completed",
+        "failed",
+        "cancelled",
+        "rejected",
+        "abandoned"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    },
+    "SandboxCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "executes_code": {
+          "title": "Executes Code",
+          "type": "boolean"
+        },
+        "isolation_enforced": {
+          "title": "Isolation Enforced",
+          "type": "boolean"
+        },
+        "provider": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "security_level": {
+          "$ref": "#/$defs/SandboxSecurityLevel"
+        },
+        "supported_network_modes": {
+          "items": {
+            "enum": [
+              "none",
+              "approved-unrestricted"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Supported Network Modes",
+          "type": "array"
+        },
+        "supports_capability_drop": {
+          "default": false,
+          "title": "Supports Capability Drop",
+          "type": "boolean"
+        },
+        "supports_no_new_privileges": {
+          "default": false,
+          "title": "Supports No New Privileges",
+          "type": "boolean"
+        },
+        "supports_non_root": {
+          "default": false,
+          "title": "Supports Non Root",
+          "type": "boolean"
+        },
+        "supports_read_only_root": {
+          "default": false,
+          "title": "Supports Read Only Root",
+          "type": "boolean"
+        },
+        "supports_recovery": {
+          "title": "Supports Recovery",
+          "type": "boolean"
+        },
+        "supports_resource_limits": {
+          "title": "Supports Resource Limits",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider",
+        "security_level",
+        "isolation_enforced",
+        "executes_code",
+        "supported_network_modes",
+        "supports_resource_limits",
+        "supports_recovery"
+      ],
+      "title": "SandboxCapabilities",
+      "type": "object"
+    },
+    "SandboxConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "cpu_limit": {
+          "default": 1.0,
+          "maximum": 16,
+          "minimum": 0.001,
+          "multipleOf": 0.001,
+          "title": "Cpu Limit",
+          "type": "number"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image"
+        },
+        "memory_mb": {
+          "default": 512,
+          "maximum": 32768,
+          "minimum": 64,
+          "title": "Memory Mb",
+          "type": "integer"
+        },
+        "network_mode": {
+          "default": "none",
+          "enum": [
+            "none",
+            "approved-unrestricted"
+          ],
+          "title": "Network Mode",
+          "type": "string"
+        },
+        "pids_limit": {
+          "default": 128,
+          "maximum": 4096,
+          "minimum": 16,
+          "title": "Pids Limit",
+          "type": "integer"
+        },
+        "provider": {
+          "default": "fake",
+          "enum": [
+            "fake",
+            "docker",
+            "local-unsafe"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "shm_mb": {
+          "default": 64,
+          "maximum": 1024,
+          "minimum": 16,
+          "title": "Shm Mb",
+          "type": "integer"
+        },
+        "tmpfs_mb": {
+          "default": 128,
+          "maximum": 4096,
+          "minimum": 16,
+          "title": "Tmpfs Mb",
+          "type": "integer"
+        }
+      },
+      "title": "SandboxConfiguration",
+      "type": "object"
+    },
+    "SandboxRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "capability_drop_required": {
+          "default": false,
+          "title": "Capability Drop Required",
+          "type": "boolean"
+        },
+        "code_execution_required": {
+          "default": false,
+          "title": "Code Execution Required",
+          "type": "boolean"
+        },
+        "isolation_required": {
+          "default": false,
+          "title": "Isolation Required",
+          "type": "boolean"
+        },
+        "network_mode": {
+          "default": "none",
+          "enum": [
+            "none",
+            "approved-unrestricted"
+          ],
+          "title": "Network Mode",
+          "type": "string"
+        },
+        "no_new_privileges_required": {
+          "default": false,
+          "title": "No New Privileges Required",
+          "type": "boolean"
+        },
+        "non_root_required": {
+          "default": false,
+          "title": "Non Root Required",
+          "type": "boolean"
+        },
+        "read_only_root_required": {
+          "default": false,
+          "title": "Read Only Root Required",
+          "type": "boolean"
+        },
+        "resource_limits_required": {
+          "default": false,
+          "title": "Resource Limits Required",
+          "type": "boolean"
+        }
+      },
+      "title": "SandboxRequirements",
+      "type": "object"
+    },
+    "SandboxSecurityLevel": {
+      "enum": [
+        "fake",
+        "isolated",
+        "unsafe_host"
+      ],
+      "title": "SandboxSecurityLevel",
+      "type": "string"
+    },
+    "TaskSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "$ref": "#/$defs/AcceptanceCriterion"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "allowed_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Paths",
+          "type": "array"
+        },
+        "base_revision": {
+          "title": "Base Revision",
+          "type": "string"
+        },
+        "change_kind": {
+          "default": "code_change",
+          "enum": [
+            "read_only",
+            "code_change"
+          ],
+          "title": "Change Kind",
+          "type": "string"
+        },
+        "config_snapshot_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Snapshot Hash",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "forbidden_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Forbidden Paths",
+          "type": "array"
+        },
+        "max_repair_iterations": {
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Max Repair Iterations",
+          "type": "integer"
+        },
+        "normalized_goal": {
+          "title": "Normalized Goal",
+          "type": "string"
+        },
+        "original_goal": {
+          "title": "Original Goal",
+          "type": "string"
+        },
+        "required_evidence": {
+          "items": {
+            "enum": [
+              "canonical_patch",
+              "command_evidence",
+              "control_plane_plan",
+              "independent_verifier_verdict"
+            ],
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Required Evidence",
+          "type": "array"
+        },
+        "required_verification_command_ids": {
+          "items": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.-]*$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Required Verification Command Ids",
+          "type": "array"
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9a-f]{32}$",
+          "title": "Task Id",
+          "type": "string"
+        },
+        "verification_commands": {
+          "items": {
+            "$ref": "#/$defs/CommandSpec"
+          },
+          "maxItems": 32,
+          "title": "Verification Commands",
+          "type": "array"
+        },
+        "workflow": {
+          "default": "code-change",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Workflow",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "run_id",
+        "original_goal",
+        "normalized_goal",
+        "base_revision",
+        "allowed_paths",
+        "forbidden_paths",
+        "acceptance_criteria",
+        "required_evidence",
+        "max_repair_iterations",
+        "config_snapshot_hash",
+        "created_at"
+      ],
+      "title": "TaskSpec",
+      "type": "object"
+    },
+    "Verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    },
+    "VerificationCheckpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_instance_id": {
+          "pattern": "^agent_[0-9a-f]{32}$",
+          "title": "Agent Instance Id",
+          "type": "string"
+        },
+        "baseline_fingerprint": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Baseline Fingerprint",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "iteration": {
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Iteration",
+          "type": "integer"
+        },
+        "patch_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Patch Sha256",
+          "type": "string"
+        },
+        "sandbox_id": {
+          "pattern": "^sandbox_[0-9a-f]{32}$",
+          "title": "Sandbox Id",
+          "type": "string"
+        },
+        "workspace_id": {
+          "pattern": "^ws_[0-9a-f]{32}$",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent_instance_id",
+        "workspace_id",
+        "sandbox_id",
+        "iteration",
+        "created_at",
+        "patch_sha256",
+        "baseline_fingerprint"
+      ],
+      "title": "VerificationCheckpoint",
+      "type": "object"
+    },
+    "WorkflowStage": {
+      "enum": [
+        "intake",
+        "scoping",
+        "workspace_preparation",
+        "implementing",
+        "verifying",
+        "repairing",
+        "presenting",
+        "applying",
+        "cleanup"
+      ],
+      "title": "WorkflowStage",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "iteration": {
+      "const": 0,
+      "default": 0,
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "node_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Node Id",
+      "type": "string"
+    },
+    "run": {
+      "$ref": "#/$defs/Run"
+    },
+    "task": {
+      "$ref": "#/$defs/TaskSpec"
+    }
+  },
+  "required": [
+    "node_id",
+    "run",
+    "task"
+  ],
+  "title": "GraphChildSeed",
+  "type": "object"
+}

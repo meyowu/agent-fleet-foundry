@@ -26,6 +26,7 @@ from agent_fleet.domain.models import (
 from agent_fleet.domain.security import canonical_json_hash
 from agent_fleet.domain.workflow import is_terminal
 from agent_fleet.ports.clock import Clock
+from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.state_store import StateStore
@@ -66,6 +67,40 @@ class ResourceService:
         )
         self.state.save_lease(lease)
         return lease
+
+    def create_workspace(self, run: Run, kind: WorkspaceKind) -> tuple[Workspace, ResourceLease]:
+        """Persist the recoverable exact identity before Git can create a worktree."""
+        project = self.state.get_project(run.project_id)
+        workspace = self.repository.prepare_workspace(run.run_id, run.base_revision, kind)
+        now = self.clock.now()
+        lease = ResourceLease(
+            lease_id=self.ids.new(IdPrefix.LEASE),
+            run_id=run.run_id,
+            kind=LeaseKind.WORKTREE,
+            resource_id=workspace.workspace_id,
+            path=workspace.path,
+            status=LeaseStatus.CREATING,
+            created_at=now,
+            updated_at=now,
+            metadata={
+                "workspace_kind": workspace.kind.value,
+                "base_revision": workspace.base_revision,
+            },
+        )
+        self.state.save_lease(lease)
+        try:
+            created = self.repository.materialize_workspace(Path(project.canonical_root), workspace)
+            if created != workspace:
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "Git returned a workspace identity different from its prepared lease.",
+                    "Recover the exact recorded workspace; no replacement is accepted.",
+                )
+            self.state.update_lease_status(lease.lease_id, LeaseStatus.ACTIVE.value)
+        except BaseException:
+            self.state.update_lease_status(lease.lease_id, LeaseStatus.FAILED.value)
+            raise
+        return created, self.state.get_lease(lease.lease_id)
 
     def lease_sandbox(self, handle: SandboxHandle) -> ResourceLease:
         now = self.clock.now()
@@ -496,9 +531,15 @@ class ResourceService:
 
 
 class RecoveryService:
-    def __init__(self, state: StateStore, resources: ResourceService) -> None:
+    def __init__(self, state: StateStore, resources: ResourceService, graphs: GraphStore) -> None:
         self.state = state
         self.resources = resources
+        self.graphs = graphs
+
+    def owned_run_ids(self, run_id: str) -> tuple[str, ...]:
+        """Return exact recovery ownership for user-visible lease accounting."""
+        self.state.get_run(run_id)
+        return (run_id, *(item.child_run_id for item in self.graphs.descendants(run_id)))
 
     async def recover_run(self, run_id: str) -> Run:
         """Recover one explicitly selected run after its prior owner has stopped.
@@ -509,7 +550,20 @@ class RecoveryService:
         """
 
         run = self.state.get_run(run_id)
-        if run.status in {RunStatus.RUNNING, RunStatus.APPLYING}:
+        child = self.graphs.child_binding(run_id)
+        if child is not None:
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "An internal child must be recovered through its stopped parent owner.",
+                "Recover the parent run so all dependency and dispatch claims remain fenced.",
+                details={"parent_run_id": child.parent_run_id},
+            )
+        graph = self.graphs.get(run_id)
+        interrupted_claim = graph is not None and graph.driver_claim is not None
+        if run.status in {RunStatus.RUNNING, RunStatus.APPLYING} or (
+            interrupted_claim
+            and run.status in {RunStatus.PAUSED_FOR_APPROVAL, RunStatus.WAITING_FOR_CHILDREN}
+        ):
             run = run.model_copy(
                 update={"status": RunStatus.FAILED, "updated_at": self.resources.clock.now()}
             )
@@ -526,22 +580,49 @@ class RecoveryService:
                 details={"run_id": run_id, "status": run.status.value},
             )
 
+        await _cleanup_graph_descendants(
+            self.graphs, self.state, self.resources, run, recovered=True
+        )
         if self.state.outstanding_leases(run_id):
             await self.resources.cleanup_run(run, recovered=True)
         return self.state.get_run(run_id)
 
 
 class CancellationService:
-    def __init__(self, state: StateStore, resources: ResourceService, clock: Clock) -> None:
+    def __init__(
+        self, state: StateStore, resources: ResourceService, clock: Clock, graphs: GraphStore
+    ) -> None:
         self.state = state
         self.resources = resources
         self.clock = clock
+        self.graphs = graphs
 
     async def cancel(self, run_id: str) -> Run:
         run = self.state.get_run(run_id)
+        child = self.graphs.child_binding(run_id)
+        if child is not None:
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "Cancel the parent graph rather than one internally scheduled child.",
+                "Use the parent run ID to stop every dependent node safely.",
+                details={"parent_run_id": child.parent_run_id},
+            )
         outstanding = bool(self.state.outstanding_leases(run_id))
-        if is_terminal(run.status) and (run.status is not RunStatus.CANCELLED or not outstanding):
-            return run
+        child_outstanding = any(
+            self.state.outstanding_leases(binding.child_run_id)
+            for binding in self.graphs.descendants(run_id)
+        )
+        if is_terminal(run.status):
+            if run.status is not RunStatus.CANCELLED:
+                if outstanding or child_outstanding:
+                    raise FleetError(
+                        ErrorCode.RECOVERY_REQUIRED,
+                        "A terminal run still has owned resources requiring recovery.",
+                        "Confirm its previous owner stopped and recover the parent run.",
+                    )
+                return run
+            if not outstanding and not child_outstanding:
+                return run
         if run.status is not RunStatus.CANCELLED:
             run = run.model_copy(
                 update={"status": RunStatus.CANCELLED, "updated_at": self.clock.now()}
@@ -549,9 +630,33 @@ class CancellationService:
             self.state.save_run(
                 run, "run.cancelled", {"stage": run.stage.value if run.stage else None}
             )
+        await _cleanup_graph_descendants(self.graphs, self.state, self.resources, run)
         if outstanding:
             await self.resources.cleanup_run(run)
         return self.state.get_run(run_id)
+
+
+async def _cleanup_graph_descendants(
+    graphs: GraphStore,
+    state: StateStore,
+    resources: ResourceService,
+    parent: Run,
+    *,
+    recovered: bool = False,
+) -> None:
+    graph = graphs.get(parent.run_id)
+    if graph is None:
+        return
+    if graph.cancel_requested_at is None:
+        graphs.request_cancel(parent.run_id, expected_revision=graph.revision)
+    failures: list[BaseException] = []
+    for binding in graphs.descendants(parent.run_id):
+        try:
+            await resources.cleanup_run(state.get_run(binding.child_run_id), recovered=recovered)
+        except BaseException as error:
+            failures.append(error)
+    if failures:
+        raise failures[0]
 
 
 async def _await_sandbox_cleanup_task(

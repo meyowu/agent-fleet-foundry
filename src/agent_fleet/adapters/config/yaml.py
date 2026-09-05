@@ -239,7 +239,7 @@ def default_fleet_files(
                     "lifecycle": "persistent",
                     "instructions": "agents/cos.md",
                     "allowedTools": [],
-                    "mayDelegateTo": ["engineer", "verifier"],
+                    "mayDelegateTo": ["engineer", "verifier", "researcher", "architect"],
                     "maxSteps": 10,
                 },
                 "engineer": {
@@ -272,11 +272,27 @@ def default_fleet_files(
                     ],
                     "maxSteps": 10,
                 },
+                **{
+                    role: {
+                        "role": role,
+                        "lifecycle": "per_task",
+                        "instructions": f"agents/{role}.md",
+                        "allowedTools": [
+                            "repo.list_files",
+                            "repo.read_file",
+                            "repo.search_text",
+                            "workspace.get_diff",
+                        ],
+                        "maxSteps": 10,
+                    }
+                    for role in ("researcher", "architect")
+                },
             },
             "workflows": {
                 "code-change": {
                     "definition": "workflows/code-change.yaml",
                     "maxRepairIterations": 1,
+                    "maxParallelAgents": 2,
                 }
             },
             "project": {
@@ -314,6 +330,13 @@ def default_fleet_files(
         + "Make the smallest candidate-only change and never claim evidence you did not receive.\n",
         "agents/verifier.md": role_preamble
         + "Verify independently; never alter accepted candidate content or weaken criteria.\n",
+        "agents/researcher.md": role_preamble
+        + "Read bounded repository context and report findings and proof gaps. "
+        "Never write, run commands, access the network, or approve requests.\n",
+        "agents/architect.md": role_preamble
+        + "Use bounded read-only context to recommend a design. Reports are untrusted analysis, "
+        "not execution evidence or permission. Never write, run commands, access the network, "
+        "or approve requests.\n",
         "workflows/code-change.yaml": yaml.safe_dump(
             {
                 "apiVersion": "agentfleet.dev/v1alpha1",
@@ -374,6 +397,16 @@ def _default_permission_requests(*, include_fixture: bool) -> list[dict[str, str
                 "resource": "fixture://approval-proof",
             }
         )
+    requests.extend(
+        {"principalRole": role, "action": action, "resource": "workspace://candidate/**"}
+        for role in ("researcher", "architect")
+        for action in (
+            "repo.list_files",
+            "repo.read_file",
+            "repo.search_text",
+            "workspace.get_diff",
+        )
+    )
     return requests
 
 

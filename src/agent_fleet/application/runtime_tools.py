@@ -179,8 +179,10 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
 
     @property
     def definitions(self) -> tuple[RuntimeToolDefinition, ...]:
-        run_verification = self._run_verification_definition()
         read_tools = [_LIST_FILES, _READ_FILE, _SEARCH_TEXT, _GET_DIFF]
+        if self._agent.role in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}:
+            return tuple(read_tools)
+        run_verification = self._run_verification_definition()
         if self._agent.role == AgentRole.ENGINEER:
             definitions = [
                 *read_tools,
@@ -201,6 +203,14 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         return tuple(self._records)
 
     def validate(self, call: RuntimeToolCall) -> None:
+        if self._agent.role in {AgentRole.RESEARCHER, AgentRole.ARCHITECT} and call.name not in {
+            definition.name for definition in self.definitions
+        }:
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "Read-only specialists may use only bounded repository observation tools.",
+                "Use the exact read-only catalog; specialists cannot write, execute or approve.",
+            )
         previous = self._completed.get(call.call_id)
         if previous is not None:
             previous_call, _ = previous

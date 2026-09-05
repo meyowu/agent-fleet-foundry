@@ -9,10 +9,12 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from agent_fleet.domain.fleet_plan import FleetStrategy
+from agent_fleet.domain.graph import GraphArtifactRef, GraphNodeStatus, GraphSnapshot, GraphStatus
 from agent_fleet.domain.models import (
     ActionId,
     AgentInstanceId,
     ArtifactId,
+    ArtifactKind,
     CriterionId,
     CriterionResult,
     EvidenceRequirementId,
@@ -38,7 +40,7 @@ from agent_fleet.domain.models import (
     WorkspaceKind,
     _require_utc,
 )
-from agent_fleet.domain.security import canonical_json_hash
+from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 
 
 class EvidenceStrength(StrEnum):
@@ -254,6 +256,15 @@ class ResourceCleanupReceipt(StrictModel):
         return self
 
 
+class GraphDeliveryEvidence(StrictModel):
+    """Control-plane graph provenance; child reports are not verification evidence."""
+
+    snapshot: GraphSnapshot
+    join_artifact: GraphArtifactRef
+    child_cleanup_receipts: tuple[ResourceCleanupReceipt, ...] = Field(min_length=1, max_length=16)
+    sequential_repair_iterations: int = Field(default=0, ge=0, le=5, strict=True)
+
+
 class EvidenceBundle(StrictModel):
     api_version: Literal["agentfleet.dev/v1alpha1"] = "agentfleet.dev/v1alpha1"
     kind: Literal["EvidenceBundle"] = "EvidenceBundle"
@@ -268,6 +279,7 @@ class EvidenceBundle(StrictModel):
     fleet_plan_artifact_id: ArtifactId
     fleet_plan_sha256: Sha256
     fleet_strategy: FleetStrategy
+    graph_delivery: GraphDeliveryEvidence | None = None
     required_evidence: list[EvidenceRequirementId] = Field(min_length=1, max_length=32)
     sandbox_provider: SandboxProviderId = "fake"
     sandbox_security_level: SandboxSecurityLevel = SandboxSecurityLevel.FAKE
@@ -365,6 +377,11 @@ class CompletionGate:
         authoritative_artifact_ids: set[str],
     ) -> CompletionDecision:
         reasons: list[str] = []
+        if bundle.fleet_strategy in {
+            FleetStrategy.PARALLEL_ENGINEERS,
+            FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER,
+        } and not _graph_delivery_is_valid(bundle, authoritative_artifact_ids):
+            reasons.append("GRAPH_DELIVERY_UNPROVEN")
         if bundle.structured_criterion_results is not None:
             mapped, mapping_gaps = assess_criterion_results(
                 bundle.structured_criterion_results,
@@ -699,6 +716,113 @@ class CompletionGate:
             effective_verdict=effective,
             reason_codes=sorted(set(reasons)),
         )
+
+
+def _graph_delivery_is_valid(bundle: EvidenceBundle, authoritative_ids: set[str]) -> bool:
+    delivery = bundle.graph_delivery
+    if delivery is None:
+        return False
+    graph = delivery.snapshot
+    prepared = graph.join_preparation
+    completed = graph.join_completion
+    if prepared is None or completed is None:
+        return False
+    if (
+        graph.status is not GraphStatus.JOINED
+        or graph.driver_claim is not None
+        or graph.cancel_requested_at is not None
+        or graph.parent_run_id != bundle.run_id
+        or graph.parent_task_id != bundle.task_id
+        or graph.project_id != bundle.project_id
+        or graph.plan_artifact_id != bundle.fleet_plan_artifact_id
+        or graph.plan_sha256 != bundle.fleet_plan_sha256
+        or sha256_bytes(graph.plan.model_dump_json(indent=2).encode("utf-8"))
+        != bundle.fleet_plan_sha256
+        or graph.plan.strategy is not bundle.fleet_strategy
+        or prepared.parent_run_id != bundle.run_id
+        or prepared.parent_task_id != bundle.task_id
+        or prepared.base_revision != bundle.base_revision
+        or prepared.config_snapshot_sha256 != bundle.config_snapshot_sha256
+        or prepared.plan_sha256 != bundle.fleet_plan_sha256
+        or completed.preparation_sha256 != prepared.preparation_sha256
+        or delivery.join_artifact.kind is not ArtifactKind.GRAPH_JOIN
+        or delivery.join_artifact.run_id != bundle.run_id
+        or delivery.join_artifact.sha256
+        != sha256_bytes(prepared.model_dump_json(indent=2).encode("utf-8"))
+        or delivery.join_artifact.artifact_id not in authoritative_ids
+        or completed.parent_patch_artifact_id not in authoritative_ids
+    ):
+        return False
+    if delivery.sequential_repair_iterations == 0 and (
+        completed.parent_patch_artifact_id != bundle.patch_artifact_id
+        or completed.parent_patch_sha256 != bundle.patch_sha256
+    ):
+        return False
+    child_ids = {item.binding.child_run_id for item in graph.nodes}
+    receipts = {item.run_id: item for item in delivery.child_cleanup_receipts}
+    if (
+        len(child_ids) != len(graph.nodes)
+        or len(receipts) != len(delivery.child_cleanup_receipts)
+        or set(receipts) != child_ids
+        or any(not item.complete for item in receipts.values())
+    ):
+        return False
+    writers = sorted(
+        (item for item in graph.nodes if item.node.can_write), key=lambda item: item.node.node_id
+    )
+    declared_nodes = {
+        node.node_id: node for node in graph.plan.nodes if not node.independent_verifier
+    }
+    if set(declared_nodes) != {node.node.node_id for node in graph.nodes} or any(
+        node.node != declared_nodes[node.node.node_id] for node in graph.nodes
+    ):
+        return False
+    if [item.node.node_id for item in writers] != [
+        item.node_id for item in prepared.ordered_inputs
+    ]:
+        return False
+    for node in graph.nodes:
+        expected_kinds = {
+            ArtifactKind.RESOURCE_CLEANUP,
+            ArtifactKind.IMPLEMENTATION_REPORT
+            if node.node.can_write
+            else ArtifactKind.SPECIALIST_REPORT,
+        }
+        if node.node.can_write:
+            expected_kinds.add(ArtifactKind.PATCH)
+        if (
+            node.status is not GraphNodeStatus.SUCCEEDED
+            or {item.kind for item in node.output_artifacts} != expected_kinds
+            or len(node.output_artifacts) != len(expected_kinds)
+            or any(
+                item.run_id != node.binding.child_run_id
+                or item.artifact_id not in authoritative_ids
+                for item in node.output_artifacts
+            )
+        ):
+            return False
+        cleanup_ref = next(
+            ref for ref in node.output_artifacts if ref.kind is ArtifactKind.RESOURCE_CLEANUP
+        )
+        if cleanup_ref.sha256 != sha256_bytes(
+            receipts[node.binding.child_run_id].model_dump_json(indent=2).encode("utf-8")
+        ):
+            return False
+    for node, item in zip(writers, prepared.ordered_inputs, strict=True):
+        patch = next(ref for ref in node.output_artifacts if ref.kind is ArtifactKind.PATCH)
+        report = next(
+            ref for ref in node.output_artifacts if ref.kind is ArtifactKind.IMPLEMENTATION_REPORT
+        )
+        if (
+            item.child_run_id != node.binding.child_run_id
+            or item.child_task_id != node.binding.child_task_id
+            or item.patch_artifact_id != patch.artifact_id
+            or item.patch_sha256 != patch.sha256
+            or item.report_artifact_id != report.artifact_id
+            or item.report_sha256 != report.sha256
+        ):
+            return False
+    return True
 
 
 def _is_auxiliary_approval_evidence(

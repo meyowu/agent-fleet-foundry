@@ -37,6 +37,7 @@ from agent_fleet.domain.models import (
     RuntimeToolOutcome,
     RuntimeToolResult,
     ScopeDecision,
+    SpecialistReport,
     UsageRecord,
     Verdict,
     VerifierVerdict,
@@ -205,6 +206,18 @@ def _verifier_verdict() -> VerifierVerdict:
     )
 
 
+def _specialist_report(role: str) -> SpecialistReport:
+    return SpecialistReport.model_validate(
+        {
+            "role": role,
+            "summary": "Read-only analysis, not execution evidence.",
+            "findings": ["Bounded repository observation."],
+            "recommendations": ["Keep the change inside the TaskSpec scope."],
+            "proof_gaps": ["No code execution or independent verification occurred."],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     ("role", "stage", "expected", "output_tool_name"),
     [
@@ -220,6 +233,18 @@ def _verifier_verdict() -> VerifierVerdict:
             WorkflowStage.VERIFYING,
             _verifier_verdict(),
             "submit_verifier_verdict",
+        ),
+        (
+            AgentRole.RESEARCHER,
+            WorkflowStage.IMPLEMENTING,
+            _specialist_report("researcher"),
+            "submit_specialist_report",
+        ),
+        (
+            AgentRole.ARCHITECT,
+            WorkflowStage.IMPLEMENTING,
+            _specialist_report("architect"),
+            "submit_specialist_report",
         ),
     ],
 )
@@ -1516,7 +1541,9 @@ async def test_request_build_unicode_failure_is_mapped_without_exception_context
     assert caught.value.__context__ is None
 
 
-@pytest.mark.parametrize("name", ["cos.md", "engineer.md", "verifier.md"])
+@pytest.mark.parametrize(
+    "name", ["cos.md", "engineer.md", "verifier.md", "researcher.md", "architect.md"]
+)
 def test_package_owned_prompts_are_loadable_and_state_the_control_boundary(name: str) -> None:
     prompt = (
         resources.files("agent_fleet.adapters.runtime.prompts")
@@ -1526,3 +1553,110 @@ def test_package_owned_prompts_are_loadable_and_state_the_control_boundary(name:
 
     assert prompt.strip()
     assert "control plane" in prompt.casefold()
+
+
+@pytest.mark.parametrize("role", [AgentRole.RESEARCHER, AgentRole.ARCHITECT])
+async def test_specialist_output_cannot_impersonate_other_role(role: AgentRole) -> None:
+    wrong_role = "architect" if role is AgentRole.RESEARCHER else "researcher"
+    adapter = PydanticAIRuntimeAdapter.for_test_model(
+        TestModel(custom_output_args=_specialist_report(wrong_role).model_dump(mode="json"))
+    )
+    with pytest.raises(FleetError) as caught:
+        await adapter.invoke(
+            _invocation(role, WorkflowStage.IMPLEMENTING),
+            RuntimeInvocationServices(configuration=_configuration(), tools=RecordingCatalog()),
+        )
+    assert caught.value.code is ErrorCode.RUNTIME_OUTPUT_INVALID
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("role", [AgentRole.RESEARCHER, AgentRole.ARCHITECT])
+@pytest.mark.parametrize("corruption", ["secret", "verdict-field", "oversized"])
+async def test_specialist_report_corruption_fails_closed(role: AgentRole, corruption: str) -> None:
+    sentinel = "specialist-report-secret-sentinel"
+    payload = _specialist_report(role.value).model_dump(mode="json")
+    if corruption == "secret":
+        payload["summary"] = sentinel
+    elif corruption == "verdict-field":
+        payload["verdict"] = "pass"
+    else:
+        payload["findings"] = ["x" * 2048] * 32
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del messages
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name, payload, tool_call_id="invalid-specialist-output"
+                )
+            ]
+        )
+
+    catalog = RecordingCatalog()
+    adapter = PydanticAIRuntimeAdapter.for_test_model(
+        FunctionModel(model), redactor=Redactor([sentinel])
+    )
+    with pytest.raises(FleetError) as caught:
+        await adapter.invoke(
+            _invocation(role, WorkflowStage.IMPLEMENTING),
+            RuntimeInvocationServices(configuration=_configuration(), tools=catalog),
+        )
+    assert caught.value.code is (
+        ErrorCode.COMMAND_DENIED if corruption == "secret" else ErrorCode.RUNTIME_OUTPUT_INVALID
+    )
+    assert caught.value.__context__ is None and caught.value.__cause__ is None
+    assert sentinel not in str(caught.value)
+    assert catalog.calls == []
+
+
+@pytest.mark.parametrize("role", [AgentRole.RESEARCHER, AgentRole.ARCHITECT])
+async def test_specialist_function_model_reads_then_returns_bound_analysis(role: AgentRole) -> None:
+    count = 0
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal count
+        del messages
+        count += 1
+        assert [tool.name for tool in info.function_tools] == ["repo_list_files"]
+        assert [tool.name for tool in info.output_tools] == ["submit_specialist_report"]
+        if count == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "repo_list_files",
+                        {"reason": "Observe scope."},
+                        tool_call_id="specialist-read",
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit_specialist_report",
+                    _specialist_report(role.value).model_dump(mode="json"),
+                    tool_call_id="specialist-output",
+                )
+            ]
+        )
+
+    definition = RuntimeToolDefinition(
+        name="repo_list_files",
+        description="Read bounded scope.",
+        parameters_json_schema={
+            "type": "object",
+            "properties": {"reason": {"type": "string"}},
+            "required": ["reason"],
+            "additionalProperties": False,
+        },
+        side_effect=False,
+    )
+    catalog = RecordingCatalog((definition,))
+    result = await PydanticAIRuntimeAdapter.for_test_model(FunctionModel(model)).invoke(
+        _invocation(role, WorkflowStage.IMPLEMENTING),
+        RuntimeInvocationServices(configuration=_configuration(), tools=catalog),
+    )
+    assert result.output == _specialist_report(role.value)
+    assert len(catalog.calls) == 1
+    assert not catalog.records[0].side_effect_committed
+    assert result.usage is not None and result.usage.requests == 2

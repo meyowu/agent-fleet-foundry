@@ -403,6 +403,13 @@
           "title": "Definition",
           "type": "string"
         },
+        "maxParallelAgents": {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Maxparallelagents",
+          "type": "integer"
+        },
         "maxRepairIterations": {
           "maximum": 5,
           "minimum": 0,

@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "parent_patch_artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Parent Patch Artifact Id",
+      "type": "string"
+    },
+    "parent_patch_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Parent Patch Sha256",
+      "type": "string"
+    },
+    "preparation_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Preparation Sha256",
+      "type": "string"
+    },
+    "workspace_id": {
+      "pattern": "^ws_[0-9a-f]{32}$",
+      "title": "Workspace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "preparation_sha256",
+    "parent_patch_artifact_id",
+    "parent_patch_sha256",
+    "workspace_id",
+    "created_at"
+  ],
+  "title": "GraphJoinCompletion",
+  "type": "object"
+}

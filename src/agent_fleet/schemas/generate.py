@@ -17,9 +17,25 @@ from agent_fleet.domain.budgets import (
     RuntimeAttempt,
 )
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec, VerificationProfile
-from agent_fleet.domain.evidence import CommandEvidence, EvidenceBundle, ResourceCleanupReceipt
+from agent_fleet.domain.evidence import (
+    CommandEvidence,
+    EvidenceBundle,
+    GraphDeliveryEvidence,
+    ResourceCleanupReceipt,
+)
 from agent_fleet.domain.fleet_patch import FleetPatch
 from agent_fleet.domain.fleet_plan import FleetPlan
+from agent_fleet.domain.graph import (
+    GraphArtifactRef,
+    GraphChildBinding,
+    GraphChildSeed,
+    GraphDriverClaim,
+    GraphJoinCompletion,
+    GraphJoinInput,
+    GraphJoinPreparation,
+    GraphNodeRecord,
+    GraphSnapshot,
+)
 from agent_fleet.domain.models import (
     AgentExecutionCheckpoint,
     ApprovalRequest,
@@ -39,11 +55,13 @@ from agent_fleet.domain.models import (
     SandboxPreflight,
     SandboxRequirements,
     ScopeDecision,
+    SpecialistReport,
     TaskSpec,
     ToolIntent,
     UsageRecord,
     VerificationCheckpoint,
     VerifierVerdict,
+    WriterAssignment,
 )
 from agent_fleet.domain.repository_profile import ProjectKnowledge, RepositoryProfile
 from agent_fleet.domain.trust import (
@@ -60,6 +78,8 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "cli-envelope.schema.json": JsonEnvelope,
     "task-spec.schema.json": TaskSpec,
     "scope-decision.schema.json": ScopeDecision,
+    "writer-assignment.schema.json": WriterAssignment,
+    "specialist-report.schema.json": SpecialistReport,
     "implementation-report.schema.json": ImplementationReport,
     "usage-record.schema.json": UsageRecord,
     "run-budget-limits.schema.json": RunBudgetLimits,
@@ -82,6 +102,16 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "repository-profile.schema.json": RepositoryProfile,
     "project-knowledge.schema.json": ProjectKnowledge,
     "fleet-plan.schema.json": FleetPlan,
+    "graph-snapshot.schema.json": GraphSnapshot,
+    "graph-child-seed.schema.json": GraphChildSeed,
+    "graph-child-binding.schema.json": GraphChildBinding,
+    "graph-driver-claim.schema.json": GraphDriverClaim,
+    "graph-artifact-ref.schema.json": GraphArtifactRef,
+    "graph-node-record.schema.json": GraphNodeRecord,
+    "graph-join-input.schema.json": GraphJoinInput,
+    "graph-join-preparation.schema.json": GraphJoinPreparation,
+    "graph-join-completion.schema.json": GraphJoinCompletion,
+    "graph-delivery-evidence.schema.json": GraphDeliveryEvidence,
     "sandbox-capabilities.schema.json": SandboxCapabilities,
     "sandbox-configuration.schema.json": SandboxConfiguration,
     "sandbox-requirements.schema.json": SandboxRequirements,

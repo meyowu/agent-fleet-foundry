@@ -192,16 +192,46 @@ class GitRepositoryAdapter:
         base_revision: str,
         kind: WorkspaceKind,
     ) -> Workspace:
+        workspace = self.prepare_workspace(run_id, base_revision, kind)
+        return self.materialize_workspace(repository_root, workspace)
+
+    def prepare_workspace(self, run_id: str, base_revision: str, kind: WorkspaceKind) -> Workspace:
+        """Allocate an exact identity without touching Git or the filesystem."""
         if _OBJECT_ID.fullmatch(base_revision) is None:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "Workspace base revision must be a full Git object ID.",
                 "Inspect the repository again and use its exact HEAD revision.",
             )
-        self.workspace_root.mkdir(parents=True, exist_ok=True)
         workspace_id = self.ids.new(IdPrefix.WORKSPACE)
         path = self.workspace_root / run_id / f"{kind.value}-{workspace_id}"
-        if path.exists():
+        return Workspace(
+            workspace_id=workspace_id,
+            run_id=run_id,
+            kind=kind,
+            path=str(path),
+            base_revision=base_revision,
+        )
+
+    def materialize_workspace(self, repository_root: Path, workspace: Workspace) -> Workspace:
+        """Create only the preallocated workspace whose lease the caller already saved."""
+        expected_path = (
+            self.workspace_root
+            / workspace.run_id
+            / f"{workspace.kind.value}-{workspace.workspace_id}"
+        )
+        if (
+            workspace.path != str(expected_path)
+            or _OBJECT_ID.fullmatch(workspace.base_revision) is None
+        ):
+            raise FleetError(
+                ErrorCode.PATH_OUTSIDE_SCOPE,
+                "Workspace preparation does not match its exact Fleet-owned identity.",
+                "Recover the recorded lease; no alternate workspace path is accepted.",
+            )
+        self.workspace_root.mkdir(parents=True, exist_ok=True)
+        path = self._validated_workspace_path(workspace, require_exists=False)
+        if path.exists() or path.is_symlink():
             raise FleetError(
                 ErrorCode.RECOVERY_REQUIRED,
                 f"Fleet workspace path already exists: {path.name}.",
@@ -217,11 +247,11 @@ class GitRepositoryAdapter:
                     "--detach",
                     "--no-checkout",
                     str(path),
-                    base_revision,
+                    workspace.base_revision,
                 ],
                 cwd=repository_root.resolve(strict=True),
             )
-            self._run(["git", "read-tree", base_revision], cwd=path)
+            self._run(["git", "read-tree", workspace.base_revision], cwd=path)
             self._materialize_index(path)
         except (OSError, subprocess.CalledProcessError) as error:
             raise FleetError(
@@ -229,13 +259,7 @@ class GitRepositoryAdapter:
                 "Git could not create the Fleet-owned worktree.",
                 "Inspect `git worktree list` and remove only stale Fleet-owned worktrees.",
             ) from error
-        return Workspace(
-            workspace_id=workspace_id,
-            run_id=run_id,
-            kind=kind,
-            path=str(path.resolve(strict=True)),
-            base_revision=base_revision,
-        )
+        return workspace
 
     def apply_patch_to_workspace(self, workspace: Workspace, patch: bytes) -> None:
         path = self._validated_workspace_path(workspace)
@@ -249,6 +273,23 @@ class GitRepositoryAdapter:
                 "Candidate patch could not be reconstructed in the verification workspace.",
                 "Inspect the patch artifact and rerun the task.",
             ) from error
+
+    def patch_changed_paths(self, patch: bytes) -> list[str]:
+        if len(patch) > _MAX_PATCH_BYTES:
+            raise _unsafe_patch()
+        failed = False
+        names = b""
+        try:
+            names = self._run_bytes(
+                ["git", "apply", "--numstat", "-z", "-"],
+                cwd=self.state_root,
+                input_bytes=patch,
+            )
+        except (OSError, subprocess.CalledProcessError, UnicodeError):
+            failed = True
+        if failed:
+            raise _unsafe_patch()
+        return _parse_numstat_paths(names)
 
     def compute_patch(self, workspace: Workspace) -> PatchInfo:
         path = self._validated_workspace_path(workspace)
@@ -503,7 +544,8 @@ class GitRepositoryAdapter:
 
     def cleanup_workspace(self, repository_root: Path, workspace: Workspace) -> None:
         path = self._validated_workspace_path(workspace, require_exists=False)
-        if not path.exists():
+        registered = self._workspace_is_registered(repository_root, path)
+        if not path.exists() and not registered:
             return
         try:
             self._run(
@@ -516,6 +558,20 @@ class GitRepositoryAdapter:
                 f"Could not clean Fleet-owned worktree {workspace.workspace_id}.",
                 "Run recovery after confirming the path is below the Fleet state directory.",
             ) from error
+        if path.exists() or self._workspace_is_registered(repository_root, path):
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "The exact Fleet worktree or its Git registration remains after cleanup.",
+                "Keep its lease outstanding and retry exact-run recovery after inspection.",
+            )
+
+    def _workspace_is_registered(self, repository_root: Path, path: Path) -> bool:
+        listing = self._run_bytes(
+            ["git", "worktree", "list", "--porcelain", "-z"],
+            cwd=repository_root.resolve(strict=True),
+        )
+        expected = b"worktree " + os.fsencode(path)
+        return expected in listing.split(b"\x00")
 
     def create_canary_fixture(self, destination: Path) -> Path:
         self.state_root.mkdir(parents=True, exist_ok=True)

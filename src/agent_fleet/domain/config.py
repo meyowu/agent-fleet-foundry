@@ -146,6 +146,7 @@ class AgentRequest(ConfigModel):
 class WorkflowRequest(ConfigModel):
     definition: str
     max_repair_iterations: int = Field(alias="maxRepairIterations", ge=0, le=5)
+    max_parallel_agents: int = Field(default=2, alias="maxParallelAgents", ge=1, le=8)
     allowed_tools: list[ActionId] | None = Field(default=None, alias="allowedTools", max_length=64)
 
 

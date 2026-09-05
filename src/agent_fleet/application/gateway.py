@@ -932,11 +932,13 @@ class ToolGateway:
                 "Trusted gateway workspace or sandbox has no active persisted lease.",
                 "Recover the Run resources before executing another tool.",
             )
-        if agent.role == "engineer" and workspace.kind is not WorkspaceKind.CANDIDATE:
+        if agent.role in {"engineer", "researcher", "architect"} and (
+            workspace.kind is not WorkspaceKind.CANDIDATE
+        ):
             raise FleetError(
                 ErrorCode.COMMAND_DENIED,
-                "Engineer actions require the bound candidate workspace.",
-                "Use the WorkflowEngine-managed Engineer context.",
+                "Worker actions require the bound candidate workspace.",
+                "Use the WorkflowEngine-managed worker context.",
             )
         if agent.role == "verifier" and workspace.kind is not WorkspaceKind.VERIFICATION:
             raise FleetError(

@@ -245,6 +245,8 @@ class AgentRole(StrEnum):
     COS = "cos"
     ENGINEER = "engineer"
     VERIFIER = "verifier"
+    RESEARCHER = "researcher"
+    ARCHITECT = "architect"
 
 
 class AgentLifecycle(StrEnum):
@@ -295,6 +297,7 @@ class RuntimeToolOutcome(StrEnum):
 class RunStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
+    WAITING_FOR_CHILDREN = "waiting_for_children"
     PAUSED_FOR_APPROVAL = "paused_for_approval"
     READY_FOR_REVIEW = "ready_for_review"
     APPLYING = "applying"
@@ -328,6 +331,8 @@ class ArtifactKind(StrEnum):
     CONFIG_SNAPSHOT = "config_snapshot"
     TASK_SPEC = "task_spec"
     IMPLEMENTATION_REPORT = "implementation_report"
+    SPECIALIST_REPORT = "specialist_report"
+    GRAPH_JOIN = "graph_join"
     PATCH = "patch"
     TEST_REPORT = "test_report"
     VERIFIER_VERDICT = "verifier_verdict"
@@ -407,6 +412,8 @@ class FakeScenario(StrEnum):
     VERIFIER_MUTATION = "verifier_mutation"
     DIRECT = "direct"
     SINGLE_ENGINEER = "single_engineer"
+    PARALLEL_ENGINEERS = "parallel_engineers"
+    SPECIALIST = "specialist"
 
 
 class RuntimeConfiguration(FrozenStrictModel):
@@ -595,6 +602,10 @@ class Run(StrictModel):
     run_id: RunId
     project_id: ProjectId
     correlation_id: CorrelationId
+    parent_run_id: RunId | None = None
+    parent_plan_sha256: Sha256 | None = None
+    parent_node_id: RoleId | None = None
+    parent_iteration: int | None = Field(default=None, ge=0, le=5)
     goal: str
     base_revision: str
     target_status_fingerprint: Sha256
@@ -630,6 +641,7 @@ class Run(StrictModel):
     runtime_usage_artifact_ids: list[ArtifactId] = Field(default_factory=list)
     verifier_agent_instance_id: AgentInstanceId | None = None
     engineer_checkpoint: AgentExecutionCheckpoint | None = None
+    specialist_checkpoint: AgentExecutionCheckpoint | None = None
     verification_checkpoint: VerificationCheckpoint | None = None
     verifier_verdict_artifact_id: ArtifactId | None = None
     evidence_bundle_artifact_id: ArtifactId | None = None
@@ -655,6 +667,18 @@ class Run(StrictModel):
 
     @model_validator(mode="after")
     def validate_runtime_selection(self) -> Run:
+        child_fields = (
+            self.parent_run_id,
+            self.parent_plan_sha256,
+            self.parent_node_id,
+            self.parent_iteration,
+        )
+        if any(value is not None for value in child_fields) and not all(
+            value is not None for value in child_fields
+        ):
+            raise ValueError("internal child run requires its complete parent binding")
+        if self.parent_run_id == self.run_id:
+            raise ValueError("a run cannot be its own parent")
         _validate_runtime_selection(
             self.runtime_name,
             self.provider_model,
@@ -706,6 +730,27 @@ class AcceptanceCriterion(StrictModel):
     description: BoundedText
 
 
+class WriterAssignment(StrictModel):
+    """A bounded untrusted subgoal; only the planner may instantiate its writer."""
+
+    node_id: RoleId
+    goal: BoundedSummary
+    scope: list[LogicalRepoPath] = Field(min_length=1, max_length=128)
+    criterion_ids: list[CriterionId] = Field(min_length=1, max_length=128)
+
+    @field_validator("scope")
+    @classmethod
+    def validate_scope(cls, values: list[str]) -> list[str]:
+        return _validate_logical_paths(values, field_name="scope")
+
+    @field_validator("criterion_ids")
+    @classmethod
+    def validate_criteria(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("writer assignment criterion IDs must be unique")
+        return values
+
+
 class ScopeDecision(StrictModel):
     """Untrusted CoS proposal accepted only after control-plane validation."""
 
@@ -714,6 +759,8 @@ class ScopeDecision(StrictModel):
     workflow: WorkflowId = "code-change"
     change_kind: Literal["read_only", "code_change"] = "code_change"
     fleet_strategy: FleetStrategyName
+    writer_assignments: list[WriterAssignment] = Field(default_factory=list, max_length=8)
+    max_parallel_agents: int = Field(default=2, ge=1, le=8)
     allowed_paths: list[LogicalRepoPath] = Field(max_length=128)
     forbidden_paths: list[LogicalRepoPath] = Field(max_length=128)
     acceptance_criteria: list[AcceptanceCriterion] = Field(min_length=1, max_length=128)
@@ -745,6 +792,20 @@ class ScopeDecision(StrictModel):
 
     @model_validator(mode="after")
     def validate_scope_coherence(self) -> ScopeDecision:
+        assignments = self.writer_assignments
+        if self.fleet_strategy == "parallel_engineers":
+            if len(assignments) < 2 or self.max_parallel_agents < 2:
+                raise ValueError("parallel strategy requires multiple bounded writer assignments")
+            node_ids = [assignment.node_id for assignment in assignments]
+            if len(node_ids) != len(set(node_ids)) or "verifier" in node_ids:
+                raise ValueError("writer node IDs must be unique and cannot replace the verifier")
+            criterion_ids = {item.criterion_id for item in self.acceptance_criteria}
+            if {item for assignment in assignments for item in assignment.criterion_ids} != (
+                criterion_ids
+            ):
+                raise ValueError("writer assignments must cover exactly the original criteria")
+        elif assignments:
+            raise ValueError("only the parallel strategy accepts writer assignments")
         required = set(self.required_evidence)
         if self.change_kind == "read_only":
             if self.fleet_strategy != "direct" or self.allowed_paths:
@@ -1301,6 +1362,22 @@ class ImplementationReport(StrictModel):
         return values
 
 
+class SpecialistReport(StrictModel):
+    """Untrusted read-only analysis, never execution or verification authority."""
+
+    role: Literal["researcher", "architect"]
+    summary: BoundedSummary
+    findings: list[BoundedText] = Field(max_length=32)
+    recommendations: list[BoundedText] = Field(max_length=32)
+    proof_gaps: list[BoundedText] = Field(max_length=32)
+
+    @model_validator(mode="after")
+    def validate_total_size(self) -> SpecialistReport:
+        if len(self.model_dump_json().encode("utf-8")) > 32_768:
+            raise ValueError("specialist report exceeds its 32768-byte context ceiling")
+        return self
+
+
 class CriterionResult(StrictModel):
     criterion_id: CriterionId
     verdict: Verdict
@@ -1466,7 +1543,7 @@ class AgentInvocation(StrictModel):
         return value
 
 
-type RuntimeOutput = ScopeDecision | ImplementationReport | VerifierVerdict
+type RuntimeOutput = ScopeDecision | ImplementationReport | VerifierVerdict | SpecialistReport
 
 
 class AgentInvocationResult(StrictModel):

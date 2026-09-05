@@ -59,16 +59,16 @@ The product has differentiated value only when the following six properties are 
 
 The implementation status is deliberately explicit:
 
-| Differentiator | Implemented through accepted Phase 4 | Remaining product milestone |
+| Differentiator | Accepted implementation boundary | Remaining product milestone |
 |---|---|---|
 | Repository-aware bootstrap | Static profile, knowledge artifacts, detected-command proposal, read-only diff preview, disposable deterministic canary through the ordinary Docker workflow, validated BootstrapReport, cleanup proof, and `.fleet/` publication only after success | Broader safe project-command discovery/execution and non-local sandbox support |
-| Adaptive Fleet | Validated plan plus direct/single-Engineer/Engineer+Verifier paths through fake or PydanticAI runtime | Parallel and specialist scheduling in Phase 5 |
+| Adaptive Fleet | All five strategies accepted through Phase 5 M2: scoped concurrent children, read-only specialist dependencies, exact approval/ownership state, deterministic joins and fresh parent verification | Persistent chat and whole-Phase-5 acceptance remain next; M2 checkpoint commit is pending |
 | Permission control plane | Current user/project/workflow/role/task/sandbox intersection; exact once/run/project trust; explain/revoke/reset; durable single-winner dispatch and identity-bound approval resume; no harness-tool bypass | Preserve these ceilings through Phase 5 chat/adaptive execution and Phase 6 configuration evolution |
 | Sandbox abstraction | Exact fail-closed fake/Docker/local-unsafe dispatch; Docker pins a local daemon and immutable image, inspects one-shot containers, enforces network/resource boundaries, and recovers exact resources | Modal/hosted providers, approved network modes, and broader platform evidence |
-| Evidence-first delivery | Exact ConfigSnapshot/TaskSpec/FleetPlan/patch/command/cleanup/verdict/BootstrapReport bindings; fresh Docker verifier evidence can satisfy CompletionGate while fake/local-unsafe cannot | General multi-criterion model mapping and full Phase 5 workflow |
+| Evidence-first delivery | Exact ConfigSnapshot/TaskSpec/FleetPlan/patch/command/cleanup/verdict/BootstrapReport bindings; accepted M1 criterion mapping and M2 joined graph/descendant-cleanup provenance; only fresh Docker verifier evidence can verify | Preserve exact evidence and bounded context through chat and configuration evolution |
 | Versioned evolution | FleetPatch schema and protected-path validator | Proposal/diff/apply/rollback in Phase 6 |
 
-Phase 4 was accepted on 2026-09-05 with `1001 passed, 10 skipped` in the default suite and nine separately passing real-Docker tests; exact results and boundaries are in `MVP_ACCEPTANCE.md`. No live model-provider acceptance was run. Accepted Phase 0–4 functionality is not shorthand for the complete MVP: Phase 5–7 and live-provider/license gates remain open. CLI and documentation must label FakeSandbox as simulated, local-unsafe as non-isolating, Docker's local trusted-computing-base limits, and roadmap-only behaviors directly even when the selected model runtime is real.
+Phase 4 was accepted on 2026-09-05 with `1001 passed, 10 skipped` and nine separate real-Docker passes. Phase 5 M1 and M2 are also accepted as bounded slices: M2's frozen default suite returned `1344 passed, 13 skipped in 1160.72s`, with twelve real-Docker cases separately passing in 140.05s and zero managed resources. Exact results, retained failures and checkpoint status are in `MVP_ACCEPTANCE.md`. No live model-provider acceptance was run. Whole-phase metadata remains 4 until persistent chat and all Phase 5 gates pass; Phase 6/7 and live-provider/license gates remain open. CLI and documentation must label FakeSandbox as simulated, local-unsafe as non-isolating, Docker's local trusted-computing-base limits, and roadmap-only behaviors directly even when the selected model runtime is real.
 
 ## 3. Target users
 
@@ -218,7 +218,7 @@ Before execution, CoS proposes a typed FleetPlan. The deterministic planner acce
 - `parallel_engineers` for independent shards with an explicit join/merge policy;
 - a specialist DAG such as Researcher -> Architect -> Engineer -> Verifier when the repository and task justify it.
 
-The plan records why each role is needed. Unplanned roles are not instantiated, and a role name never grants tools or permission. Parallel and specialist scheduling remain Phase 5 behavior even though the FleetPlan schema represents them. Phase 2 supplies strict real-model `ScopeDecision`, `ImplementationReport`, and `VerifierVerdict` values for the supported direct/single/pair paths; the deterministic control plane still constructs and validates the plan.
+The plan records why each role is needed. Unplanned roles are not instantiated, and a role name never grants tools or permission. Accepted Phase 5 M2 executes all five strategies through fake and offline-tested PydanticAI adapters. Parallel children receive disjoint scopes and shared cumulative budgets, then join in stable node-ID order; specialists return bounded read-only `SpecialistReport` dependencies. The parent Verifier checks the original task and combined patch. Legacy advanced plans without complete subgoal/criterion mappings remain readable but cannot execute. The deterministic control plane constructs and validates every plan.
 
 For a PydanticAI project, run-time `--runtime`, `--provider-model`, and `--credential-ref` flags may be omitted to use the reviewed Fleet-owned registration. If supplied, they must match it exactly. `--fake-scenario` is rejected for the real runtime. Provider HTTPS remains a trusted-control-plane network boundary distinct from worker networking. Every model-visible action crosses the role-bound tool catalog, ToolGateway, and PermissionBroker. Phase 3 Engineer tools are bounded list/read/search/diff/write/edit/delete plus exact reviewed commands; Verifier receives only list/read/search/diff and exact reviewed commands. Descriptor-relative workspace operations and selected sandbox dispatch remain control-plane-owned; fake commands are simulated, local-unsafe is explicitly non-isolating, and only Docker can produce isolated evidence.
 
@@ -240,12 +240,13 @@ A run may instead become:
 
 ```text
 PAUSED_FOR_APPROVAL
+WAITING_FOR_CHILDREN
 CANCELLED
 FAILED
 REJECTED
 ```
 
-A run must be resumable when it pauses for approval or when the process exits after a durable checkpoint.
+A run must be resumable at supported durable approval checkpoints. An adaptive parent exposes exact child approvals through `WAITING_FOR_CHILDREN`; public child resume/apply/cancel/recover are denied. Unknown dispatched ownership never permits automatic replay: operator-confirmed stopped-owner recovery abandons it and cleans exact descendants. Durable chat/restart context remains the next Phase 5 slice, not general provider-history restoration.
 
 ## 5.4 Review and apply a candidate patch
 

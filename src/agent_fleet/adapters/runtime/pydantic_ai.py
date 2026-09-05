@@ -62,6 +62,7 @@ from agent_fleet.domain.models import (
     RuntimeToolCall,
     RuntimeToolDefinition,
     ScopeDecision,
+    SpecialistReport,
     UsageRecord,
     VerifierVerdict,
 )
@@ -109,7 +110,10 @@ _PROMPT_PACKAGE = "agent_fleet.adapters.runtime.prompts"
 _OUTPUT_BY_ROLE: dict[
     str,
     tuple[
-        type[ScopeDecision] | type[ImplementationReport] | type[VerifierVerdict],
+        type[ScopeDecision]
+        | type[ImplementationReport]
+        | type[VerifierVerdict]
+        | type[SpecialistReport],
         str,
         str,
     ],
@@ -125,6 +129,8 @@ _OUTPUT_BY_ROLE: dict[
         "submit_verifier_verdict",
         "verifier.md",
     ),
+    AgentRole.RESEARCHER.value: (SpecialistReport, "submit_specialist_report", "researcher.md"),
+    AgentRole.ARCHITECT.value: (SpecialistReport, "submit_specialist_report", "architect.md"),
 }
 _CAPABILITIES = frozenset(
     {
@@ -552,7 +558,7 @@ class PydanticAIRuntimeAdapter:
             raise _runtime_error(
                 ErrorCode.RUNTIME_CAPABILITY_MISSING,
                 "The PydanticAI adapter does not support the requested role.",
-                "Use one of the built-in cos, engineer, or verifier roles.",
+                "Use a built-in cos, engineer, verifier, researcher, or architect role.",
                 details={"role": str(request.role)},
             )
         output_model, output_tool_name, prompt_name = output_contract
@@ -641,6 +647,12 @@ class PydanticAIRuntimeAdapter:
             output = result.output
             if not isinstance(output, DeferredToolRequests):
                 validated = self._validated_output(output, output_model)
+                if isinstance(validated, SpecialistReport) and validated.role != request.role:
+                    raise _runtime_error(
+                        ErrorCode.RUNTIME_OUTPUT_INVALID,
+                        "The specialist report role does not match its bound invocation.",
+                        "Return only the exact role requested by the control plane.",
+                    )
                 return AgentInvocationResult(
                     output=validated,
                     usage=_usage_record(usage, tool_call_count),
@@ -761,8 +773,11 @@ class PydanticAIRuntimeAdapter:
     def _validated_output(
         self,
         output: object,
-        output_model: type[ScopeDecision] | type[ImplementationReport] | type[VerifierVerdict],
-    ) -> ScopeDecision | ImplementationReport | VerifierVerdict:
+        output_model: type[ScopeDecision]
+        | type[ImplementationReport]
+        | type[VerifierVerdict]
+        | type[SpecialistReport],
+    ) -> ScopeDecision | ImplementationReport | VerifierVerdict | SpecialistReport:
         if not isinstance(output, output_model):
             raise _runtime_error(
                 ErrorCode.RUNTIME_OUTPUT_INVALID,

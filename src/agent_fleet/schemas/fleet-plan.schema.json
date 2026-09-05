@@ -8,6 +8,17 @@
           "title": "Can Write",
           "type": "boolean"
         },
+        "criterion_ids": {
+          "items": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Criterion Ids",
+          "type": "array"
+        },
         "depends_on": {
           "items": {
             "maxLength": 64,
@@ -18,6 +29,20 @@
           "maxItems": 16,
           "title": "Depends On",
           "type": "array"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "maxLength": 8192,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Goal"
         },
         "independent_verifier": {
           "default": false,

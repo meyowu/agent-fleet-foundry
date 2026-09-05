@@ -79,7 +79,7 @@ class BaselinePermissionBroker:
                 "repo.search_text",
                 "workspace.get_diff",
             }
-            and intent.principal_role in {"engineer", "verifier"}
+            and intent.principal_role in {"engineer", "verifier", "researcher", "architect"}
             and _role_stage_allowed(intent.principal_role, intent.stage)
             and not intent.side_effect
         ):
@@ -207,8 +207,10 @@ def _task_command(
 
 def _role_stage_allowed(role: str, stage: WorkflowStage) -> bool:
     return (
-        role == "engineer" and stage in {WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING}
-    ) or (role == "verifier" and stage is WorkflowStage.VERIFYING)
+        (role == "engineer" and stage in {WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING})
+        or (role == "verifier" and stage is WorkflowStage.VERIFYING)
+        or (role in {"researcher", "architect"} and stage is WorkflowStage.IMPLEMENTING)
+    )
 
 
 def _path_in_task_scope(task: TaskSpec, logical_path: str) -> bool:

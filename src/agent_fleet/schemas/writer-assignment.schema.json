@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "description": "A bounded untrusted subgoal; only the planner may instantiate its writer.",
+  "properties": {
+    "criterion_ids": {
+      "items": {
+        "maxLength": 100,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_-]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Criterion Ids",
+      "type": "array"
+    },
+    "goal": {
+      "maxLength": 8192,
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "node_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Node Id",
+      "type": "string"
+    },
+    "scope": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^[^/\\\\\\x00][^\\\\\\x00]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Scope",
+      "type": "array"
+    }
+  },
+  "required": [
+    "node_id",
+    "goal",
+    "scope",
+    "criterion_ids"
+  ],
+  "title": "WriterAssignment",
+  "type": "object"
+}
