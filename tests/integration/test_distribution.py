@@ -78,13 +78,13 @@ for name, model in SCHEMAS.items():
     resource = files('agent_fleet.schemas').joinpath(name)
     assert json.loads(resource.read_text()) == model.model_json_schema(), name
 state = SqliteStateStore(state_path, SystemClock(), UuidIdGenerator(), Redactor())
-assert state.migrate() == 7
-assert state.migrate() == 7
+assert state.migrate() == 8
+assert state.migrate() == 8
 with sqlite3.connect(state_path) as connection:
     versions = [row[0] for row in connection.execute(
         'SELECT version FROM schema_migrations ORDER BY version'
     )]
-    assert versions == [1, 2, 3, 4, 5, 6, 7]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
     graph_tables = {row[0] for row in connection.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'fleet_graph%'"
     )}
@@ -127,7 +127,7 @@ def test_wheel_and_sdist_ship_runtime_resources_without_development_fixtures(
         "agent_fleet/adapters/runtime/prompts/verifier.md",
         *(
             f"agent_fleet/adapters/persistence/migrations/{version:04d}.sql"
-            for version in range(1, 8)
+            for version in range(1, 9)
         ),
         *(f"agent_fleet/schemas/{name}" for name in SCHEMAS),
     }
@@ -200,5 +200,5 @@ def test_wheel_and_sdist_ship_runtime_resources_without_development_fixtures(
     assert smoke.returncode == 0, smoke.stdout + smoke.stderr
     version = json.loads(smoke.stdout)
     assert version["ok"] is True
-    assert version["data"]["phase"] == "5"
+    assert version["data"]["phase"] == "6"
     assert version["data"]["version"] == "0.1.0"

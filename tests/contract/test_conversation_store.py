@@ -161,7 +161,7 @@ class ConversationHarness:
 def conversation_harness(tmp_path: Path) -> ConversationHarness:
     clock = TickingClock()
     state = SqliteStateStore(tmp_path / "state.db", clock, UuidIdGenerator(), Redactor())
-    assert state.migrate() == 7
+    assert state.migrate() == 8
     now = clock.now()
     project = Project(
         project_id=state.ids.new(IdPrefix.PROJECT),
@@ -651,7 +651,7 @@ def test_terminal_run_with_unresolved_resource_keeps_conversation_blocked(
     assert settled.status is ConversationTurnStatus.DELIVERED
 
 
-@pytest.mark.parametrize("version", [6, 8])
+@pytest.mark.parametrize("version", [6, 9])
 def test_missing_or_future_schema_history_fails_closed(
     conversation_harness: ConversationHarness,
     version: int,

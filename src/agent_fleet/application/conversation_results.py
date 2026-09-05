@@ -38,9 +38,11 @@ def conversation_result(
         ArtifactKind.EVIDENCE_BUNDLE: 0,
         ArtifactKind.PATCH: 1,
         ArtifactKind.COS_RESPONSE: 2,
-        ArtifactKind.RUN_SUMMARY: 3,
-        ArtifactKind.RESOURCE_CLEANUP: 4,
-        ArtifactKind.RUNTIME_USAGE: 5,
+        ArtifactKind.FLEET_PATCH: 3,
+        ArtifactKind.FLEET_PATCH_DIFF: 4,
+        ArtifactKind.RUN_SUMMARY: 5,
+        ArtifactKind.RESOURCE_CLEANUP: 6,
+        ArtifactKind.RUNTIME_USAGE: 7,
     }
     selected = sorted(
         (item for item in state.list_artifacts(run.run_id) if item.kind in priorities),

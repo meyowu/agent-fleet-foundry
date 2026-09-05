@@ -38,7 +38,7 @@ from agent_fleet.domain.models import (
     WorkflowStage,
     jsonable,
 )
-from agent_fleet.domain.security import Redactor
+from agent_fleet.domain.security import Redactor, sha256_bytes
 from agent_fleet.ports.conversation import ConversationStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
@@ -264,6 +264,27 @@ class ConversationService:
             )
         if submission is None:
             raise _invalid("The conversation submission is malformed or exceeds its bounds.")
+        if prior is not None:
+            historical = self.state.get_run(prior.binding.run_id)
+            if (
+                sha256_bytes(redacted.encode("utf-8")) != prior.binding.user_goal_sha256
+                or submission.user_summary != prior.user_summary
+                or any(
+                    requested is not None and requested != recorded
+                    for requested, recorded in (
+                        (options.runtime_name, historical.runtime_name),
+                        (options.provider_model, historical.provider_model),
+                        (options.credential_ref, historical.credential_ref),
+                        (options.sandbox_name, historical.sandbox_name),
+                        (options.fake_scenario, historical.fake_scenario),
+                    )
+                )
+            ):
+                raise _invalid("The submission key belongs to a different original request.")
+            # get_submission validated the immutable turn/Run/audit binding. This
+            # is historical inspection, never registration, execution, or resume.
+            # It must not require a live credential or the current organization generation.
+            return self._view(conversation, prior)
         project = self.state.get_project(conversation.project_id)
         execution = asyncio.create_task(
             self.workflow.start(

@@ -25,6 +25,7 @@ from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy
 from agent_fleet.domain.models import (
     ArtifactKind,
     ArtifactMetadata,
+    CommandSpec,
     Run,
     SandboxInspection,
     TaskSpec,
@@ -34,6 +35,7 @@ from agent_fleet.domain.models import (
 from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 from agent_fleet.ports.clock import Clock
+from agent_fleet.ports.config import ConfigurationPort
 from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.state_store import StateStore
 
@@ -44,11 +46,13 @@ class EvidenceAssembler:
         state: StateStore,
         artifacts: ArtifactService,
         clock: Clock,
+        config: ConfigurationPort,
         graphs: GraphStore | None = None,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
         self.clock = clock
+        self.config = config
         self.graphs = graphs
 
     def assemble(
@@ -73,9 +77,10 @@ class EvidenceAssembler:
         ):
             raise _integrity_error("Configuration snapshot hash is not bound to the task and run.")
         try:
-            ConfigSnapshot.model_validate_json(config_content)
+            config_snapshot = ConfigSnapshot.model_validate_json(config_content)
         except ValueError as error:
             raise _integrity_error("Configuration snapshot artifact is invalid.") from error
+        self._validate_configuration_requirements(config_snapshot, task)
         if run.task_spec_artifact_id is None or run.task_spec_hash is None:
             raise _integrity_error("Run has no content-addressed TaskSpec binding.")
         task_metadata, task_content = self._read_bound_artifact(
@@ -415,6 +420,43 @@ class EvidenceAssembler:
             | graph_artifact_ids,
         )
         return bundle.model_copy(update={"completion_decision": decision})
+
+    def _validate_configuration_requirements(
+        self, snapshot: ConfigSnapshot, task: TaskSpec
+    ) -> None:
+        """Re-derive requirements from immutable configuration, never task/model claims."""
+        spec, rebuilt = self.config.snapshot_from_files(
+            {item.path: item.content for item in snapshot.files}
+        )
+        if rebuilt != snapshot:
+            raise _integrity_error("Configuration snapshot reference closure is inconsistent.")
+        required = self.config.required_verification_commands(
+            spec,
+            snapshot,
+            workflow_id=task.workflow,
+            allowed_paths=tuple(task.allowed_paths),
+            change_kind=task.change_kind,
+        )
+        if set(task.required_verification_command_ids) != set(required):
+            raise _integrity_error(
+                "TaskSpec verification requirements differ from its reviewed configuration."
+            )
+        profile = self.config.verification_profile(spec, snapshot)
+        commands = [
+            CommandSpec(
+                command_id=command_id,
+                executable=command.executable,
+                argv=tuple(command.argv),
+                logical_cwd=command.cwd,
+                timeout_seconds=command.timeout_seconds,
+                network_requirement="required" if command.network_required else "none",
+            )
+            for command_id, command in sorted(profile.commands.items())
+        ]
+        if task.verification_commands != commands:
+            raise _integrity_error(
+                "TaskSpec verification commands differ from its reviewed configuration."
+            )
 
     @staticmethod
     def _criterion_verdict(

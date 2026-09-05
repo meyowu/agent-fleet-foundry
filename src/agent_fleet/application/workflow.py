@@ -14,12 +14,14 @@ from pydantic import JsonValue, ValidationError
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.application.conversation_results import conversation_result
 from agent_fleet.application.evidence import EvidenceAssembler
+from agent_fleet.application.evolution import OrganizationService
 from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.graph import GraphCoordinator
 from agent_fleet.application.graph_workflow import GraphWorkflowExecution
 from agent_fleet.application.inspection import InspectionService
 from agent_fleet.application.permission_policy import PermissionPolicyService
 from agent_fleet.application.planning import FleetPlanner
+from agent_fleet.application.proposal_tools import ProposalHashToolCatalog
 from agent_fleet.application.resources import CancellationService, ResourceService
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.application.runtime_tools import GatewayRuntimeToolCatalog
@@ -47,6 +49,8 @@ from agent_fleet.domain.evidence import (
     EvidenceBundle,
     ResourceCleanupReceipt,
 )
+from agent_fleet.domain.evolution import FleetPatchProposalRecord
+from agent_fleet.domain.fleet_patch import validate_fleet_patch
 from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy
 from agent_fleet.domain.graph import GraphDriverClaim, GraphStatus
 from agent_fleet.domain.ids import IdPrefix
@@ -61,6 +65,7 @@ from agent_fleet.domain.models import (
     CommandSpec,
     FakeScenario,
     FleetEvent,
+    FleetPatch,
     ImplementationReport,
     LeaseKind,
     LeaseStatus,
@@ -126,6 +131,7 @@ class WorkflowEngine:
         *,
         budgets: RuntimeBudgetStore,
         graphs: GraphStore,
+        organization: OrganizationService,
         permission_policy: PermissionPolicyService | None = None,
         conversations: ConversationStore | None = None,
     ) -> None:
@@ -143,6 +149,7 @@ class WorkflowEngine:
         self.ids = ids
         self.budgets = budgets
         self.graphs = graphs
+        self.organization = organization
         self.redactor = redactor
         self.permission_policy = permission_policy
         self.conversations = conversations
@@ -193,7 +200,8 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "Run-time sandbox differs from the reviewed project registration.",
-                "Use the registered sandbox or explicitly reinitialize the project.",
+                "Use the registered sandbox, or preserve this project/state and separately "
+                "initialize a different protected setup.",
                 details={
                     "requested_sandbox": selected_sandbox_name,
                     "registered_sandbox": project.sandbox_name,
@@ -247,8 +255,9 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "Run-time provider options differ from the reviewed project registration.",
-                "Preview the desired initialization, then move the conflicting generated "
-                ".fleet tree and re-run `fleet init` with explicit provider options.",
+                "Preserve this project and state. A different protected provider setup "
+                "requires a separate reviewed registration; headed projects cannot be "
+                "reinitialized.",
             )
         runtime_configuration = RuntimeConfiguration(
             runtime_name=selected_runtime,
@@ -267,8 +276,8 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "The active FleetSpec differs from the registered validated version.",
-                "Run `fleet init --preview`; after review, move the conflicting generated "
-                ".fleet tree and initialize again with explicit options.",
+                "Preserve the organization and inspect its history. Use reviewed FleetPatch "
+                "changes or restore the exact registered configuration; do not bypass its fence.",
             )
         if (
             spec.spec.runtime.adapter != selected_runtime
@@ -278,14 +287,21 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "The active FleetSpec runtime differs from Fleet-owned project settings.",
-                "Review the repository configuration with `fleet init --preview` before "
-                "reinitializing explicitly.",
+                "Restore the exact reviewed configuration, or preserve this project/state "
+                "and separately initialize a different protected setup.",
             )
         self.runtimes.require(
             runtime_configuration,
             required_capabilities=spec.spec.runtime.required_capabilities,
             credential_check=RuntimeCredentialCheck.NONE,
         )
+        with self.organization.admission(project) as admitted:
+            if admitted.config_snapshot_sha256 != config_hash:
+                raise FleetError(
+                    ErrorCode.CONFIG_INVALID,
+                    "The organization changed during configuration preflight.",
+                    "Inspect its exact version before starting a new Run.",
+                )
         sandbox_preflight = await self.resources.sandboxes.preflight(
             project.sandbox_configuration,
             sandbox_requirements,
@@ -327,27 +343,30 @@ class WorkflowEngine:
             sandbox_daemon_identity=sandbox_preflight.daemon_identity,
             unsafe_local_confirmed=allow_unsafe_local,
             fake_scenario=selected_fake_scenario,
+            config_snapshot_hash=config_hash,
             max_repair_iterations=spec.spec.workflows["code-change"].max_repair_iterations,
             created_at=now,
             updated_at=now,
         )
         conversation_claim: ConversationClaim | None = None
-        if conversation_submission is None:
-            self.state.create_run(run)
-        else:
-            if self.conversations is None:
-                raise ConversationOwnershipUnavailableError()
-            self._reject_untrusted_secrets(conversation_submission.model_dump(mode="json"))
-            registration = self.conversations.register_turn_run(
-                conversation_submission,
-                run,
-                config_snapshot_sha256=config_hash,
-                budget_limits=budget_limits or RunBudgetLimits(),
-            )
-            conversation_claim = registration.claim
-            if conversation_claim is None:
-                return self.state.get_run(registration.turn.binding.run_id)
-            self._conversation_claims[run.run_id] = conversation_claim
+        with self.organization.admission(project, expected=admitted):
+            if conversation_submission is None:
+                self.state.create_run(run, organization_admission=admitted)
+            else:
+                if self.conversations is None:
+                    raise ConversationOwnershipUnavailableError()
+                self._reject_untrusted_secrets(conversation_submission.model_dump(mode="json"))
+                registration = self.conversations.register_turn_run(
+                    conversation_submission,
+                    run,
+                    config_snapshot_sha256=config_hash,
+                    budget_limits=budget_limits or RunBudgetLimits(),
+                    organization_admission=admitted,
+                )
+                conversation_claim = registration.claim
+                if conversation_claim is None:
+                    return self.state.get_run(registration.turn.binding.run_id)
+                self._conversation_claims[run.run_id] = conversation_claim
         orderly = False
         try:
             self.budgets.initialize_run(run.run_id, budget_limits or RunBudgetLimits())
@@ -496,6 +515,10 @@ class WorkflowEngine:
             # A released child-graph claim does not mean the parent's verifier
             # stopped. Public resume cannot take over an executing parent.
             raise GraphOwnershipUnavailableError()
+        with self.organization.run_guard(run):
+            # Active/paused Run and retained-claim blockers keep publication
+            # fenced after this short exact-generation check is released.
+            pass
         runtime_configuration = self._runtime_configuration(run)
         self.runtimes.require(
             runtime_configuration,
@@ -513,7 +536,8 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "The Fleet configuration changed while the run was paused.",
-                "Restore the reviewed configuration or abandon this run and initialize again.",
+                "Restore the exact reviewed configuration. Preserve the existing state; "
+                "a different protected setup requires a separate registration.",
             )
         self.runtimes.require(
             runtime_configuration,
@@ -739,6 +763,8 @@ class WorkflowEngine:
             "delegation_roles": cast(JsonValue, fleet_spec.spec.agents["cos"].may_delegate_to),
             "max_parallel_agents": fleet_spec.spec.workflows["code-change"].max_parallel_agents,
         }
+        organization_context = self.organization.proposal_context(run, config_snapshot)
+        invocation_input["organization_context"] = organization_context.input
         self._assert_conversation_execution(run)
         if self.conversations is not None:
             binding = self.conversations.binding_for_run(run.run_id)
@@ -789,10 +815,39 @@ class WorkflowEngine:
             request,
             RuntimeInvocationServices(
                 configuration=runtime_configuration,
-                tools=EMPTY_RUNTIME_TOOL_CATALOG,
+                tools=(
+                    EMPTY_RUNTIME_TOOL_CATALOG
+                    if runtime_configuration.runtime_name == "fake"
+                    else ProposalHashToolCatalog(self.redactor)
+                ),
             ),
         )
-        decision = cast(ScopeDecision, result.output)
+        proposal: FleetPatchProposalRecord | None = None
+        if isinstance(result.output, FleetPatch):
+            proposal = self.organization.propose(run, result.output, organization_context)
+            proposal_id = proposal.patch.fleet_patch_id
+            decision = ScopeDecision(
+                normalized_goal="Propose a reviewable organization update.",
+                response=(
+                    f"FleetPatch {proposal_id} is proposed and not applied. "
+                    f"Inspect it with `fleet fleet-patch diff {proposal_id}`. "
+                    "Only explicit user application can activate this organization version."
+                ),
+                workflow="code-change",
+                change_kind="read_only",
+                fleet_strategy="direct",
+                allowed_paths=[],
+                forbidden_paths=[".git", ".fleet"],
+                acceptance_criteria=[
+                    {
+                        "criterion_id": "reviewable-organization-proposal",
+                        "description": "Persist an exact validated proposal without applying it.",
+                    }
+                ],
+                required_evidence=["control_plane_plan"],
+            )
+        else:
+            decision = cast(ScopeDecision, result.output)
         if self.permission_policy is not None:
             self.permission_policy.validate_task_paths(project, decision.allowed_paths)
         if decision.workflow not in fleet_spec.spec.workflows:
@@ -828,10 +883,14 @@ class WorkflowEngine:
             max_repair_iterations=run.max_repair_iterations,
             config_snapshot_hash=config_hash,
             verification_commands=verification_commands,
-            required_verification_command_ids=(
-                verification_profile.required_for_code_change
-                if decision.change_kind == "code_change"
-                else []
+            required_verification_command_ids=list(
+                self.config.required_verification_commands(
+                    fleet_spec,
+                    config_snapshot,
+                    workflow_id=decision.workflow,
+                    allowed_paths=tuple(decision.allowed_paths),
+                    change_kind=decision.change_kind,
+                )
             ),
             created_at=self.clock.now(),
         )
@@ -946,6 +1005,16 @@ class WorkflowEngine:
                 "planned_roles": [node.role_id for node in plan.nodes],
             },
         )
+        if proposal is not None:
+            self.organization.record_proposal_artifacts(proposal, run)
+            self._emit(
+                run,
+                "fleet_patch.proposed",
+                {
+                    "fleet_patch_id": proposal.patch.fleet_patch_id,
+                    "proposal_sha256": proposal.proposal_sha256,
+                },
+            )
         return run
 
     async def _prepare_workspace(self, run: Run) -> None:
@@ -1578,6 +1647,12 @@ class WorkflowEngine:
                     "The remaining active runtime time budget was exhausted.",
                     "Review preserved usage and artifacts; approval does not reset this limit.",
                 ) from None
+            if isinstance(result.output, FleetPatch):
+                validate_fleet_patch(
+                    result.output,
+                    current_fleet_spec_sha256=result.output.base_fleet_spec_sha256,
+                    redactor=self.redactor,
+                )
             raw_result = result.model_dump(mode="json", warnings=False)
             self._reject_untrusted_secrets(raw_result)
             validated_result: AgentInvocationResult | None = None
@@ -1594,16 +1669,20 @@ class WorkflowEngine:
             result = validated_result
             expected_outputs: dict[
                 str,
-                type[ScopeDecision]
-                | type[ImplementationReport]
-                | type[VerifierVerdict]
-                | type[SpecialistReport],
+                tuple[
+                    type[ScopeDecision]
+                    | type[FleetPatch]
+                    | type[ImplementationReport]
+                    | type[VerifierVerdict]
+                    | type[SpecialistReport],
+                    ...,
+                ],
             ] = {
-                AgentRole.COS.value: ScopeDecision,
-                AgentRole.ENGINEER.value: ImplementationReport,
-                AgentRole.VERIFIER.value: VerifierVerdict,
-                AgentRole.RESEARCHER.value: SpecialistReport,
-                AgentRole.ARCHITECT.value: SpecialistReport,
+                AgentRole.COS.value: (ScopeDecision, FleetPatch),
+                AgentRole.ENGINEER.value: (ImplementationReport,),
+                AgentRole.VERIFIER.value: (VerifierVerdict,),
+                AgentRole.RESEARCHER.value: (SpecialistReport,),
+                AgentRole.ARCHITECT.value: (SpecialistReport,),
             }
             expected_output = expected_outputs.get(str(request.role))
             if expected_output is None or not isinstance(result.output, expected_output):
@@ -1890,7 +1969,8 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "The required runtime role guidance is missing from ConfigSnapshot.",
-                "Restore the referenced role file and initialize again.",
+                "Restore the exact registered role file, or review a supported FleetPatch "
+                "before starting a new Run.",
             )
         if len(guidance.encode("utf-8")) > _MAX_ROLE_GUIDANCE_BYTES:
             raise FleetError(

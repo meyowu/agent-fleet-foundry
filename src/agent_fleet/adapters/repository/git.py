@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import selectors
+import signal
 import stat
 import subprocess
+import time
 from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
@@ -30,6 +34,7 @@ from agent_fleet.domain.offline_canary import (
     BROKEN_CANARY,
 )
 from agent_fleet.domain.paths import path_is_within
+from agent_fleet.domain.repository_boundary import OrganizationRepositoryBoundary
 from agent_fleet.domain.security import (
     MINIMUM_GIT_VERSION,
     canonical_json_hash,
@@ -45,6 +50,9 @@ _MAX_NEW_FILE_BYTES = 2_000_000
 _MAX_NEW_FILES_BYTES = 8_000_000
 _MAX_NEW_FILES = 1024
 _MAX_PATCH_BYTES = 16_000_000
+_MAX_ORGANIZATION_INDEX_BYTES = 16_000_000
+_MAX_ORGANIZATION_STATUS_BYTES = 1_000_000
+_MAX_ORGANIZATION_STDERR_BYTES = 65_536
 _PROTECTED_PATCH_COMPONENTS = frozenset({".git", ".fleet"})
 _PROTECTED_PATCH_LEAVES = frozenset(
     {".env", ".netrc", ".npmrc", ".pypirc", "credentials", "id_ed25519", "id_rsa"}
@@ -160,6 +168,175 @@ class GitRepositoryAdapter:
             status_fingerprint=status_fingerprint(status),
             dirty_paths=dirty_paths,
         )
+
+    def inspect_organization_boundary(self, root: Path) -> OrganizationRepositoryBoundary:
+        """Read exact staged entries/flags and non-Fleet status without writing the index."""
+        boundary: OrganizationRepositoryBoundary | None = None
+        try:
+            supplied = Path(os.path.abspath(root))
+            requested = supplied.resolve(strict=True)
+            deadline = time.monotonic() + _GIT_TIMEOUT_SECONDS
+            untrusted = (self._state_root_input, supplied)
+            executable = _trusted_git_executable("git", requested, self.state_root, *untrusted)
+            environment = _git_environment(requested, self.state_root, *untrusted)
+            version, _, _, code = _bounded_organization_git(
+                [executable, "--version"],
+                cwd=requested,
+                environment=environment,
+                deadline=deadline,
+                maximum=4096,
+            )
+            if code != 0 or not git_version_is_supported(version.decode("ascii")):
+                raise _organization_boundary_error()
+
+            def query(
+                arguments: list[str],
+                cwd: Path,
+                *,
+                maximum: int = 16_384,
+                capture: bool = True,
+                allowed_codes: tuple[int, ...] = (0,),
+            ) -> tuple[bytes, str, int]:
+                environment = _git_environment(cwd, self.state_root, *untrusted)
+                prefix = [executable, *_base_git_global_args(), *_base_git_config_args()]
+                _, _, size, code = _bounded_organization_git(
+                    [
+                        *prefix,
+                        "config",
+                        "--no-includes",
+                        "--null",
+                        "--name-only",
+                        "--get-regexp",
+                        _EXECUTABLE_CONFIG_QUERY,
+                    ],
+                    cwd=cwd,
+                    environment=environment,
+                    deadline=deadline,
+                    maximum=4096,
+                    capture=False,
+                )
+                if code not in {0, 1} or size:
+                    raise _organization_boundary_error()
+                output, digest, size, code = _bounded_organization_git(
+                    [*prefix, *arguments],
+                    cwd=cwd,
+                    environment=environment,
+                    deadline=deadline,
+                    maximum=maximum,
+                    capture=capture,
+                )
+                if code not in allowed_codes:
+                    raise _organization_boundary_error()
+                return output, digest, size
+
+            def identity(cwd: Path) -> tuple[Path, Path, Path]:
+                output, _, _ = query(
+                    [
+                        "rev-parse",
+                        "--path-format=absolute",
+                        "--show-toplevel",
+                        "--absolute-git-dir",
+                        "--git-common-dir",
+                    ],
+                    cwd,
+                )
+                values = output.decode("utf-8").splitlines()
+                if len(values) != 3 or any(not value for value in values):
+                    raise _organization_boundary_error()
+                paths = tuple(Path(value).resolve(strict=True) for value in values)
+                return paths[0], paths[1], paths[2]
+
+            initial_identity = identity(requested)
+            canonical_root = initial_identity[0]
+            requested.relative_to(canonical_root)
+            if identity(canonical_root) != initial_identity:
+                raise _organization_boundary_error()
+
+            def inspect_bounded() -> RepositoryInfo:
+                if identity(canonical_root) != initial_identity:
+                    raise _organization_boundary_error()
+                head, _, _ = query(
+                    ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"], canonical_root
+                )
+                head_text = head.decode("ascii").strip()
+                if _OBJECT_ID.fullmatch(head_text) is None:
+                    raise _organization_boundary_error()
+                raw_status, _, _ = query(
+                    [
+                        "status",
+                        "--porcelain=v1",
+                        "--untracked-files=all",
+                        "--ignore-submodules=all",
+                        "--no-renames",
+                        "-z",
+                    ],
+                    canonical_root,
+                    maximum=_MAX_ORGANIZATION_STATUS_BYTES,
+                )
+                status = raw_status.decode("utf-8")
+                entries = [entry for entry in status.split("\x00") if entry]
+                if (status and not status.endswith("\x00")) or any(
+                    len(entry) < 4 or entry[2] != " " for entry in entries
+                ):
+                    raise _organization_boundary_error()
+                remote, _, _ = query(
+                    ["config", "--local", "--no-includes", "--get", "remote.origin.url"],
+                    canonical_root,
+                    maximum=4096,
+                    allowed_codes=(0, 1),
+                )
+                remote_text = remote.decode("utf-8").strip()
+                remote_fingerprint = (
+                    f"sha256:{sha256_bytes(remote_text.encode())}" if remote_text else None
+                )
+                return RepositoryInfo(
+                    root=str(canonical_root),
+                    head_revision=head_text,
+                    remote_fingerprint=remote_fingerprint,
+                    identity_hash=canonical_json_hash(
+                        {"git_common_dir": str(initial_identity[2]), "remote": remote_fingerprint}
+                    ),
+                    status_porcelain=status,
+                    status_fingerprint=status_fingerprint(status),
+                    dirty_paths=sorted({entry[3:] for entry in entries}),
+                )
+
+            def index_digest() -> str:
+                _, staged, size = query(
+                    ["ls-files", "--stage", "--sparse", "-z"],
+                    canonical_root,
+                    maximum=_MAX_ORGANIZATION_INDEX_BYTES,
+                    capture=False,
+                )
+                _, flags, _ = query(
+                    ["ls-files", "-v", "--debug", "-z"],
+                    canonical_root,
+                    maximum=_MAX_ORGANIZATION_INDEX_BYTES - size,
+                    capture=False,
+                )
+                return canonical_json_hash({"staged": staged, "flags": flags})
+
+            before = inspect_bounded()
+            first_index = index_digest()
+            second_index = index_digest()
+            after = inspect_bounded()
+            if before != after or first_index != second_index:
+                raise _organization_boundary_error()
+            outside = [
+                entry
+                for entry in before.status_porcelain.split("\x00")
+                if entry and not (entry[3:] == ".fleet" or entry[3:].startswith(".fleet/"))
+            ]
+            boundary = OrganizationRepositoryBoundary(
+                repository=before,
+                index_sha256=first_index,
+                non_organization_status_sha256=canonical_json_hash(outside),
+            )
+        except (FleetError, OSError, ValueError, subprocess.SubprocessError):
+            pass
+        if boundary is None:
+            raise _organization_boundary_error()
+        return boundary
 
     def _discover_repository_identity(
         self,
@@ -837,6 +1014,85 @@ class GitRepositoryAdapter:
             timeout=_GIT_TIMEOUT_SECONDS,
         )
         return result.stdout
+
+
+def _organization_boundary_error() -> FleetError:
+    return FleetError(
+        ErrorCode.PATCH_TARGET_DIVERGED,
+        "The repository changed, is unsafe, or exceeds the organization review boundary.",
+        "Keep source and index stable and bounded while reviewing an organization update.",
+    )
+
+
+def _bounded_organization_git(
+    argv: list[str],
+    *,
+    cwd: Path,
+    environment: dict[str, str],
+    deadline: float,
+    maximum: int,
+    capture: bool = True,
+) -> tuple[bytes, str, int, int]:
+    """Drain bounded pipes; hash index bytes without retaining their full output."""
+    if time.monotonic() >= deadline or maximum < 0:
+        raise _organization_boundary_error()
+    process = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        start_new_session=True,
+        close_fds=True,
+    )
+    completed = False
+    chunks: list[bytes] = []
+    digest = hashlib.sha256()
+    stdout_size = stderr_size = 0
+    try:
+        assert process.stdout is not None and process.stderr is not None
+        with selectors.DefaultSelector() as selector:
+            for pipe in (process.stdout, process.stderr):
+                os.set_blocking(pipe.fileno(), False)
+                selector.register(pipe, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _organization_boundary_error()
+                for key, _ in selector.select(min(remaining, 0.1)):
+                    chunk = os.read(key.fd, 65_536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    if key.fileobj is process.stdout:
+                        stdout_size += len(chunk)
+                        if stdout_size > maximum:
+                            raise _organization_boundary_error()
+                        digest.update(chunk)
+                        if capture:
+                            chunks.append(chunk)
+                    else:
+                        stderr_size += len(chunk)
+                        if stderr_size > _MAX_ORGANIZATION_STDERR_BYTES:
+                            raise _organization_boundary_error()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _organization_boundary_error()
+        returncode = process.wait(timeout=remaining)
+        completed = True
+        return b"".join(chunks), digest.hexdigest(), stdout_size, returncode
+    finally:
+        try:
+            if not completed:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=1)
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
 
 
 def _snapshot_new_files(root: Path, logical_paths: list[str]) -> list[tuple[str, str, bytes]]:

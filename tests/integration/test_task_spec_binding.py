@@ -79,10 +79,14 @@ async def test_foreign_task_spec_artifact_is_rejected(harness: FleetHarness) -> 
         goal="foreign task binding fixture",
         base_revision=run.base_revision,
         target_status_fingerprint=run.target_status_fingerprint,
+        config_snapshot_hash=run.config_snapshot_hash,
         created_at=now,
         updated_at=now,
     )
-    harness.container.state.create_run(foreign_run)
+    project = harness.container.state.get_project(run.project_id)
+    with harness.container.organization.admission(project) as admission:
+        harness.container.state.create_run(foreign_run, organization_admission=admission)
+    assert harness.container.organization.store.admission_for_run(foreign_run.run_id) == admission
     foreign_task_id = harness.container.state.ids.new(IdPrefix.TASK)
     foreign_artifact = harness.container.artifacts.create_text(
         kind=ArtifactKind.TASK_SPEC,

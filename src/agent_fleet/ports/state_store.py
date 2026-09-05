@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from agent_fleet.domain.models import (
     AgentInstance,
@@ -18,6 +18,9 @@ from agent_fleet.domain.models import (
     ToolIntent,
 )
 
+if TYPE_CHECKING:
+    from agent_fleet.domain.evolution import OrganizationAdmission
+
 
 class StateStore(Protocol):
     def migrate(self) -> int: ...
@@ -28,7 +31,9 @@ class StateStore(Protocol):
 
     def get_project_by_root(self, canonical_root: str) -> Project | None: ...
 
-    def create_run(self, run: Run) -> None: ...
+    def create_run(
+        self, run: Run, *, organization_admission: OrganizationAdmission | None = None
+    ) -> None: ...
 
     def get_run(self, run_id: str) -> Run: ...
 

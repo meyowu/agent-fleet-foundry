@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec, VerificationProfile
 from agent_fleet.domain.models import SandboxConfiguration
@@ -26,6 +26,8 @@ class ConfigurationPort(Protocol):
 
     def load_snapshot(self, path: Path) -> tuple[FleetSpec, ConfigSnapshot]: ...
 
+    def snapshot_from_files(self, files: dict[str, str]) -> tuple[FleetSpec, ConfigSnapshot]: ...
+
     def hash(self, spec: FleetSpec) -> str: ...
 
     def snapshot_hash(self, snapshot: ConfigSnapshot) -> str: ...
@@ -35,6 +37,16 @@ class ConfigurationPort(Protocol):
         spec: FleetSpec,
         snapshot: ConfigSnapshot,
     ) -> VerificationProfile: ...
+
+    def required_verification_commands(
+        self,
+        spec: FleetSpec,
+        snapshot: ConfigSnapshot,
+        *,
+        workflow_id: str,
+        allowed_paths: tuple[str, ...],
+        change_kind: Literal["read_only", "code_change"],
+    ) -> tuple[str, ...]: ...
 
     def check_apply(self, root: Path, files: dict[str, str]) -> FleetSpec: ...
 

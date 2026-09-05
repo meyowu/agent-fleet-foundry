@@ -634,6 +634,11 @@ class SqliteGraphStore:
         plan: FleetPlan,
         children: tuple[GraphChildSeed, ...],
     ) -> GraphSnapshot:
+        from agent_fleet.adapters.persistence.evolution import (
+            check_organization_admission,
+            record_organization_admission,
+        )
+
         plan = self._validated(FleetPlan, plan)
         with self._transaction() as connection:
             parent = self._run(connection, parent_run_id)
@@ -663,6 +668,9 @@ class SqliteGraphStore:
                 node = nodes[seed.node_id]
                 self._validate_seed(parent, task, plan, node, seed)
                 child = seed.run
+                check_organization_admission(
+                    connection, child, None, parent_run_id=parent_run_id, redactor=self.redactor
+                )
                 connection.execute(
                     "INSERT INTO runs VALUES (?, ?, ?, ?, ?)",
                     (
@@ -672,6 +680,9 @@ class SqliteGraphStore:
                         None,
                         child.model_dump_json(),
                     ),
+                )
+                record_organization_admission(
+                    connection, child, None, parent_run_id=parent_run_id, redactor=self.redactor
                 )
                 connection.execute(
                     "INSERT INTO tasks VALUES (?, ?, ?)",

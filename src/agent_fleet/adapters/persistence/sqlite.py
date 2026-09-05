@@ -8,7 +8,7 @@ from contextlib import suppress
 from datetime import timedelta
 from importlib.resources import files
 from pathlib import Path
-from typing import TypeVar, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from pydantic import JsonValue, ValidationError
 
@@ -43,7 +43,10 @@ from agent_fleet.domain.workflow import validate_transition
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
 
-SUPPORTED_SCHEMA_VERSION = 7
+if TYPE_CHECKING:
+    from agent_fleet.domain.evolution import OrganizationAdmission
+
+SUPPORTED_SCHEMA_VERSION = 8
 
 _StateModel = TypeVar("_StateModel", bound=StrictModel)
 
@@ -122,7 +125,11 @@ class SqliteStateStore:
             return SUPPORTED_SCHEMA_VERSION
 
     def save_project(self, project: Project) -> None:
+        from agent_fleet.adapters.persistence.evolution import assert_organization_project_write
+
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            assert_organization_project_write(connection, project, redactor=self.redactor)
             connection.execute(
                 "INSERT INTO projects(project_id, canonical_root, data_json) VALUES (?, ?, ?) "
                 "ON CONFLICT(project_id) DO UPDATE SET "
@@ -146,10 +153,14 @@ class SqliteStateStore:
             ).fetchone()
         return Project.model_validate_json(row["data_json"]) if row is not None else None
 
-    def create_run(self, run: Run) -> None:
+    def create_run(
+        self, run: Run, *, organization_admission: OrganizationAdmission | None = None
+    ) -> None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            self._insert_run_in_transaction(connection, run)
+            self._insert_run_in_transaction(
+                connection, run, organization_admission=organization_admission
+            )
             connection.commit()
 
     def _insert_run_in_transaction(
@@ -158,9 +169,18 @@ class SqliteStateStore:
         run: Run,
         *,
         created_payload: dict[str, object] | None = None,
+        organization_admission: OrganizationAdmission | None = None,
     ) -> None:
         """Reuse the canonical Run/event insertion inside an adapter-owned transaction."""
+        from agent_fleet.adapters.persistence.evolution import (
+            check_organization_admission,
+            record_organization_admission,
+        )
+
         run = self._decode_state_record(Run, run.model_dump_json(warnings=False))
+        check_organization_admission(
+            connection, run, organization_admission, redactor=self.redactor
+        )
         connection.execute(
             "INSERT INTO runs(run_id, project_id, status, stage, data_json) VALUES (?, ?, ?, ?, ?)",
             (
@@ -170,6 +190,9 @@ class SqliteStateStore:
                 run.stage.value if run.stage else None,
                 run.model_dump_json(),
             ),
+        )
+        record_organization_admission(
+            connection, run, organization_admission, redactor=self.redactor
         )
         self._insert_event(
             connection,

@@ -4,7 +4,7 @@
 
 Implement phases in order. Every phase must leave a runnable, tested repository and produce an updated ExecPlan outcome. Do not begin a later phase by creating empty placeholder abstractions across the whole system. Add only the contracts required by the current vertical slice, while preserving the specified architectural boundaries.
 
-Current boundary as of 2026-09-05: Phase 0–5 is implemented and accepted, including exact permissions, durable budgets/evidence, all five adaptive strategies and persistent chat. Phase 5's frozen default suite passed `1472 passed, 14 skipped in 1354.35s`; thirteen separately enabled real-Docker tests passed with zero managed containers and zero outstanding leases across 24 databases. Whole-phase metadata is 5, with a separate 35-test metadata refresh passed. M2 remains the latest committed/pushed checkpoint on `codex/mvp-completion`: `7a70b1a940209487deac5585583ba1f9924be8d9`, tree `bf75f1d681e36b30954235214ed641202945b060`; remote main remains `c700de1`. Final README-frozen archive read-back passed five tests in 1.70s; the chat checkpoint remains pending. Phase 6/7, fresh-user/platform release proof, live-provider acceptance and the owner license decision remain open. See `MVP_ACCEPTANCE.md` and the active plans for exact evidence; Phase 5 acceptance is not a complete MVP release or final GitHub merge.
+Current boundary as of 2026-09-05: Phase 0–6 is implemented and locally accepted. Checkpoints before Phase 6 extend through `a46b68800fb9725274db869f8c360b97a70c24ef` on `codex/mvp-completion`; remote main remains `c700de1`. E6 records1973 default passes15 explicit skips and fourteen separately enabled real-Docker passes, with82 schemas and migration8. Whole-phase metadata is6 after the successful behavioral freeze; metadata/package/checkpoint refresh is recorded separately in the evolution plan. Phase 7 guide/hardening, fresh-user/Linux platform release proof, live-provider acceptance and the owner license decision remain open. Local acceptance is not a complete release or final GitHub merge.
 
 For each phase:
 
@@ -222,7 +222,7 @@ Prerequisite: Phase 1.5 is complete. The adapter consumes validated RepositoryPr
 - Usage metadata mapping when available, without assuming every provider exposes price.
 - Provider failures, invalid structured output, timeouts, and retry behavior mapped to typed errors.
 - `fleet init` interactive/provider flags and credential preflight.
-- Fail-closed reinitialization: differing generated `.fleet/` content is never merged or overwritten and fails before Project/artifact state mutation; credential-reference-only updates remain possible in Fleet-owned state.
+- Fail-closed reinitialization: differing generated `.fleet/` content is never merged or overwritten and fails before Project/artifact state mutation. The original reference-only update support applies only before organization admission; Phase 6 rejects all headed reinitialization, including reference-only changes. A protected setup change requires separate registration with old state preserved.
 - `fleet run` exact registration matching and provider preflight; explicit mismatched overrides fail before Run creation.
 - `fleet doctor` inspect-only credential status. A successfully emitted report uses `healthy`/required checks for readiness even when the command exit is zero.
 - Optional manual live-model smoke test excluded from normal CI.
@@ -375,7 +375,7 @@ A user can approve a test command once, for the run, or persist an exact project
 
 Deliver the core user experience with a persistent CoS interface and bounded specialist execution.
 
-Acceptance status: the complete Phase 5 passed on 2026-09-05. M3 adds atomic conversation/Run registration, bounded summaries and references, shared resume ownership, event progress, exact approval controls and responsive cancellation. The proving surface is `tests/unit/test_chat_cli.py`, `tests/unit/test_conversation_models.py`, `tests/unit/test_conversation_state.py`, `tests/contract/test_conversation_store.py`, `tests/integration/test_conversations.py`, `tests/integration/test_conversation_safety.py`, `tests/e2e/test_persistent_chat_cli.py` and the separately gated `tests/docker/test_conversation_journey.py`. E5.3 and the persistent-chat plan retain exact full/focused/static results and failed attempts. Whole-phase metadata is 5; final README archive read-back passed five tests in 1.70s and only the chat checkpoint remains pending, without widening acceptance to Phase 6/7 or release prerequisites.
+Acceptance status: the complete Phase 5 passed on 2026-09-05 and was committed/pushed as `a46b688`. M3 adds atomic conversation/Run registration, bounded summaries and references, shared resume ownership, event progress, exact approval controls and responsive cancellation. The proving surface is `tests/unit/test_chat_cli.py`, `tests/unit/test_conversation_models.py`, `tests/unit/test_conversation_state.py`, `tests/contract/test_conversation_store.py`, `tests/integration/test_conversations.py`, `tests/integration/test_conversation_safety.py`, `tests/e2e/test_persistent_chat_cli.py` and the separately gated `tests/docker/test_conversation_journey.py`. E5.3 and the persistent-chat plan retain exact full/focused/static results and failed attempts. Whole-phase metadata is 5; acceptance does not extend to Phase 6/7 or release prerequisites.
 
 ### Deliverables
 
@@ -419,6 +419,8 @@ A user can initialize a small real repository, ask CoS for a code change, let th
 
 ## Phase 6 — FleetPatch: versioned organizational updates
 
+Status: local behavioral acceptance passed on 2026-09-05:1973 default passes15 explicit skips, fourteen separately enabled real-Docker passes,57 focused compatibility tests and independent integration/delta PASS. The living plan is `.agent/plans/2026-09-05-versioned-fleet-evolution.md`. Normal offline CoS hashing/output, immutable proposals and semantic/text diffs, strict workflow/skill requirements, native whole-tree publication, exact admission/fencing, CLI recovery and current-head inverse rollback are connected. Native cut-point tests and fresh CLI process exits exercise recovery; the real-Docker journey proves newly mandatory integration evidence from Engineer and independent Verifier. This does not change protected FleetSpec, trust or credentials. Metadata6 and archive/checkpoint refresh follow the successful behavioral freeze. Linux, fresh-installed-user, live-provider and public-release gates remain separate. See ADR 0006 and E6 for exact limitations/results.
+
 ### Goal
 
 Allow the user to ask CoS to change agent roles/workflows/skills while maintaining a protected policy boundary.
@@ -442,8 +444,10 @@ This phase turns the Phase 1.5 FleetPatch schema/path/base-hash validator into a
 - CLI:
   - `fleet fleet-patch list`;
   - `show`;
+  - `diff`;
   - `apply`;
-  - `rollback`.
+  - `rollback`;
+  - `operation` and explicit `recover --owner-stopped`.
 - Atomic application with before/after hashes and conflict detection.
 - Rollback produces a new auditable operation rather than erasing history.
 - Example: add required integration-test command for backend changes.

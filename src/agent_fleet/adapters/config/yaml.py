@@ -6,31 +6,47 @@ import os
 import re
 import secrets
 import stat
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import ValidationError
-from yaml.tokens import AliasToken, AnchorToken
+from yaml.tokens import (
+    AliasToken,
+    AnchorToken,
+    BlockEndToken,
+    BlockMappingStartToken,
+    BlockSequenceStartToken,
+    FlowMappingEndToken,
+    FlowMappingStartToken,
+    FlowSequenceEndToken,
+    FlowSequenceStartToken,
+)
 
 from agent_fleet.domain.config import (
     ConfigSnapshot,
     ConfigSnapshotFile,
     FleetSpec,
     VerificationProfile,
+    VerificationSkill,
+    WorkflowDefinition,
 )
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import SandboxConfiguration
+from agent_fleet.domain.paths import path_overlaps_scope
 from agent_fleet.domain.repository_profile import RepositoryProfile
 from agent_fleet.domain.security import (
     Redactor,
     canonical_json_hash,
     sha256_bytes,
 )
+from agent_fleet.domain.trust import canonical_trust_path
 
 MAX_CONFIG_BYTES = 512_000
 MAX_CONFIG_SNAPSHOT_BYTES = 4_000_000
 MAX_AGENT_GUIDANCE_BYTES = 32_768
+MAX_CONFIG_FILES = 256
 
 
 class YamlConfigurationAdapter:
@@ -65,6 +81,9 @@ class YamlConfigurationAdapter:
     def load_snapshot(self, path: Path) -> tuple[FleetSpec, ConfigSnapshot]:
         return load_fleet_snapshot(path, redactor=self.redactor)
 
+    def snapshot_from_files(self, files: dict[str, str]) -> tuple[FleetSpec, ConfigSnapshot]:
+        return snapshot_from_fleet_files(files, redactor=self.redactor)
+
     def hash(self, spec: FleetSpec) -> str:
         return fleet_spec_hash(spec)
 
@@ -82,15 +101,71 @@ class YamlConfigurationAdapter:
             raise _config_error("configuration snapshot is missing its verification profile")
         return parse_verification_profile(content.encode(), redactor=self.redactor)
 
+    def required_verification_commands(
+        self,
+        spec: FleetSpec,
+        snapshot: ConfigSnapshot,
+        *,
+        workflow_id: str,
+        allowed_paths: tuple[str, ...],
+        change_kind: Literal["read_only", "code_change"],
+    ) -> tuple[str, ...]:
+        _reject_registered_secret(spec.model_dump(mode="json"), self.redactor)
+        _reject_registered_secret(snapshot.model_dump(mode="json"), self.redactor)
+        _reject_registered_secret([workflow_id, *allowed_paths], self.redactor)
+        rebuilt_spec, rebuilt = self.snapshot_from_files(
+            {item.path: item.content for item in snapshot.files}
+        )
+        if rebuilt_spec != spec or rebuilt != snapshot:
+            raise _config_error(
+                "the supplied specification and snapshot do not match their closure"
+            )
+        if workflow_id not in spec.spec.workflows:
+            raise _config_error("the requested workflow is not declared")
+        if change_kind not in {"read_only", "code_change"}:
+            raise _config_error("unsupported task change kind")
+        if len(allowed_paths) > 128:
+            raise _config_error("task path scope exceeds its bound")
+        invalid_paths = False
+        try:
+            for path in allowed_paths:
+                canonical_trust_path(path, allow_root=True)
+                if not path_overlaps_scope(path, (path,)):
+                    invalid_paths = True
+        except ValueError:
+            invalid_paths = True
+        if invalid_paths or len(allowed_paths) != len({path.casefold() for path in allowed_paths}):
+            raise _config_error("task paths must be unique canonical unprotected repository paths")
+        if change_kind == "read_only":
+            return ()
+        if not allowed_paths:
+            raise _config_error("code-change requirements require a nonempty task scope")
+        files = {item.path: item.content for item in rebuilt.files}
+        definition = _parse(
+            files[spec.spec.workflows[workflow_id].definition].encode("utf-8"),
+            WorkflowDefinition,
+            redactor=self.redactor,
+        )
+        required = set(self.verification_profile(spec, rebuilt).required_for_code_change)
+        for reference in definition.verification_skills:
+            skill = _parse(
+                files[reference].encode("utf-8"), VerificationSkill, redactor=self.redactor
+            )
+            if any(path_overlaps_scope(path, skill.applies_to_paths) for path in allowed_paths):
+                required.update(skill.required_command_ids)
+        return tuple(sorted(required))
+
     def check_apply(self, root: Path, files: dict[str, str]) -> FleetSpec:
         spec = self.validate_files(files)
         try:
             _assert_safe_target(root, files)
         except FleetError:
             raise
-        except (OSError, UnicodeError) as error:
-            raise _config_error("the target tree could not be inspected safely") from error
-        return spec
+        except (OSError, UnicodeError):
+            pass
+        else:
+            return spec
+        raise _config_error("the target tree could not be inspected safely")
 
     def stage(self, root: Path, files: dict[str, str]) -> FleetSpec:
         self.check_apply(root, files)
@@ -130,48 +205,28 @@ def load_fleet_snapshot(
             dir_fd=repository_fd,
         )
         _validate_directory_binding(repository_fd, lexical_fleet_root.name, fleet_fd)
-        _validate_logical_reference(lexical_path.name)
-        fleet_content = _read_bounded_logical_at(
-            fleet_fd,
-            lexical_path.name,
-            MAX_CONFIG_BYTES,
+        if lexical_path.name != "fleet.yaml":
+            raise _config_error("configuration entry point must be fleet.yaml")
+        pinned_fd = fleet_fd
+        spec, snapshot = _snapshot_from_reader(
+            lambda reference, limit: _read_bounded_logical_at(pinned_fd, reference, limit),
+            redactor=active_redactor,
         )
-        _reject_registered_secret(fleet_content, active_redactor)
-        spec = parse_fleet_spec(fleet_content, redactor=active_redactor)
-        contents: dict[str, bytes] = {lexical_path.name: fleet_content}
-        total_bytes = len(fleet_content)
-        for reference in sorted(set(_fleet_references(spec))):
-            _validate_logical_reference(reference)
-            content = _read_bounded_logical_at(fleet_fd, reference, MAX_CONFIG_BYTES)
-            _reject_registered_secret(content, active_redactor)
-            total_bytes += len(content)
-            if total_bytes > MAX_CONFIG_SNAPSHOT_BYTES:
-                raise _config_error(
-                    f"configuration snapshot exceeds {MAX_CONFIG_SNAPSHOT_BYTES} bytes"
-                )
-            contents[reference] = content
-        parse_verification_profile(
-            contents[spec.spec.project.verification], redactor=active_redactor
-        )
-        snapshot_files = [
-            ConfigSnapshotFile(
-                path=logical_path,
-                sha256=sha256_bytes(content),
-                content=content.decode("utf-8"),
-            )
-            for logical_path, content in sorted(contents.items())
-        ]
         _validate_directory_binding(repository_fd, lexical_fleet_root.name, fleet_fd)
     except FleetError:
         raise
-    except (OSError, UnicodeError, ValidationError, ValueError) as error:
-        raise _config_error(str(error)) from error
+    except (OSError, UnicodeError, ValidationError, ValueError):
+        failed = True
+    else:
+        failed = False
     finally:
         if fleet_fd is not None:
             os.close(fleet_fd)
         if repository_fd is not None:
             os.close(repository_fd)
-    return spec, ConfigSnapshot(files=snapshot_files)
+    if failed:
+        raise _config_error("the configuration tree could not be read safely")
+    return spec, snapshot
 
 
 def parse_fleet_spec(content: bytes, *, redactor: Redactor | None = None) -> FleetSpec:
@@ -486,13 +541,30 @@ def _project_architecture(profile: RepositoryProfile | None) -> str:
 
 
 def validate_fleet_files(files: dict[str, str], *, redactor: Redactor | None = None) -> FleetSpec:
+    return snapshot_from_fleet_files(files, redactor=redactor)[0]
+
+
+def snapshot_from_fleet_files(
+    files: dict[str, str], *, redactor: Redactor | None = None
+) -> tuple[FleetSpec, ConfigSnapshot]:
     active_redactor = redactor or Redactor()
+    if type(files) is not dict or len(files) > MAX_CONFIG_FILES:
+        raise _config_error("configuration files must be a bounded plain mapping")
+    if any(type(path) is not str or type(content) is not str for path, content in files.items()):
+        raise _config_error("configuration paths and contents must be UTF-8 strings")
+    if (
+        any(len(path) > 4096 or len(content) > MAX_CONFIG_BYTES for path, content in files.items())
+        or sum(len(content) for content in files.values()) > MAX_CONFIG_SNAPSHOT_BYTES
+    ):
+        raise _config_error("configuration files exceed their size bounds")
     _reject_registered_secret(files, active_redactor)
+    _validate_reference_set(list(files))
     encoded_files: dict[str, bytes] = {}
     total_bytes = 0
     for logical_path, content in files.items():
-        _validate_logical_reference(logical_path)
-        encoded = content.encode("utf-8")
+        if len(content) > MAX_CONFIG_BYTES:
+            raise _config_error(f"configuration file exceeds {MAX_CONFIG_BYTES} bytes")
+        encoded = _encode_utf8(content)
         if len(encoded) > MAX_CONFIG_BYTES:
             raise _config_error(
                 f"configuration file exceeds {MAX_CONFIG_BYTES} bytes: {logical_path}"
@@ -503,22 +575,130 @@ def validate_fleet_files(files: dict[str, str], *, redactor: Redactor | None = N
         encoded_files[logical_path] = encoded
     if "fleet.yaml" not in files:
         raise _config_error("fleet.yaml is required")
-    spec = parse_fleet_spec(encoded_files["fleet.yaml"], redactor=active_redactor)
-    for reference in _fleet_references(spec):
-        _validate_logical_reference(reference)
-        if reference not in files:
+
+    def read_content(reference: str, limit: int) -> bytes:
+        if reference not in encoded_files:
             raise _config_error(f"referenced file is missing: {reference}")
-    for agent in spec.spec.agents.values():
-        if len(encoded_files[agent.instructions]) > MAX_AGENT_GUIDANCE_BYTES:
-            raise _config_error(
-                f"agent guidance exceeds {MAX_AGENT_GUIDANCE_BYTES} bytes: {agent.instructions}"
+        content = encoded_files[reference]
+        if len(content) > limit:
+            raise _config_error("referenced configuration file exceeds its byte limit")
+        return content
+
+    return _snapshot_from_reader(read_content, redactor=active_redactor)
+
+
+def _snapshot_from_reader(
+    read_content: Callable[[str, int], bytes], *, redactor: Redactor
+) -> tuple[FleetSpec, ConfigSnapshot]:
+    contents: dict[str, bytes] = {}
+    total_bytes = 0
+
+    def read(reference: str, limit: int = MAX_CONFIG_BYTES) -> bytes:
+        nonlocal total_bytes
+        _reject_registered_secret(reference, redactor)
+        _validate_reference_set([*contents, reference])
+        if reference in contents:
+            content = contents[reference]
+            if len(content) > limit:
+                raise _config_error("referenced configuration exceeds its role-specific byte limit")
+            return content
+        if len(contents) >= MAX_CONFIG_FILES:
+            raise _config_error("configuration reference closure exceeds its file limit")
+        remaining = MAX_CONFIG_SNAPSHOT_BYTES - total_bytes
+        content = read_content(reference, min(limit, remaining))
+        if len(content) > min(limit, remaining):
+            raise _config_error("configuration reference closure exceeds its byte limit")
+        _reject_registered_secret(content, redactor)
+        _decode_utf8(content)
+        contents[reference] = content
+        total_bytes += len(content)
+        return content
+
+    spec = parse_fleet_spec(read("fleet.yaml"), redactor=redactor)
+    references = _fleet_references(spec)
+    _validate_reference_set(["fleet.yaml", *references])
+    guidance = {agent.instructions for agent in spec.spec.agents.values()}
+    for reference in sorted(set(references)):
+        read(reference, MAX_AGENT_GUIDANCE_BYTES if reference in guidance else MAX_CONFIG_BYTES)
+    profile = parse_verification_profile(read(spec.spec.project.verification), redactor=redactor)
+    skill_names: dict[str, str] = {}
+    for workflow_id, request in sorted(spec.spec.workflows.items()):
+        definition = _parse(read(request.definition), WorkflowDefinition, redactor=redactor)
+        if (
+            definition.metadata.name != workflow_id
+            or PurePosixPath(request.definition).stem != workflow_id
+        ):
+            raise _config_error("workflow metadata, declaration and reference names must agree")
+        if definition.limits.max_repair_iterations != request.max_repair_iterations:
+            raise _config_error("workflow repair limits must match the FleetSpec ceiling")
+        for reference in definition.verification_skills:
+            skill = _parse(read(reference), VerificationSkill, redactor=redactor)
+            if skill.metadata.name != PurePosixPath(reference).stem:
+                raise _config_error("verification skill metadata and reference names must agree")
+            folded_name = skill.metadata.name.casefold()
+            if folded_name in skill_names and skill_names[folded_name] != reference:
+                raise _config_error("verification skill names must be unique")
+            skill_names[folded_name] = reference
+            if set(skill.required_command_ids) - set(profile.commands):
+                raise _config_error("verification skill requires an undeclared command ID")
+    return spec, ConfigSnapshot(
+        files=[
+            ConfigSnapshotFile(
+                path=path, content=_decode_utf8(content), sha256=sha256_bytes(content)
             )
-    verification = spec.spec.project.verification
-    parse_verification_profile(encoded_files[verification], redactor=active_redactor)
-    return spec
+            for path, content in sorted(contents.items())
+        ]
+    )
 
 
-def _parse[ConfigType: (FleetSpec, VerificationProfile)](
+def _validate_reference_set(references: list[str]) -> None:
+    spellings: dict[tuple[str, ...], tuple[str, ...]] = {}
+    leaves: set[tuple[str, ...]] = set()
+    for reference in references:
+        _validate_logical_reference(reference)
+        parts = PurePosixPath(reference).parts
+        folded = tuple(part.casefold() for part in parts)
+        for index in range(1, len(parts) + 1):
+            prefix = folded[:index]
+            actual = parts[:index]
+            if prefix in spellings and spellings[prefix] != actual:
+                raise _config_error("configuration references contain a case-aliased path")
+            spellings[prefix] = actual
+        leaves.add(folded)
+    if any(path[:index] in leaves for path in leaves for index in range(1, len(path))):
+        raise _config_error("configuration references contain a file/directory ancestry conflict")
+
+
+def _encode_utf8(content: str) -> bytes:
+    try:
+        return content.encode("utf-8")
+    except UnicodeError:
+        pass
+    raise _config_error("configuration content must be valid UTF-8")
+
+
+def _decode_utf8(content: bytes) -> str:
+    try:
+        return content.decode("utf-8")
+    except UnicodeError:
+        pass
+    raise _config_error("configuration content must be valid UTF-8")
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    def construct_mapping(self, node: yaml.nodes.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        if not isinstance(node, yaml.nodes.MappingNode):
+            raise yaml.YAMLError("expected a mapping")
+        result: dict[Any, Any] = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if not isinstance(key, str) or key in result:
+                raise yaml.YAMLError("YAML mapping keys must be unique strings")
+            result[key] = self.construct_object(value_node, deep=deep)
+        return result
+
+
+def _parse[ConfigType: (FleetSpec, VerificationProfile, WorkflowDefinition, VerificationSkill)](
     content: bytes,
     model: type[ConfigType],
     *,
@@ -526,20 +706,51 @@ def _parse[ConfigType: (FleetSpec, VerificationProfile)](
 ) -> ConfigType:
     if len(content) > MAX_CONFIG_BYTES:
         raise _config_error(f"configuration exceeds {MAX_CONFIG_BYTES} bytes")
-    _reject_registered_secret(content, redactor or Redactor())
+    active_redactor = redactor or Redactor()
+    _reject_registered_secret(content, active_redactor)
+    text = _decode_utf8(content)
+    parse_failed = False
     try:
-        text = content.decode("utf-8")
-        for token in yaml.scan(text):
+        depth = 0
+        for count, token in enumerate(yaml.scan(text), start=1):
             if isinstance(token, (AliasToken, AnchorToken)):
                 raise _config_error("YAML anchors and aliases are not supported")
-        value = yaml.safe_load(text)
-        if not isinstance(value, dict):
-            raise _config_error("configuration root must be a mapping")
-        return model.model_validate(value)
+            if isinstance(
+                token,
+                (
+                    BlockMappingStartToken,
+                    BlockSequenceStartToken,
+                    FlowMappingStartToken,
+                    FlowSequenceStartToken,
+                ),
+            ):
+                depth += 1
+            elif isinstance(token, (BlockEndToken, FlowMappingEndToken, FlowSequenceEndToken)):
+                depth -= 1
+            if depth > 64 or count > 10_000:
+                raise _config_error("YAML exceeds its nesting or token limit")
+        value = yaml.load(text, Loader=_UniqueKeyLoader)
     except FleetError:
         raise
-    except (RecursionError, UnicodeError, yaml.YAMLError, ValidationError) as error:
-        raise _config_error(str(error)) from error
+    except (RecursionError, UnicodeError, yaml.YAMLError):
+        parse_failed = True
+    if parse_failed:
+        raise _config_error("YAML must be bounded, well-formed and have unique string keys")
+    if not isinstance(value, dict):
+        raise _config_error("configuration root must be a mapping")
+    _reject_registered_secret(value, active_redactor)
+    try:
+        return model.model_validate(value)
+    except ValidationError as error:
+        details = "; ".join(
+            f"{item['type']}: {item['msg'][:240]}"
+            for item in error.errors(include_input=False, include_context=False, include_url=False)[
+                :8
+            ]
+        )
+    except (RecursionError, UnicodeError, ValueError):
+        details = "configuration values violate the supported schema"
+    raise _config_error(details)
 
 
 def _reject_registered_secret(value: object, redactor: Redactor) -> None:
@@ -574,9 +785,14 @@ def _validate_logical_reference(reference: str) -> None:
         or path.is_absolute()
         or ".." in path.parts
         or "\\" in reference
+        or len(reference.encode("utf-8", errors="surrogatepass")) > 4096
+        or len(path.parts) > 64
+        or any(part.casefold() in {".git", ".fleet"} for part in path.parts)
+        or any(character in ":*?[]{}" for character in reference)
         or any(ord(character) < 32 or ord(character) == 127 for character in reference)
+        or any(0xD800 <= ord(character) <= 0xDFFF for character in reference)
     ):
-        raise _config_error(f"invalid .fleet reference: {reference!r}")
+        raise _config_error("invalid canonical .fleet reference")
 
 
 def _config_error(detail: str) -> FleetError:
@@ -642,6 +858,7 @@ def _write_tree(root: Path, files: dict[str, str], *, allow_existing_same: bool)
     created_directories: list[tuple[int, str, int, int]] = []
     root_parent_fd: int | None = None
     root_fd: int | None = None
+    failure: FleetError | None = None
     try:
         root.parent.mkdir(parents=True, exist_ok=True)
         root_parent_fd = _open_directory(root.parent)
@@ -742,18 +959,22 @@ def _write_tree(root: Path, files: dict[str, str], *, allow_existing_same: bool)
                     os.close(descriptor)
 
         _validate_directory_binding(root_parent_fd, root.name, root_fd)
-    except FleetError:
-        _rollback_created_tree(created_files, created_directories)
-        raise
-    except (OSError, UnicodeError, ValueError) as error:
-        _rollback_created_tree(created_files, created_directories)
-        raise _config_error("the configuration tree could not be written atomically") from error
+    except FleetError as error:
+        failure = error
+    except (OSError, UnicodeError, ValueError):
+        failure = _config_error("the configuration tree could not be written atomically")
     finally:
-        _close_tracked_descriptors(created_files, created_directories)
-        if root_fd is not None:
-            os.close(root_fd)
-        if root_parent_fd is not None:
-            os.close(root_parent_fd)
+        try:
+            if failure is not None:
+                _rollback_created_tree(created_files, created_directories)
+        finally:
+            _close_tracked_descriptors(created_files, created_directories)
+            if root_fd is not None:
+                os.close(root_fd)
+            if root_parent_fd is not None:
+                os.close(root_parent_fd)
+    if failure is not None:
+        raise failure
 
 
 def _directory_open_flags() -> int:
@@ -800,7 +1021,7 @@ def _read_bounded_regular_at(parent_fd: int, name: str, limit: int) -> bytes:
     before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     if stat.S_ISLNK(before.st_mode):
         raise _unsafe_config_path(f"configuration reference uses a symlink: {name!r}")
-    if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+    if not stat.S_ISREG(before.st_mode) or before.st_size > limit or before.st_nlink != 1:
         raise _config_error(f"configuration path is not a bounded regular file: {name}")
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     flags |= _required_config_open_flag("O_NOFOLLOW")
@@ -810,6 +1031,7 @@ def _read_bounded_regular_at(parent_fd: int, name: str, limit: int) -> bytes:
         opened = os.fstat(descriptor)
         if (
             not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
             or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
             or opened.st_size > limit
         ):
@@ -830,6 +1052,7 @@ def _read_bounded_regular_at(parent_fd: int, name: str, limit: int) -> bytes:
         raise _config_error(f"configuration exceeds {limit} bytes")
     if (
         after.st_size != opened.st_size
+        or after.st_nlink != 1
         or after.st_mtime_ns != opened.st_mtime_ns
         or after.st_ctime_ns != opened.st_ctime_ns
         or len(content) != after.st_size

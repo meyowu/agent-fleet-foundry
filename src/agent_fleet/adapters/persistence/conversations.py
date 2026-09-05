@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 from pydantic import JsonValue, ValidationError
 
@@ -43,6 +43,9 @@ from agent_fleet.domain.security import Redactor, canonical_json_hash
 from agent_fleet.domain.workflow import is_terminal
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
+
+if TYPE_CHECKING:
+    from agent_fleet.domain.evolution import OrganizationAdmission
 
 _Model = TypeVar("_Model", bound=StrictModel)
 _ACTIVE = {
@@ -884,6 +887,7 @@ class SqliteConversationStore:
         *,
         config_snapshot_sha256: str,
         budget_limits: RunBudgetLimits,
+        organization_admission: OrganizationAdmission | None = None,
     ) -> ConversationRegistration:
         submission = self._validated(ConversationSubmission, submission)
         run = self._validated(Run, run)
@@ -987,6 +991,7 @@ class SqliteConversationStore:
             self.state._insert_run_in_transaction(
                 connection,
                 run,
+                organization_admission=organization_admission,
                 created_payload={
                     "conversation_id": binding.conversation_id,
                     "conversation_turn_id": binding.turn_id,

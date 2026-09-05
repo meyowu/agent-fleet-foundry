@@ -1325,6 +1325,6 @@ def test_migration_six_is_atomic_and_preserves_existing_version_five_runs(
             is None
         )
     assert h.state.get_run(original.run_id) == original
-    assert h.state.migrate() == 7
+    assert h.state.migrate() == 8
     assert h.state.get_run(original.run_id) == original
     assert h.initialize() == h.reopen().get(original.run_id)

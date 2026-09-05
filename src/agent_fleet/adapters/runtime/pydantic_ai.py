@@ -48,10 +48,12 @@ from pydantic_ai.usage import RunUsage
 from pydantic_core import to_jsonable_python
 
 from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.fleet_patch import validate_fleet_patch
 from agent_fleet.domain.models import (
     AgentInvocation,
     AgentInvocationResult,
     AgentRole,
+    FleetPatch,
     ImplementationReport,
     RuntimeCapability,
     RuntimeConfiguration,
@@ -562,6 +564,9 @@ class PydanticAIRuntimeAdapter:
                 details={"role": str(request.role)},
             )
         output_model, output_tool_name, prompt_name = output_contract
+        fleet_patch_enabled = request.role == AgentRole.COS and isinstance(
+            request.input.get("organization_context"), dict
+        )
         definitions = _validated_definitions(tools, output_tool_name)
         instructions = _load_prompt(prompt_name)
         self._reject_model_visible_secret(
@@ -577,6 +582,9 @@ class PydanticAIRuntimeAdapter:
             ToolOutput(output_model, name=output_tool_name),
             DeferredToolRequests,
         ]
+        if fleet_patch_enabled:
+            self._reject_model_visible_secret(FleetPatch.model_json_schema())
+            output_spec.insert(1, ToolOutput(FleetPatch, name="submit_fleet_patch"))
         agent = Agent(
             _SecretBoundaryModel(model, self._redactor, accounting),
             output_type=cast(Any, output_spec),
@@ -646,7 +654,11 @@ class PydanticAIRuntimeAdapter:
             self._reject_model_visible_secret(result.new_messages_json())
             output = result.output
             if not isinstance(output, DeferredToolRequests):
-                validated = self._validated_output(output, output_model)
+                validated = (
+                    self._validated_output(output, FleetPatch)
+                    if fleet_patch_enabled and isinstance(output, FleetPatch)
+                    else self._validated_output(output, output_model)
+                )
                 if isinstance(validated, SpecialistReport) and validated.role != request.role:
                     raise _runtime_error(
                         ErrorCode.RUNTIME_OUTPUT_INVALID,
@@ -774,15 +786,22 @@ class PydanticAIRuntimeAdapter:
         self,
         output: object,
         output_model: type[ScopeDecision]
+        | type[FleetPatch]
         | type[ImplementationReport]
         | type[VerifierVerdict]
         | type[SpecialistReport],
-    ) -> ScopeDecision | ImplementationReport | VerifierVerdict | SpecialistReport:
+    ) -> ScopeDecision | FleetPatch | ImplementationReport | VerifierVerdict | SpecialistReport:
         if not isinstance(output, output_model):
             raise _runtime_error(
                 ErrorCode.RUNTIME_OUTPUT_INVALID,
                 "The model returned an unexpected output contract.",
                 "Retry with a model that supports strict tool output.",
+            )
+        if isinstance(output, FleetPatch):
+            validate_fleet_patch(
+                output,
+                current_fleet_spec_sha256=output.base_fleet_spec_sha256,
+                redactor=self._redactor,
             )
         dumped = output.model_dump(mode="json")
         if self._redactor.contains_secret_data(dumped):
@@ -992,7 +1011,7 @@ def _validated_definitions(
 ) -> tuple[RuntimeToolDefinition, ...]:
     definitions = tools.definitions
     names = [definition.name for definition in definitions]
-    if len(names) != len(set(names)) or output_tool_name in names:
+    if len(names) != len(set(names)) or output_tool_name in names or "submit_fleet_patch" in names:
         raise _runtime_error(
             ErrorCode.INTERNAL_ERROR,
             "The trusted runtime tool catalog contains conflicting tool names.",

@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "device": {
+      "minimum": 0,
+      "title": "Device",
+      "type": "integer"
+    },
+    "inode": {
+      "exclusiveMinimum": 0,
+      "title": "Inode",
+      "type": "integer"
+    },
+    "mode": {
+      "maximum": 4095,
+      "minimum": 0,
+      "title": "Mode",
+      "type": "integer"
+    },
+    "uid": {
+      "minimum": 0,
+      "title": "Uid",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "device",
+    "inode",
+    "uid",
+    "mode"
+  ],
+  "title": "DirectoryIdentity",
+  "type": "object"
+}

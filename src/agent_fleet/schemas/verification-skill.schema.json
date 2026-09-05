@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "agentfleet.dev/v1alpha1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "appliesToPaths": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^[^/\\\\\\x00][^\\\\\\x00]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Appliestopaths",
+      "type": "array"
+    },
+    "kind": {
+      "const": "VerificationSkill",
+      "title": "Kind",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "requiredCommandIds": {
+      "items": {
+        "maxLength": 100,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_.-]*$",
+        "type": "string"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Requiredcommandids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "appliesToPaths",
+    "requiredCommandIds"
+  ],
+  "title": "VerificationSkill",
+  "type": "object"
+}

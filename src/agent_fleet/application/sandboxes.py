@@ -69,7 +69,8 @@ class SandboxRegistry:
             raise FleetError(
                 ErrorCode.SANDBOX_CAPABILITY_MISSING,
                 "The selected sandbox does not support the configured network mode.",
-                "Select a supported network mode and reinitialize the project.",
+                "Use the reviewed supported network mode. A different protected setup "
+                "requires a separate registration with the existing project/state preserved.",
                 details={
                     "sandbox": configuration.provider,
                     "network_mode": configuration.network_mode,

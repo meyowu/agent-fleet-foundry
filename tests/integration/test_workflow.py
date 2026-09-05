@@ -591,6 +591,7 @@ async def test_apply_rechecks_exact_configuration_snapshot(harness: FleetHarness
         harness.container.patches.apply(run.run_id)
 
     assert captured.value.code is ErrorCode.PATCH_TARGET_DIVERGED
+    assert harness.container.state.get_run(run.run_id) == run
     assert (harness.repository_root / "src/canary_calc/core.py").read_text() == BROKEN_CANARY
 
 

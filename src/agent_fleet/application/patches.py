@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from pathlib import Path
 
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.evolution import OrganizationService
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import ApplyResult, Run, RunStatus, WorkflowStage
 from agent_fleet.ports.clock import Clock
@@ -25,6 +27,7 @@ class PatchService:
         secrets: SecretStore,
         clock: Clock,
         graphs: GraphStore,
+        organization: OrganizationService,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
@@ -33,6 +36,7 @@ class PatchService:
         self.secrets = secrets
         self.clock = clock
         self.graphs = graphs
+        self.organization = organization
 
     def show(self, run_id: str) -> str:
         run = self.state.get_run(run_id)
@@ -66,6 +70,27 @@ class PatchService:
                 f"Run {run_id} is not ready for explicit patch application.",
                 "Wait for READY_FOR_REVIEW and inspect the patch first.",
             )
+        with ExitStack() as guards:
+            organization_changed = False
+            try:
+                guards.enter_context(self.organization.run_guard(run))
+            except FleetError as error:
+                if error.code is not ErrorCode.CONFIG_INVALID:
+                    raise
+                organization_changed = True
+            if organization_changed:
+                # Preserve the public code-apply conflict contract. Translate
+                # entry only, never an error from the actual apply operation.
+                raise FleetError(
+                    ErrorCode.PATCH_TARGET_DIVERGED,
+                    "The organization changed after the candidate was created.",
+                    "Preserve current work, inspect organization history and pending operations, "
+                    "then start a run bound to the current version; nothing was applied.",
+                )
+            return self._apply_admitted(run)
+
+    def _apply_admitted(self, run: Run) -> tuple[Run, ApplyResult]:
+        assert run.patch_artifact_id is not None
         project = self.state.get_project(run.project_id)
         self._register_available_provider_secrets(
             project.credential_ref,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from agent_fleet.domain.budgets import RunBudgetLimits
 from agent_fleet.domain.conversation import (
@@ -16,6 +16,9 @@ from agent_fleet.domain.conversation import (
     ConversationTurn,
 )
 from agent_fleet.domain.models import Run
+
+if TYPE_CHECKING:
+    from agent_fleet.domain.evolution import OrganizationAdmission
 
 
 class ConversationStore(Protocol):
@@ -49,6 +52,7 @@ class ConversationStore(Protocol):
         *,
         config_snapshot_sha256: str,
         budget_limits: RunBudgetLimits,
+        organization_admission: OrganizationAdmission | None = None,
     ) -> ConversationRegistration: ...
 
     def assert_claim(self, claim: ConversationClaim) -> ConversationTurn: ...

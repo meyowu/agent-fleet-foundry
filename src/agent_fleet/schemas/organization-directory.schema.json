@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "OrganizationXattr": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "const": "com.apple.provenance",
+          "title": "Name",
+          "type": "string"
+        },
+        "value_base64": {
+          "maxLength": 5464,
+          "title": "Value Base64",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value_base64"
+      ],
+      "title": "OrganizationXattr",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "enum": [
+        448,
+        493
+      ],
+      "title": "Mode",
+      "type": "integer"
+    },
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "xattrs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/OrganizationXattr"
+      },
+      "maxItems": 1,
+      "title": "Xattrs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "path",
+    "mode"
+  ],
+  "title": "OrganizationDirectory",
+  "type": "object"
+}

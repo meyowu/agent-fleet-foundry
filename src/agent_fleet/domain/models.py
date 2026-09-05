@@ -23,7 +23,7 @@ from pydantic import (
     model_validator,
 )
 
-from agent_fleet.domain.security import canonical_json_hash
+from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 
 OpaqueId = Annotated[str, StringConstraints(pattern=r"^[a-z]+_[0-9a-f]{32}$")]
 ProjectId = Annotated[str, StringConstraints(pattern=r"^prj_[0-9a-f]{32}$")]
@@ -42,6 +42,18 @@ ExecutionId = Annotated[str, StringConstraints(pattern=r"^exec_[0-9a-f]{32}$")]
 WorkspaceId = Annotated[str, StringConstraints(pattern=r"^ws_[0-9a-f]{32}$")]
 FleetPlanId = Annotated[str, StringConstraints(pattern=r"^plan_[0-9a-f]{32}$")]
 FleetPatchId = Annotated[str, StringConstraints(pattern=r"^fpatch_[0-9a-f]{32}$")]
+FleetPatchPath = Annotated[
+    str,
+    StringConstraints(
+        min_length=8,
+        max_length=4096,
+        pattern=r"^\.fleet/[^/\\\x00][^\\\x00]*$",
+    ),
+]
+FleetPatchContent = Annotated[str, StringConstraints(max_length=1_000_000)]
+FleetPatchRationale = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4096)
+]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 ImageIdentity = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 RoleId = Annotated[
@@ -156,6 +168,75 @@ class StrictModel(BaseModel):
 
 class FrozenStrictModel(StrictModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class FleetPatchOperation(StrEnum):
+    ADD = "add"
+    REPLACE = "replace"
+    REMOVE = "remove"
+
+
+class FleetPatchFileChange(StrictModel):
+    operation: FleetPatchOperation
+    path: FleetPatchPath
+    before_sha256: Sha256 | None = None
+    after_sha256: Sha256 | None = None
+    content: FleetPatchContent | None = None
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if (
+            not value
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+            or value.startswith("/")
+            or "\\" in value
+            or not path.parts
+            or ".." in path.parts
+            or path.parts[0] != ".fleet"
+            or path.as_posix() != value
+        ):
+            raise ValueError(
+                "FleetPatch paths must be canonical repository-relative paths beneath .fleet/"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_operation_content(self) -> FleetPatchFileChange:
+        if self.operation is FleetPatchOperation.ADD:
+            if self.before_sha256 is not None:
+                raise ValueError("add changes cannot declare a prior content hash")
+            self._require_content_hash()
+        elif self.operation is FleetPatchOperation.REPLACE:
+            if self.before_sha256 is None:
+                raise ValueError("replace changes require a prior content hash")
+            self._require_content_hash()
+        elif (
+            self.before_sha256 is None or self.after_sha256 is not None or self.content is not None
+        ):
+            raise ValueError(
+                "remove changes require a prior hash and cannot contain an after hash or content"
+            )
+        return self
+
+    def _require_content_hash(self) -> None:
+        if self.content is None or self.after_sha256 is None:
+            raise ValueError("add/replace changes require content and its SHA-256 hash")
+        actual = sha256_bytes(self.content.encode("utf-8"))
+        if self.after_sha256 != actual:
+            raise ValueError("FleetPatch after hash does not match its UTF-8 content")
+
+
+class FleetPatch(StrictModel):
+    api_version: Literal["agentfleet.dev/v1alpha1"] = "agentfleet.dev/v1alpha1"
+    kind: Literal["FleetPatch"] = "FleetPatch"
+    fleet_patch_id: FleetPatchId
+    project_id: ProjectId
+    base_fleet_spec_sha256: Sha256
+    changes: list[FleetPatchFileChange] = Field(min_length=1, max_length=128)
+    rationale: FleetPatchRationale
+    rollback_of: FleetPatchId | None = None
 
 
 def _require_utc(value: datetime) -> datetime:
@@ -328,6 +409,8 @@ class Verdict(StrEnum):
 
 class ArtifactKind(StrEnum):
     FLEET_CONFIG_PROPOSAL = "fleet_config_proposal"
+    FLEET_PATCH = "fleet_patch"
+    FLEET_PATCH_DIFF = "fleet_patch_diff"
     CONFIG_SNAPSHOT = "config_snapshot"
     TASK_SPEC = "task_spec"
     IMPLEMENTATION_REPORT = "implementation_report"
@@ -1543,7 +1626,9 @@ class AgentInvocation(StrictModel):
         return value
 
 
-type RuntimeOutput = ScopeDecision | ImplementationReport | VerifierVerdict | SpecialistReport
+type RuntimeOutput = (
+    ScopeDecision | FleetPatch | ImplementationReport | VerifierVerdict | SpecialistReport
+)
 
 
 class AgentInvocationResult(StrictModel):

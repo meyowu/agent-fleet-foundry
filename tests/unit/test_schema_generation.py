@@ -182,3 +182,38 @@ def test_conversation_public_schemas_keep_context_and_ownership_bounded() -> Non
     assert claim["generation"]["minimum"] == 1
     # UTF-8 byte totals, UTC-only offsets and cross-record identity are runtime
     # validators; JSON Schema's representable bounds do not replace those checks.
+
+
+def test_organization_evolution_schemas_are_exact_bounded_and_non_authorizing() -> None:
+    expected = {
+        "workflow-definition.schema.json",
+        "verification-skill.schema.json",
+        "organization-xattr.schema.json",
+        "organization-file.schema.json",
+        "organization-directory.schema.json",
+        "organization-tree.schema.json",
+        "directory-identity.schema.json",
+        "prepared-publication.schema.json",
+        "publication-observation.schema.json",
+        "organization-admission.schema.json",
+        "organization-head.schema.json",
+        "organization-version.schema.json",
+        "fleet-patch-semantic-change.schema.json",
+        "fleet-patch-proposal-record.schema.json",
+        "organization-operation.schema.json",
+        "organization-publication-result.schema.json",
+        "organization-repository-boundary.schema.json",
+    }
+    assert expected <= SCHEMAS.keys()
+    for name in expected:
+        assert SCHEMAS[name].model_json_schema()["additionalProperties"] is False
+    tree = SCHEMAS["organization-tree.schema.json"].model_json_schema()["properties"]
+    assert tree["files"]["maxItems"] == 256 and tree["directories"]["maxItems"] == 256
+    admission = SCHEMAS["organization-admission.schema.json"].model_json_schema()["properties"]
+    assert admission["revision"]["minimum"] == 0
+    operation = SCHEMAS["organization-operation.schema.json"].model_json_schema()["properties"]
+    assert operation["authorization"]["enum"] == ["apply", "rollback"]
+    assert "repository_before" in operation
+    skill = SCHEMAS["verification-skill.schema.json"].model_json_schema()["properties"]
+    assert set(skill) == {"apiVersion", "kind", "metadata", "appliesToPaths", "requiredCommandIds"}
+    assert skill["requiredCommandIds"]["maxItems"] == 128

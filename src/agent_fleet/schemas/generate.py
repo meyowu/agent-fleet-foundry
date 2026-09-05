@@ -16,7 +16,13 @@ from agent_fleet.domain.budgets import (
     RunBudgetSnapshot,
     RuntimeAttempt,
 )
-from agent_fleet.domain.config import ConfigSnapshot, FleetSpec, VerificationProfile
+from agent_fleet.domain.config import (
+    ConfigSnapshot,
+    FleetSpec,
+    VerificationProfile,
+    VerificationSkill,
+    WorkflowDefinition,
+)
 from agent_fleet.domain.conversation import (
     Conversation,
     ConversationArtifactRef,
@@ -34,6 +40,15 @@ from agent_fleet.domain.evidence import (
     EvidenceBundle,
     GraphDeliveryEvidence,
     ResourceCleanupReceipt,
+)
+from agent_fleet.domain.evolution import (
+    FleetPatchProposalRecord,
+    FleetPatchSemanticChange,
+    OrganizationAdmission,
+    OrganizationHead,
+    OrganizationOperation,
+    OrganizationPublicationResult,
+    OrganizationVersion,
 )
 from agent_fleet.domain.fleet_patch import FleetPatch
 from agent_fleet.domain.fleet_plan import FleetPlan
@@ -75,6 +90,16 @@ from agent_fleet.domain.models import (
     VerifierVerdict,
     WriterAssignment,
 )
+from agent_fleet.domain.organization_tree import (
+    DirectoryIdentity,
+    OrganizationDirectory,
+    OrganizationFile,
+    OrganizationTree,
+    OrganizationXattr,
+    PreparedPublication,
+    PublicationObservation,
+)
+from agent_fleet.domain.repository_boundary import OrganizationRepositoryBoundary
 from agent_fleet.domain.repository_profile import ProjectKnowledge, RepositoryProfile
 from agent_fleet.domain.trust import (
     ExactPermissionScope,
@@ -149,6 +174,23 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "resource-cleanup-receipt.schema.json": ResourceCleanupReceipt,
     "bootstrap-report.schema.json": BootstrapReport,
     "fleet-patch.schema.json": FleetPatch,
+    "workflow-definition.schema.json": WorkflowDefinition,
+    "verification-skill.schema.json": VerificationSkill,
+    "organization-xattr.schema.json": OrganizationXattr,
+    "organization-file.schema.json": OrganizationFile,
+    "organization-directory.schema.json": OrganizationDirectory,
+    "organization-tree.schema.json": OrganizationTree,
+    "directory-identity.schema.json": DirectoryIdentity,
+    "prepared-publication.schema.json": PreparedPublication,
+    "publication-observation.schema.json": PublicationObservation,
+    "organization-admission.schema.json": OrganizationAdmission,
+    "organization-head.schema.json": OrganizationHead,
+    "organization-version.schema.json": OrganizationVersion,
+    "fleet-patch-semantic-change.schema.json": FleetPatchSemanticChange,
+    "fleet-patch-proposal-record.schema.json": FleetPatchProposalRecord,
+    "organization-operation.schema.json": OrganizationOperation,
+    "organization-publication-result.schema.json": OrganizationPublicationResult,
+    "organization-repository-boundary.schema.json": OrganizationRepositoryBoundary,
 }
 
 

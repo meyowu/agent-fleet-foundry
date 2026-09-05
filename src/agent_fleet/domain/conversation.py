@@ -72,6 +72,8 @@ class ConversationArtifactRef(_ConversationModel):
             ArtifactKind.RUN_SUMMARY,
             ArtifactKind.EVIDENCE_BUNDLE,
             ArtifactKind.PATCH,
+            ArtifactKind.FLEET_PATCH,
+            ArtifactKind.FLEET_PATCH_DIFF,
             ArtifactKind.RESOURCE_CLEANUP,
             ArtifactKind.RUNTIME_USAGE,
         }:

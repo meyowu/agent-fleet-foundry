@@ -19,7 +19,7 @@ The trusted control plane owns request/tool/provider-reported-token/time limits 
 
 The Phase 2 worker remains `FakeSandboxProvider`. A real model response can improve orchestration realism, but it cannot upgrade simulated command evidence or set `verified_complete=true`.
 
-Phase 2 init is not an in-place configuration merge. If a runtime/provider change would alter an existing generated `.fleet/` tree, initialization fails before Project/artifact state or repository mutation. The user reviews the preview, moves the complete conflicting tree aside, and explicitly initializes again. A credential-reference-only update may proceed because that reference is Fleet-owned state and is absent from `.fleet/`.
+Phase 2 init is not an in-place configuration merge. If a runtime/provider change would alter an existing generated `.fleet/` tree, initialization fails before Project/artifact state or repository mutation. The original pre-admission behavior permits an identical tree or reference-only state update. **Superseded after organization admission by ADR 0006:** all headed reinitialization is rejected, even after `.fleet/` is moved aside. Preserve the old project/state and create a separate registration for a different protected setup; supported organization changes use reviewed FleetPatch. A key's value may rotate behind the same recorded reference.
 
 ## Consequences
 

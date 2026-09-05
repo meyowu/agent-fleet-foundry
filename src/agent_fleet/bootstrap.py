@@ -11,11 +11,13 @@ from pathlib import Path
 from platformdirs import user_data_path
 
 from agent_fleet.adapters.artifacts.local import LocalArtifactStore
+from agent_fleet.adapters.config.publication import NativeOrganizationFileSystem
 from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
 from agent_fleet.adapters.diagnostics.system import LocalSystemDiagnostics
 from agent_fleet.adapters.executable_resolution import resolve_fixed_executable
 from agent_fleet.adapters.filesystem.workspace import BoundedWorkspaceFileSystem
 from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
+from agent_fleet.adapters.persistence.evolution import SqliteOrganizationStore
 from agent_fleet.adapters.persistence.graphs import SqliteGraphStore
 from agent_fleet.adapters.persistence.runtime_budgets import SqliteRuntimeBudgetStore
 from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
@@ -36,6 +38,7 @@ from agent_fleet.application.bootstrap import BootstrapService
 from agent_fleet.application.conversations import ConversationService
 from agent_fleet.application.doctor import DoctorService
 from agent_fleet.application.evidence import EvidenceAssembler
+from agent_fleet.application.evolution import OrganizationService
 from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.inspection import InspectionService
 from agent_fleet.application.patches import PatchService
@@ -68,6 +71,7 @@ class ApplicationContainer:
     graphs: SqliteGraphStore
     conversation_store: SqliteConversationStore
     conversations: ConversationService
+    organization: OrganizationService
     artifacts: ArtifactService
     projects: ProjectService
     bootstrap: BootstrapService
@@ -240,7 +244,22 @@ def build_container(
     )
     permission_broker = PolicyPermissionBroker(permissions)
     planner = FleetPlanner(clock, ids)
-    evidence = EvidenceAssembler(state, artifacts, clock, graphs)
+    evidence = EvidenceAssembler(state, artifacts, clock, config, graphs)
+    organization_store = SqliteOrganizationStore(
+        root / "state.db", clock, ids, active_redactor, state, config
+    )
+    organization = OrganizationService(
+        state,
+        organization_store,
+        NativeOrganizationFileSystem(active_redactor),
+        config,
+        repository,
+        artifacts,
+        clock,
+        ids,
+        active_redactor,
+        secrets,
+    )
     gateway = ToolGateway(
         state,
         artifacts,
@@ -268,6 +287,7 @@ def build_container(
         active_redactor,
         budgets=budgets,
         graphs=graphs,
+        organization=organization,
         permission_policy=permissions,
         conversations=conversation_store,
     )
@@ -284,6 +304,7 @@ def build_container(
         sandbox.capabilities,
         runtimes,
         sandboxes=sandboxes,
+        organization=organization,
     )
     bootstrap_service = BootstrapService(
         state_root=root,
@@ -326,13 +347,16 @@ def build_container(
         graphs=graphs,
         conversation_store=conversation_store,
         conversations=conversations,
+        organization=organization,
         artifacts=artifacts,
         projects=projects,
         bootstrap=bootstrap_service,
         workflow=workflow,
         approvals=approvals,
         permissions=permissions,
-        patches=PatchService(state, artifacts, repository, config, secrets, clock, graphs),
+        patches=PatchService(
+            state, artifacts, repository, config, secrets, clock, graphs, organization
+        ),
         inspection=inspection,
         cancellation=cancellation,
         recovery=RecoveryService(state, resources, graphs, conversations=conversation_store),

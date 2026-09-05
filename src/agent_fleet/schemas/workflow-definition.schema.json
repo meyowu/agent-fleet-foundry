@@ -1,0 +1,82 @@
+{
+  "$defs": {
+    "Metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    },
+    "WorkflowDefinitionLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "maxRepairIterations": {
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Maxrepairiterations",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "maxRepairIterations"
+      ],
+      "title": "WorkflowDefinitionLimits",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "agentfleet.dev/v1alpha1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Workflow",
+      "title": "Kind",
+      "type": "string"
+    },
+    "limits": {
+      "$ref": "#/$defs/WorkflowDefinitionLimits"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "stages": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 8,
+      "title": "Stages",
+      "type": "array"
+    },
+    "verificationSkills": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Verificationskills",
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "stages",
+    "limits"
+  ],
+  "title": "WorkflowDefinition",
+  "type": "object"
+}

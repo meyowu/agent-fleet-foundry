@@ -1,6 +1,6 @@
 # ADR 0004: Keep adaptive node authority in exact internal child runs
 
-- Status: Accepted implementation and complete Phase 5 acceptance on 2026-09-05; graph checkpoint committed/pushed as `7a70b1a940209487deac5585583ba1f9924be8d9` (tree `bf75f1d681e36b30954235214ed641202945b060`), remote main remains `c700de1`; metadata is 5, final README archive read-back passed five tests in 1.70s, chat checkpoint pending
+- Status: Accepted implementation and complete Phase 5 acceptance on 2026-09-05; graph checkpoint committed/pushed as `7a70b1a940209487deac5585583ba1f9924be8d9` (tree `bf75f1d681e36b30954235214ed641202945b060`), complete chat checkpoint committed/pushed as `a46b688`; remote main remains `c700de1`. Metadata is 5 and the final Phase 5 README archive read-back passed five tests in 1.70s.
 - Date: 2026-09-05
 
 ## Context

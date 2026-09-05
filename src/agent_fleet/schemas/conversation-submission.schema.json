@@ -3,6 +3,8 @@
     "ArtifactKind": {
       "enum": [
         "fleet_config_proposal",
+        "fleet_patch",
+        "fleet_patch_diff",
         "config_snapshot",
         "task_spec",
         "implementation_report",

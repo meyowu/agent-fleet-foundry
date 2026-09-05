@@ -38,7 +38,7 @@ _HELP = (
     "/approve <request-id> --once|--run|--always --scope project\n"
     "/deny <request-id> [--reason <text>]  /help  /exit\n"
     "New goals wait until the current turn settles. Approval never resumes automatically.\n"
-    "Review and apply patches with the separate fleet patch commands."
+    "Review and apply code patches with fleet patch; organization proposals with fleet fleet-patch."
 )
 
 
