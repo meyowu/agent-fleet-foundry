@@ -26,6 +26,7 @@ from agent_fleet.adapters.sandbox.local_unsafe import LocalUnsafeSandboxProvider
 from agent_fleet.adapters.sandbox.process import BoundedProcessRunner
 from agent_fleet.adapters.secrets.environment import EnvironmentSecretStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
+from agent_fleet.adapters.trust.filesystem import FilesystemTrustStore
 from agent_fleet.application.approvals import ApprovalService
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.application.bootstrap import BootstrapService
@@ -34,7 +35,10 @@ from agent_fleet.application.evidence import EvidenceAssembler
 from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.inspection import InspectionService
 from agent_fleet.application.patches import PatchService
-from agent_fleet.application.permissions import BaselinePermissionBroker
+from agent_fleet.application.permission_policy import (
+    PermissionPolicyService,
+    PolicyPermissionBroker,
+)
 from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.projects import ProjectService
 from agent_fleet.application.resources import CancellationService, RecoveryService, ResourceService
@@ -61,6 +65,7 @@ class ApplicationContainer:
     bootstrap: BootstrapService
     workflow: WorkflowEngine
     approvals: ApprovalService
+    permissions: PermissionPolicyService
     patches: PatchService
     inspection: InspectionService
     cancellation: CancellationService
@@ -216,7 +221,11 @@ def build_container(
     )
     sandboxes = SandboxRegistry({"fake": sandbox, "docker": docker, "local-unsafe": local_unsafe})
     resources = ResourceService(state, repository, sandboxes, clock, ids)
-    permission_broker = BaselinePermissionBroker()
+    trust = FilesystemTrustStore(root / "trust" / "trust.yaml", active_redactor)
+    permissions = PermissionPolicyService(
+        state, trust, config, repository, clock, ids, active_redactor
+    )
+    permission_broker = PolicyPermissionBroker(permissions)
     planner = FleetPlanner(clock, ids)
     evidence = EvidenceAssembler(state, artifacts, clock)
     gateway = ToolGateway(
@@ -244,6 +253,7 @@ def build_container(
         clock,
         ids,
         active_redactor,
+        permission_policy=permissions,
     )
     projects = ProjectService(
         root,
@@ -281,7 +291,8 @@ def build_container(
         projects=projects,
         bootstrap=bootstrap_service,
         workflow=workflow,
-        approvals=ApprovalService(state),
+        approvals=ApprovalService(state, permissions),
+        permissions=permissions,
         patches=PatchService(state, artifacts, repository, config, secrets, clock),
         inspection=InspectionService(state, artifacts),
         cancellation=CancellationService(state, resources, clock),

@@ -4,7 +4,9 @@ Agent Fleet is a **local-first, BYOK Chief-of-Staff CLI that bootstraps, operate
 
 It is deliberately not a generic multi-agent chat framework or a permanent roster of named bots. Models propose scope, plans, actions, and organizational changes. Deterministic application code validates those proposals, owns permissions and sandbox selection, computes the canonical patch, and decides what the available evidence can prove.
 
-This repository implements **Phase 0 through Phase 3**: deterministic repository profiling, adaptive FleetPlans, an independent baseline PermissionBroker, content-addressed evidence, real Git worktrees, guarded patch review/application, explicit BYOK PydanticAI, and a hardened local Docker execution boundary. The deterministic fake runtime remains available for offline development and tests; no live model-provider call is required for the Phase 3 bootstrap canary.
+This repository implements **Phase 0 through Phase 4**: deterministic repository profiling, bounded adaptive FleetPlans, independent exact permissions and user-owned persistent trust, content-addressed evidence, real Git worktrees, guarded patch application, explicit BYOK PydanticAI, and a hardened local Docker execution boundary. The deterministic fake runtime remains available for offline development and tests; no live model-provider call is required for the bootstrap canary.
+
+**Phase 4 was accepted on 2026-09-05:** the final default suite passed 1,001 tests, and the separately enabled real-Docker suite passed nine. Phase 5–7 remain open; this is not a completed MVP release. The [completion plan](.agent/plans/2026-09-05-mvp-completion.md) and [acceptance ledger](docs/MVP_ACCEPTANCE.md) distinguish accepted behavior from remaining requirements, including the unrun live-provider gate and owner license decision.
 
 Three sandbox providers are registered. `DockerSandboxProvider` is the isolated path and creates one inspected, resource-bounded, network-disabled container per reviewed command from an already-local immutable image. `FakeSandboxProvider` records commands without executing them. `LocalUnsafeSandboxProvider` executes directly on the host only after a separate `--allow-unsafe-local` confirmation and can never count as isolated evidence. Provider selection is exact and immutable for a project/run; Docker failure never falls back to host execution.
 
@@ -16,7 +18,7 @@ Six capabilities determine whether Agent Fleet provides differentiated value:
 |---|---|---|
 | Repository-aware bootstrap | **Enforced:** bounded static inspection finds supported ecosystems, build systems, boundaries, exact candidate commands, provenance, confidence, and ambiguities; preview is read-only; init stages the proposal, runs a disposable canary through the normal Docker workflow, validates a hash-linked `BootstrapReport`, proves cleanup, and only then publishes `.fleet/`. | The canary is a deterministic Fleet-owned fixture; executing arbitrary target-repository setup or networked commands remains out of scope. |
 | Adaptive Fleet | **Enforced subset:** every fake or PydanticAI run persists a validated `FleetPlan`; repository scopes use canonical, case-insensitive conflict checks; `direct`, `single_engineer`, and `engineer_verifier` create only their planned role instances. | Parallel and Researcher/Architect scheduling remain unimplemented and fail closed, although their domain shapes are validated. |
-| Independent permission control plane | **Enforced baseline:** ToolGateway injects an independent `PermissionBroker`; canonical actions receive `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`, with default deny, decision events, and exact allow-once persistence. | Allow-for-run, exact persistent project trust, revoke/explain, and an independently reviewed user-scope ceiling remain Phase 4. |
+| Independent permission control plane | **Phase 4 accepted:** ToolGateway re-evaluates current role/workflow/task/user/sandbox ceilings; exact once/run/project rules, explain/revoke/reset, private user-owned trust and durable single-winner dispatch are verified. | Arbitrary shell and approved isolated-worker networking remain unavailable; provider-history and cross-pause usage/budget persistence remain Phase 5. |
 | Independent sandbox abstraction | **Enforced local slice:** strict `SandboxRequirements` matching dispatches exact fake, Docker, or separately confirmed local-unsafe providers. Docker pins a local Unix daemon and image ID, inspects effective configuration before start, bounds execution, and recovers exact labeled resources. | Modal and hosted providers, approved network modes, and a multi-user/remote-daemon trust model remain unimplemented. |
 | Evidence-first delivery | **Enforced:** exact ConfigSnapshot, TaskSpec, FleetPlan, patch, command inspection/transcript, verdict, cleanup, BootstrapReport, risk, and proof-gap links form content-addressed evidence. Only fresh non-mutating Docker verifier evidence can become independently verified; fake/local-unsafe remain non-verifying. | General criterion-by-criterion model mapping and broader project command/tool coverage remain bounded future work. |
 | Versioned Fleet evolution | **Contract only:** FleetPatch has dedicated ID prefixes, case-insensitive unique paths, base-hash/protected-path checks, exact content hashes, and required pre-parse plus typed whole-proposal registered-secret scanning. | Proposal persistence, semantic/text diff commands, apply, audit, and rollback remain Phase 6; there is no operational FleetPatch CLI. |
@@ -152,6 +154,32 @@ uv run fleet resume <run-id>
 
 `fleet deny <request-id>` followed by `fleet resume <run-id>` rejects the run. Repeated resume does not repeat the recorded logical side effect.
 
+## Exact permissions (Phase 4 accepted)
+
+Use Safe mode to require an explicit approval for each new exact command scope. A run grant covers the same action only within its owning run; an always rule covers the same project, role, workflow stage, command arguments, workspace and sandbox conditions in later runs. Engineer approval never grants Verifier approval, and changing a command does not inherit its earlier permission. A durable per-intent dispatch claim permits only one execution owner, even across concurrent CLI processes. An incomplete claim is not replayable.
+
+```bash
+uv run fleet permissions configure --project /path/to/repo --mode safe --allow-path src
+uv run fleet permissions list --project /path/to/repo --json
+uv run fleet permissions explain <request-id> --json
+uv run fleet approve <request-id> --once
+# Alternatives to --once, not additional flags:
+uv run fleet approve <request-id> --run
+uv run fleet approve <request-id> --always --scope project
+uv run fleet resume <run-id>
+uv run fleet permissions explain <rule-id> --json
+uv run fleet permissions revoke <rule-id> --json
+uv run fleet permissions reset --project /path/to/repo --json
+```
+
+Choose exactly one approval lifetime per request. `--allow-path` is repeatable and sets the upper candidate-path ceiling; CoS can narrow it but cannot widen it. Omitted paths preserve existing settings. New init previews show the proposed user policy; repeat init preserves omitted trust mode and paths. Trust lives at `<Fleet state root>/trust/trust.yaml`, using `AGENT_FLEET_HOME` when set or the platform's user-data directory otherwise. Repository `requestedPermissions` cannot grant it. Do not manually edit grant records or the SQLite database.
+
+Approval pauses retain the current Engineer or Verifier identity and exact workspace/sandbox. A fresh CLI process revalidates those bindings before continuing. Verification also checks the canonical patch hash so changed code cannot reuse earlier evidence. Model-call IDs and display prose may change on reconstruction; the original reviewed intent explanation is retained, while execution-bearing fields must remain identical. General provider-history restoration and aggregate usage/budget accounting across paused or failed model invocations remain Phase 5 work.
+
+Historical once-only pauses without an Engineer checkpoint can restore only the exact persisted original agent after validated state lookup; they do not acquire run-wide or persistent authority. Claims remain permanent across restart: grant consumption alone is not permission to dispatch a second time.
+
+Safe mode still permits bounded candidate file operations inside the reviewed scope, while commands prompt. Balanced permits the supported exact reviewed verification commands. `autonomous-sandbox` currently has the same supported-command ceiling as Balanced; it does not enable arbitrary shell, networking or host execution. Local-unsafe commands continue to require exact approval. Revocation removes a grant/rule, not the underlying trust-mode defaults; in Balanced a command may still be allowed by the reviewed baseline. `reset` revokes project grants/rules while preserving its reviewed mode and path ceiling.
+
 After a control-plane crash, recovery is deliberately scoped to one known Run and is not
 performed as a blanket startup sweep. First confirm that no other Fleet process still owns the
 Run, then invoke:
@@ -169,7 +197,7 @@ states such as `PAUSED_FOR_APPROVAL`, which must use `resume` or `cancel` instea
 - strict Pydantic v2 persistent/external models and safe YAML loading;
 - type-specific stable ID prefixes for persistent and public identity fields, including project, run, task, agent, event, approval, grant, artifact, intent, lease, workspace, sandbox, plan, and FleetPatch IDs;
 - explicit workflow transitions with transactional per-run events;
-- SQLite migrations `0001`–`0003`, durable approvals, exact one-use grants, provider/image/daemon-bound Projects and Runs, and recoverable worktree/sandbox/execution leases;
+- SQLite migrations `0001`–`0004`, durable exact once/run/always approval grants, per-action persistent-rule capability receipts, provider/image/daemon-bound Projects and Runs, and recoverable worktree/sandbox/execution leases;
 - repository-aware no-execution profiling with provenance, ambiguity, read/entry/depth limits, and symlink defenses;
 - repository-specific FleetSpec/verification proposals plus immutable profile/knowledge artifacts;
 - exact content-addressed ConfigSnapshot and TaskSpec bindings for each run, status inspection, and patch apply;
@@ -205,7 +233,7 @@ On POSIX, the bounded Docker CLI runner starts a private process group, sends at
 
 Only `network=none` is accepted by the isolated Phase 3 path. Images must already exist locally and may expose only the allowlisted environment defaults; Fleet does not build, pull, patch, or attest their supply chain. Cgroup-v2 daemons may report `MemorySwappiness=null`; Fleet accepts that only while the inspected memory and memory-swap hard limits are equal, which proves no container swap allocation. A crash after the durable create-dispatch checkpoint but before an exact Docker ID is persisted is intentionally conservative: zero label matches remain `FAILED`, parent resources stay intact, and no command is replayed. If the resource appears later, the operator reruns exact-run recovery after confirming the old owner stopped; a permanent zero remains outstanding for diagnosis rather than becoming an unsafe absence claim. Phase 3 has no cross-process owner-liveness lock, so it intentionally does not run destructive recovery automatically on every CLI startup.
 
-Phase 3 still cannot map one overall model verdict independently to multiple acceptance criteria: a multi-criterion task is reported as inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. The current policy surface covers bounded candidate operations, exact reviewed verification commands, and one approval fixture. CoS-proposed `allowed_paths` are canonicalized and conflict-checked, but there is no separately reviewed natural-language user path ceiling; target-checkout mutation still requires explicit patch review/apply. A complete allow-for-run/always-allow/revoke/explain trust store belongs to Phase 4. There is no approved worker networking, remote/hosted sandbox, arbitrary shell surface, external write, persistent CoS chat, parallel specialist scheduler, keyring/second-provider integration, or operational FleetPatch apply/rollback workflow.
+The current workflow still cannot map one overall model verdict independently to multiple acceptance criteria: a multi-criterion task is reported as inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. The policy surface covers bounded candidate operations, exact reviewed verification commands, and one explicit fake approval fixture. Phase 4 adds a separately reviewed user path ceiling, not an inference of path intent from natural language; target-checkout mutation still requires explicit patch review/apply. There is no approved isolated-worker networking, remote/hosted sandbox, arbitrary shell surface, external write, persistent CoS chat, parallel specialist scheduler, keyring/second-provider integration, or operational FleetPatch apply/rollback workflow.
 
 The BYOK external boundary is provider HTTPS from the trusted control-plane process. Model prompts and selected project/task context are therefore disclosed to that provider according to its terms. `max_total_tokens` is enforced from provider-reported usage after each response and before continuations/tools; it is not a pre-spend billing ceiling, so a first or final request can report more total tokens than remained. `max_tokens` still bounds requested output. The response hook runs before OpenAI SDK response handling, but Fleet does not install global logging filters: a caller that programmatically enables low-level transport (`httpx2`/`httpcore2`) DEBUG logging may log transport metadata before that hook. Normal Fleet CLI operation and `OPENAI_LOG` do not enable those low-level loggers. Provider-native shell, filesystem, MCP, hosted tools, and arbitrary model-selected network tools are disabled. Installed adapter code shares the control-plane process's OS authority; isolation from arbitrary third-party adapter code is not claimed.
 
@@ -220,12 +248,12 @@ Patch application updates the original working tree only. It does not stage, com
 - Phase 1.5: completed offline foundation—repository profiling, validated adaptive FleetPlan, independent PermissionBroker, sandbox capabilities, EvidenceBundle/CompletionGate, and FleetPatch schema validation.
 - Phase 2: implemented explicit BYOK `env:NAME` references and the PydanticAI runtime behind the project-owned runtime/tool contracts.
 - Phase 3: completed local Docker sandbox, bounded file/command tools, deterministic recovery, and evidence-gated bootstrap.
-- Phase 4: complete three-state policy and exact project-scoped persistent trust.
+- Phase 4: accepted three-state policy, exact once/run/project trust, audited revocation and safe approval resume.
 - Phase 5: persistent CoS chat and full real role workflow.
 - Phase 6: reviewable FleetPatch organization updates.
 - Phase 7: release hardening, cross-platform evidence, and owner license decision.
 
-Phase 0–3 establishes the local isolated execution and evidence foundation, but the broader security-ready MVP still depends on the Phase 4 permission lifecycle and later product gates.
+Phase 0–4 establishes the local execution, exact-permission and evidence foundation. Persistent chat/adaptive execution, operational FleetPatch, release hardening and the remaining live-provider/license gates are still required for the complete MVP.
 
 ## Quality gates
 
@@ -239,6 +267,22 @@ AGENT_FLEET_ENABLE_DOCKER_TESTS=1 \
 AGENT_FLEET_DOCKER_TEST_IMAGE=agent-fleet-runner:phase3 \
 uv run pytest -q -m docker_integration tests/docker/test_real_docker.py
 ```
+
+## Verification snapshot (Phase 4 accepted, 2026-09-05)
+
+The final Phase 4 source acceptance passed on the local macOS/Colima setup. Results below come from the acceptance run recorded in the [completion plan](.agent/plans/2026-09-05-mvp-completion.md); this is an uncommitted working-tree acceptance, not a new Git identity, commit, merge or published release.
+
+| Gate | Result |
+| --- | --- |
+| Complete default suite | `1001 passed, 10 skipped in 431.79s`; exactly nine opt-in Docker skips and one opt-in live-provider skip. |
+| Unit / contract | `510 passed in 53.30s` / `281 passed in 4.47s`. |
+| Marked integration / subprocess E2E | `156 passed, 49 deselected in 311.72s` / `4 passed in 44.40s`. |
+| CLI after Phase 4 metadata synchronization | `30 passed in 22.52s`; static/schema checks and offline archives were rebuilt successfully afterward. |
+| Static checks | Ruff format: 165 files; lint passed; mypy: 141 source files; generated-schema and diff checks passed. |
+| Separately enabled real Docker | `9 passed in 42.32s`; zero remaining Fleet-managed containers. |
+| Offline archive build/inspection | Wheel and sdist each contain 129 package files, including 37 schemas, four migrations and three runtime prompts. |
+
+The regressions cover once/run/always across rebuilt processes, exact current-policy intersections, mutation-audit/reset failures, one-winner dispatch, stable role checkpoints, model-reason continuity and fresh Docker verifier evidence. Archive inspection is not a fresh-user installation or cross-platform release proof. **No live provider was run or live credential used.** Phase 5–7, the detailed user guide, live-provider acceptance and owner license choice remain open. Earlier snapshots below are retained as historical evidence, not current Phase 4 counts.
 
 ## Verification snapshot (Phase 1.5 baseline, 2026-09-04)
 

@@ -255,6 +255,7 @@ def default_fleet_files(
                         "workspace.apply_edit",
                         "workspace.delete_path",
                         "command.run",
+                        *(["fixture.record_side_effect"] if runtime_name == "fake" else []),
                     ],
                     "maxSteps": 20,
                 },
@@ -283,23 +284,9 @@ def default_fleet_files(
                 "architecture": "project/architecture.md",
                 "verification": "project/verification.yaml",
             },
-            "requestedPermissions": [
-                {
-                    "principalRole": "engineer",
-                    "action": "workspace.write_file",
-                    "resource": "workspace://candidate/**",
-                },
-                {
-                    "principalRole": "engineer",
-                    "action": "command.run",
-                    "resource": "command://declared-fake-command",
-                },
-                {
-                    "principalRole": "verifier",
-                    "action": "command.run",
-                    "resource": "command://declared-fake-command",
-                },
-            ],
+            "requestedPermissions": _default_permission_requests(
+                include_fixture=runtime_name == "fake"
+            ),
         },
     }
     verification_data = {
@@ -358,6 +345,36 @@ def default_fleet_files(
     }
     validate_fleet_files(files)
     return files
+
+
+def _default_permission_requests(*, include_fixture: bool) -> list[dict[str, str]]:
+    requests: list[dict[str, str]] = []
+    for role, workspace in (("engineer", "candidate"), ("verifier", "verification")):
+        actions = ["repo.list_files", "repo.read_file", "repo.search_text", "workspace.get_diff"]
+        if role == "engineer":
+            actions.extend(
+                ["workspace.write_file", "workspace.apply_edit", "workspace.delete_path"]
+            )
+        requests.extend(
+            {"principalRole": role, "action": action, "resource": f"workspace://{workspace}/**"}
+            for action in actions
+        )
+        requests.append(
+            {
+                "principalRole": role,
+                "action": "command.run",
+                "resource": "command://declared-project-command",
+            }
+        )
+    if include_fixture:
+        requests.append(
+            {
+                "principalRole": "engineer",
+                "action": "fixture.record_side_effect",
+                "resource": "fixture://approval-proof",
+            }
+        )
+    return requests
 
 
 def _trusted_canary_verification_profile() -> dict[str, Any]:

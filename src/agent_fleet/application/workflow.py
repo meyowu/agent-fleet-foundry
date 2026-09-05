@@ -12,6 +12,7 @@ from pydantic import JsonValue, ValidationError
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.application.evidence import EvidenceAssembler
 from agent_fleet.application.gateway import ToolGateway
+from agent_fleet.application.permission_policy import PermissionPolicyService
 from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.resources import ResourceService
 from agent_fleet.application.runtime import RuntimeRegistry
@@ -35,6 +36,7 @@ from agent_fleet.domain.evidence import (
 from agent_fleet.domain.fleet_plan import FleetStrategy
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
+    AgentExecutionCheckpoint,
     AgentInstance,
     AgentInvocation,
     AgentInvocationResult,
@@ -58,6 +60,7 @@ from agent_fleet.domain.models import (
     ScopeDecision,
     TaskSpec,
     Verdict,
+    VerificationCheckpoint,
     VerifierVerdict,
     WorkflowStage,
     WorkspaceKind,
@@ -100,6 +103,8 @@ class WorkflowEngine:
         clock: Clock,
         ids: IdGenerator,
         redactor: Redactor,
+        *,
+        permission_policy: PermissionPolicyService | None = None,
     ) -> None:
         self.state = state
         self.repository = repository
@@ -114,6 +119,7 @@ class WorkflowEngine:
         self.clock = clock
         self.ids = ids
         self.redactor = redactor
+        self.permission_policy = permission_policy
 
     async def start(
         self,
@@ -349,6 +355,8 @@ class WorkflowEngine:
             credential_check=RuntimeCredentialCheck.RESOLVE,
         )
         project = self.state.get_project(run.project_id)
+        if self.permission_policy is not None:
+            self.permission_policy.validate_run_target(run)
         spec, snapshot = self.config.load_snapshot(
             Path(project.canonical_root) / ".fleet" / "fleet.yaml"
         )
@@ -386,6 +394,40 @@ class WorkflowEngine:
                 )
                 await self.resources.cleanup_run(rejected)
                 return rejected
+            if run.engineer_checkpoint is None and run.stage in {
+                WorkflowStage.IMPLEMENTING,
+                WorkflowStage.REPAIRING,
+            }:
+                # Pre-Phase4 runs had no role checkpoint. Adopt only the exact
+                # persisted approved identity, never a new principal for its grant.
+                intent = self.state.get_intent(request.intent_id).intent
+                original_agent = self.state.get_agent_instance(intent.agent_instance_id)
+                if (
+                    original_agent.role != AgentRole.ENGINEER
+                    or original_agent.run_id != run.run_id
+                    or original_agent.task_id != run.task_id
+                    or original_agent.iteration != run.repair_iterations
+                ):
+                    raise FleetError(
+                        ErrorCode.RECOVERY_REQUIRED,
+                        "The legacy approval has no matching Engineer identity.",
+                        "Cancel the run; a grant cannot transfer to another principal.",
+                    )
+                workspace = self.resources.candidate_workspace(run.run_id)
+                handle = self.resources.engineer_sandbox(run.run_id)
+                checkpoint = AgentExecutionCheckpoint(
+                    agent_instance_id=original_agent.agent_instance_id,
+                    workspace_id=workspace.workspace_id,
+                    sandbox_id=handle.sandbox_id,
+                    iteration=original_agent.iteration,
+                    created_at=original_agent.created_at,
+                )
+                run = self.state.save_run(
+                    run.model_copy(update={"engineer_checkpoint": checkpoint}),
+                    "engineering.checkpoint_adopted",
+                    checkpoint.model_dump(mode="json"),
+                )
+            await self.resources.rehydrate_paused_sandboxes(run)
             run = run.model_copy(
                 update={
                     "status": RunStatus.RUNNING,
@@ -496,6 +538,14 @@ class WorkflowEngine:
             ),
         )
         decision = cast(ScopeDecision, result.output)
+        if self.permission_policy is not None:
+            self.permission_policy.validate_task_paths(project, decision.allowed_paths)
+        if decision.workflow not in fleet_spec.spec.workflows:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "CoS proposed an undeclared workflow.",
+                "Select a workflow declared in the reviewed FleetSpec.",
+            )
         verification_profile = self.config.verification_profile(fleet_spec, config_snapshot)
         verification_commands = [
             CommandSpec(
@@ -755,14 +805,40 @@ class WorkflowEngine:
         guidance = self._active_role_guidance(run, AgentRole.ENGINEER)
         workspace = self.resources.candidate_workspace(run.run_id)
         handle = self.resources.engineer_sandbox(run.run_id)
+        checkpoint = run.engineer_checkpoint
+        if checkpoint is None:
+            checkpoint = AgentExecutionCheckpoint(
+                agent_instance_id=self.ids.new(IdPrefix.AGENT),
+                workspace_id=workspace.workspace_id,
+                sandbox_id=handle.sandbox_id,
+                iteration=run.repair_iterations,
+                created_at=self.clock.now(),
+            )
+            run = self.state.save_run(
+                self.state.get_run(run.run_id).model_copy(
+                    update={"engineer_checkpoint": checkpoint, "updated_at": self.clock.now()}
+                ),
+                "engineering.checkpoint_created",
+                checkpoint.model_dump(mode="json"),
+            )
+        elif (
+            checkpoint.workspace_id != workspace.workspace_id
+            or checkpoint.sandbox_id != handle.sandbox_id
+            or checkpoint.iteration != run.repair_iterations
+        ):
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "The paused Engineer identity no longer matches its candidate context.",
+                "Cancel or recover the existing run; do not transfer its intents to another agent.",
+            )
         agent = AgentInstance(
-            agent_instance_id=self.ids.new(IdPrefix.AGENT),
+            agent_instance_id=checkpoint.agent_instance_id,
             run_id=run.run_id,
             task_id=task.task_id,
             role=AgentRole.ENGINEER,
             status=AgentStatus.RUNNING,
             iteration=run.repair_iterations,
-            created_at=self.clock.now(),
+            created_at=checkpoint.created_at,
         )
         configuration = self._runtime_configuration(run)
         adapter = self.runtimes.get(configuration.runtime_name)
@@ -861,6 +937,7 @@ class WorkflowEngine:
         latest = self.state.get_run(run.run_id)
         updated = latest.model_copy(
             update={
+                "engineer_checkpoint": None,
                 "patch_artifact_id": artifact.artifact_id,
                 "patch_sha256": patch.sha256,
                 "command_evidence_artifact_ids": list(
@@ -882,43 +959,87 @@ class WorkflowEngine:
         guidance = self._active_role_guidance(run, AgentRole.VERIFIER)
         project = self.state.get_project(run.project_id)
         patch = self.artifacts.read_text(run.patch_artifact_id).encode()
-        workspace = self.repository.create_workspace(
-            Path(project.canonical_root),
-            run.run_id,
-            run.base_revision,
-            WorkspaceKind.VERIFICATION,
-        )
-        workspace_lease = self.resources.lease_workspace(workspace)
-        self.repository.apply_patch_to_workspace(workspace, patch)
-        before = self.repository.workspace_status_fingerprint(workspace)
         if run.sandbox_configuration is None or run.sandbox_requirements is None:
             raise RuntimeError("Run sandbox binding was not materialized")
-        handle = await self.resources.create_sandbox(
-            run.run_id,
-            SandboxSpec(
-                workspace_host_path=workspace.path,
-                project_id=run.project_id,
-                configuration=run.sandbox_configuration,
-                requirements=run.sandbox_requirements,
-                environment={},
-                unsafe_local_confirmed=run.unsafe_local_confirmed,
-                image_identity=run.sandbox_image_identity,
-                daemon_identity=run.sandbox_daemon_identity,
-            ),
-        )
+        checkpoint = run.verification_checkpoint
+        if checkpoint is None:
+            workspace = self.repository.create_workspace(
+                Path(project.canonical_root),
+                run.run_id,
+                run.base_revision,
+                WorkspaceKind.VERIFICATION,
+            )
+            workspace_lease = self.resources.lease_workspace(workspace)
+            self.repository.apply_patch_to_workspace(workspace, patch)
+            before = self.repository.workspace_status_fingerprint(workspace)
+            handle = await self.resources.create_sandbox(
+                run.run_id,
+                SandboxSpec(
+                    workspace_host_path=workspace.path,
+                    project_id=run.project_id,
+                    configuration=run.sandbox_configuration,
+                    requirements=run.sandbox_requirements,
+                    environment={},
+                    unsafe_local_confirmed=run.unsafe_local_confirmed,
+                    image_identity=run.sandbox_image_identity,
+                    daemon_identity=run.sandbox_daemon_identity,
+                ),
+            )
+            if run.patch_sha256 is None:
+                raise RuntimeError("Run patch hash is missing")
+            checkpoint = VerificationCheckpoint(
+                agent_instance_id=self.ids.new(IdPrefix.AGENT),
+                workspace_id=workspace.workspace_id,
+                sandbox_id=handle.sandbox_id,
+                patch_sha256=run.patch_sha256,
+                baseline_fingerprint=before,
+                iteration=run.repair_iterations,
+                created_at=self.clock.now(),
+            )
+            run = self.state.save_run(
+                self.state.get_run(run.run_id).model_copy(
+                    update={"verification_checkpoint": checkpoint, "updated_at": self.clock.now()}
+                ),
+                "verification.checkpoint_created",
+                checkpoint.model_dump(mode="json"),
+            )
+        else:
+            workspace = self.resources.checkpoint_workspace(run.run_id, checkpoint.workspace_id)
+            handle = self.resources.checkpoint_sandbox(run.run_id, checkpoint.sandbox_id)
+            before = checkpoint.baseline_fingerprint
+            if (
+                checkpoint.patch_sha256 != run.patch_sha256
+                or checkpoint.iteration != run.repair_iterations
+                or workspace.kind is not WorkspaceKind.VERIFICATION
+                or workspace.base_revision != run.base_revision
+                or handle.workspace_host_path != workspace.path
+                or handle.project_id != run.project_id
+                or self.repository.workspace_status_fingerprint(workspace) != before
+                or self.repository.compute_patch(workspace).sha256 != checkpoint.patch_sha256
+            ):
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "The paused verification context changed.",
+                    "Cancel or recover this run; cached command evidence cannot move contexts.",
+                )
+            workspace_lease = next(
+                lease
+                for lease in self.state.active_leases(run.run_id)
+                if lease.kind is LeaseKind.WORKTREE and lease.resource_id == workspace.workspace_id
+            )
         sandbox_lease = next(
             lease
             for lease in self.state.active_leases(run.run_id)
             if lease.kind is LeaseKind.SANDBOX and lease.resource_id == handle.sandbox_id
         )
         agent = AgentInstance(
-            agent_instance_id=self.ids.new(IdPrefix.AGENT),
+            agent_instance_id=checkpoint.agent_instance_id,
             run_id=run.run_id,
             task_id=task.task_id,
             role=AgentRole.VERIFIER,
             status=AgentStatus.RUNNING,
             iteration=run.repair_iterations,
-            created_at=self.clock.now(),
+            created_at=checkpoint.created_at,
         )
         configuration = self._runtime_configuration(run)
         adapter = self.runtimes.get(configuration.runtime_name)
@@ -976,7 +1097,10 @@ class WorkflowEngine:
         )
         evidence_artifact_ids = self._command_evidence_ids(catalog.records)
         after = self.repository.workspace_status_fingerprint(workspace)
-        mutated = before != after
+        mutated = (
+            before != after
+            or self.repository.compute_patch(workspace).sha256 != checkpoint.patch_sha256
+        )
         run = self._persist_runtime_observation(
             run,
             task.task_id,
@@ -1008,6 +1132,7 @@ class WorkflowEngine:
                     dict.fromkeys([*latest.command_evidence_artifact_ids, *evidence_artifact_ids])
                 ),
                 "verifier_agent_instance_id": agent.agent_instance_id,
+                "verification_checkpoint": None,
                 "verifier_verdict_artifact_id": verdict_artifact.artifact_id,
                 "verifier_workspace_mutated": mutated,
                 "updated_at": self.clock.now(),
@@ -1066,6 +1191,15 @@ class WorkflowEngine:
                 agent_id=agent.agent_instance_id,
             )
             return result
+        except ApprovalRequiredError:
+            self.state.save_agent_instance(agent.model_copy(update={"status": AgentStatus.PAUSED}))
+            self._emit(
+                run,
+                "agent.paused",
+                {"role": str(agent.role), "iteration": agent.iteration},
+                agent_id=agent.agent_instance_id,
+            )
+            raise
         except FleetError as error:
             self._mark_agent_failed(run, agent, error.code)
             raise

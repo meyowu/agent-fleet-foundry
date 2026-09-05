@@ -7,7 +7,7 @@ import json
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import typer
 from pydantic import JsonValue
@@ -19,8 +19,16 @@ from agent_fleet import __version__
 from agent_fleet.bootstrap import build_container
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix, new_id
-from agent_fleet.domain.models import FakeScenario, JsonEnvelope, JsonError, RunStatus, jsonable
+from agent_fleet.domain.models import (
+    ApprovalChoice,
+    FakeScenario,
+    JsonEnvelope,
+    JsonError,
+    RunStatus,
+    jsonable,
+)
 from agent_fleet.domain.security import Redactor
+from agent_fleet.domain.trust import TrustMode
 
 app = typer.Typer(
     name="fleet",
@@ -32,6 +40,8 @@ app = typer.Typer(
 )
 patch_app = typer.Typer(help="Inspect or explicitly apply candidate patches.")
 app.add_typer(patch_app, name="patch")
+permissions_app = typer.Typer(help="Inspect and manage exact user-owned permission scopes.")
+app.add_typer(permissions_app, name="permissions")
 console = Console()
 error_console = Console(stderr=True)
 
@@ -47,7 +57,7 @@ def version(json_output: JsonFlag = False) -> None:
         json_output,
         lambda: {
             "version": __version__,
-            "phase": "3",
+            "phase": "4",
             "runtime": "fake",
             "runtimes": ["fake", "pydantic-ai"],
             "sandbox": "fake",
@@ -140,6 +150,17 @@ def init_command(
             "--preview", help="Profile and show the complete proposal without writing state."
         ),
     ] = False,
+    trust_mode: Annotated[
+        str | None,
+        typer.Option("--trust-mode", help="Reviewed policy; omitted preserves existing settings."),
+    ] = None,
+    allow_paths: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--allow-path",
+            help="Reviewed path ceiling; repeat. Default: existing scope, else repository.",
+        ),
+    ] = None,
     json_output: JsonFlag = False,
 ) -> None:
     """Register a Git repository and apply a validated minimal `.fleet/` tree."""
@@ -154,6 +175,13 @@ def init_command(
                 "Use `--preview` to inspect without writes, or `--yes` to apply.",
             )
         container = build_container(migrate=False, redactor=redactor)
+        policy_preview = container.permissions.review_initialization(
+            path,
+            mode=_parse_trust_mode(trust_mode) if trust_mode is not None else None,
+            allowed_paths=tuple(allow_paths) if allow_paths is not None else None,
+        )
+        reviewed_mode = TrustMode(cast(str, policy_preview["trust_mode"]))
+        reviewed_paths = tuple(cast(list[str], policy_preview["allowed_paths"]))
         preview_data = container.projects.preview(
             path,
             runtime_name=runtime,
@@ -162,6 +190,7 @@ def init_command(
             sandbox_name=sandbox,
             docker_image=docker_image,
         )
+        preview_data["proposed_user_policy"] = policy_preview
         if preview:
             return _initialization_result(preview_data)
         if json_output and not yes:
@@ -195,6 +224,8 @@ def init_command(
                     (f"Sandbox: {sandbox} (security_level={preview_data['security_level']})"),
                     access_summary,
                     security_warning,
+                    f"User trust mode: {reviewed_mode.value}; "
+                    f"reviewed paths: {', '.join(reviewed_paths)}",
                 ]
             )
             console.print(Panel.fit(summary, title="Execution and access boundary"))
@@ -218,6 +249,9 @@ def init_command(
                 docker_image=docker_image,
                 allow_unsafe_local=allow_unsafe_local,
                 expected_proposal_hash=proposal_hash,
+                trust_mode=reviewed_mode,
+                allowed_paths=reviewed_paths,
+                expected_trust_revision=cast(int, policy_preview["policy_revision"]),
             )
         )
         return _initialization_result(initialized)
@@ -386,23 +420,150 @@ def patch_apply(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag 
 def approve(
     request_id: Annotated[str, typer.Argument()],
     once: Annotated[bool, typer.Option("--once", help="Issue one exact, short-lived use.")] = False,
+    for_run: Annotated[
+        bool, typer.Option("--run", help="Allow matching scope within this run.")
+    ] = False,
+    always: Annotated[
+        bool, typer.Option("--always", help="Persist only the exact project scope.")
+    ] = False,
+    scope: Annotated[
+        str | None, typer.Option("--scope", help="Required value for --always: project.")
+    ] = None,
     json_output: JsonFlag = False,
 ) -> None:
-    """Approve one exact persisted Phase 1 intent."""
+    """Approve an exact request once, for its run, or for this project."""
 
     redactor = _environment_redactor()
 
     def operation() -> JsonValue:
-        if not once:
+        if (
+            sum((once, for_run, always)) != 1
+            or (always and scope != "project")
+            or (not always and scope is not None)
+        ):
             raise FleetError(
                 ErrorCode.APPROVAL_INVALID,
-                "Phase 1 approvals require the explicit --once flag.",
-                "Retry with `fleet approve <request-id> --once`.",
+                "Choose exactly one of --once, --run, or --always --scope project.",
+                "Inspect the request and select its precise authorization duration.",
             )
-        grant = build_container(redactor=redactor).approvals.approve_once(request_id)
+        choice = (
+            ApprovalChoice.ALLOW_ONCE
+            if once
+            else ApprovalChoice.ALLOW_RUN
+            if for_run
+            else ApprovalChoice.ALLOW_ALWAYS
+        )
+        grant = build_container(redactor=redactor).approvals.approve(request_id, choice=choice)
         return grant.model_dump(mode="json")
 
     _present("fleet approve", json_output, operation, redactor=redactor)
+
+
+@permissions_app.command("list")
+def permissions_list(
+    project: Annotated[Path, typer.Option("--project")] = Path("."),
+    json_output: JsonFlag = False,
+) -> None:
+    """List the selected project's effective settings and exact rules."""
+    redactor = _environment_redactor()
+    _present(
+        "fleet permissions list",
+        json_output,
+        lambda: build_container(redactor=redactor).permissions.list_rules(project),
+        redactor=redactor,
+    )
+
+
+@permissions_app.command("explain")
+def permissions_explain(
+    identifier: Annotated[str, typer.Argument(help="Rule ID or approval request ID.")],
+    json_output: JsonFlag = False,
+) -> None:
+    """Explain an exact rule or re-evaluate the policy for a pending request."""
+    redactor = _environment_redactor()
+    _present(
+        "fleet permissions explain",
+        json_output,
+        lambda: build_container(redactor=redactor).permissions.explain(identifier),
+        redactor=redactor,
+    )
+
+
+@permissions_app.command("revoke")
+def permissions_revoke(
+    identifier: Annotated[str, typer.Argument(help="Exact rule or grant ID to revoke.")],
+    json_output: JsonFlag = False,
+) -> None:
+    """Revoke a scope without deleting its history."""
+    redactor = _environment_redactor()
+    _present(
+        "fleet permissions revoke",
+        json_output,
+        lambda: build_container(redactor=redactor).permissions.revoke(identifier),
+        redactor=redactor,
+    )
+
+
+@permissions_app.command("reset")
+def permissions_reset(
+    project: Annotated[Path, typer.Option("--project")] = Path("."),
+    json_output: JsonFlag = False,
+) -> None:
+    """Revoke a project's persistent rules, preserving its reviewed path ceiling."""
+    redactor = _environment_redactor()
+    _present(
+        "fleet permissions reset",
+        json_output,
+        lambda: build_container(redactor=redactor).permissions.reset(project),
+        redactor=redactor,
+    )
+
+
+@permissions_app.command("configure")
+def permissions_configure(
+    mode: Annotated[str, typer.Option("--mode", help="User-owned execution trust mode.")],
+    project: Annotated[Path, typer.Option("--project")] = Path("."),
+    allow_paths: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--allow-path",
+            help="Reviewed path ceiling; repeat. Omitted preserves the current scope.",
+        ),
+    ] = None,
+    json_output: JsonFlag = False,
+) -> None:
+    """Set the project's user-owned mode and reviewed candidate path ceiling."""
+    redactor = _environment_redactor()
+
+    def operation() -> JsonValue:
+        parsed_mode = _parse_trust_mode(mode)
+        return (
+            build_container(redactor=redactor)
+            .permissions.configure(
+                project,
+                mode=parsed_mode,
+                allowed_paths=tuple(allow_paths) if allow_paths is not None else None,
+            )
+            .model_dump(mode="json")
+        )
+
+    _present(
+        "fleet permissions configure",
+        json_output,
+        operation,
+        redactor=redactor,
+    )
+
+
+def _parse_trust_mode(value: str) -> TrustMode:
+    try:
+        return TrustMode(value)
+    except ValueError:
+        raise FleetError(
+            ErrorCode.CONFIG_INVALID,
+            "The requested trust mode is unsupported.",
+            "Choose safe, balanced, or autonomous-sandbox.",
+        ) from None
 
 
 @app.command()

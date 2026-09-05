@@ -12,6 +12,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+import yaml
 
 from agent_fleet.adapters.sandbox.docker import DockerSandboxProvider
 from agent_fleet.adapters.sandbox.process import ProcessResult, ProcessRunner
@@ -19,9 +20,12 @@ from agent_fleet.application.sandboxes import requirements_for_configuration
 from agent_fleet.bootstrap import ApplicationContainer, build_container
 from agent_fleet.domain.bootstrap import BootstrapPolicyMode
 from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.evidence import CommandEvidence, EvidenceStrength
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
+    ApprovalChoice,
     ExecRequest,
+    FakeScenario,
     LeaseKind,
     LeaseStatus,
     ResourceLease,
@@ -42,6 +46,7 @@ from agent_fleet.domain.offline_canary import (
     BOOTSTRAP_SANDBOX_PROBE_MARKER,
 )
 from agent_fleet.domain.security import canonical_json_hash
+from agent_fleet.domain.trust import TrustMode
 
 pytestmark = [pytest.mark.docker_integration, pytest.mark.asyncio]
 
@@ -960,5 +965,114 @@ async def test_real_docker_bootstrap_publishes_only_verified_evidence_graph(
         artifact_files = [path for path in (state_root / "artifacts").rglob("*") if path.is_file()]
         assert artifact_files
         assert all(secret.encode() not in path.read_bytes() for path in artifact_files)
+    finally:
+        await _cleanup_real_installation_scope(provider, installation_id)
+
+
+@pytest.mark.parametrize(
+    "choice", [ApprovalChoice.ALLOW_ONCE, ApprovalChoice.ALLOW_RUN, ApprovalChoice.ALLOW_ALWAYS]
+)
+async def test_real_docker_exact_approval_resume_preserves_independent_evidence(
+    tmp_path: Path,
+    real_docker_image: str,
+    choice: ApprovalChoice,
+) -> None:
+    """Private fixture registration tests real approved commands, not public bootstrap."""
+    fixture = build_container(tmp_path / "fixture-state")
+    target = fixture.repository.create_bootstrap_canary_fixture(
+        tmp_path / "fixture-state" / "target"
+    )
+    state_root = tmp_path / "fleet-state"
+    container = build_container(state_root)
+    provider = container.sandboxes.get("docker")
+    assert isinstance(provider, DockerSandboxProvider)
+    configuration = SandboxConfiguration(provider="docker", image=real_docker_image)
+    preflight = await provider.preflight(
+        configuration, requirements_for_configuration(configuration)
+    )
+    assert preflight.ready
+    installation_id = provider.recovery_scope_id
+    try:
+        container.projects._initialize_without_canary(
+            target,
+            sandbox_name="docker",
+            docker_image=real_docker_image,
+            trusted_canary_config=True,
+            sandbox_image_identity=preflight.image_identity,
+            sandbox_daemon_identity=preflight.daemon_identity,
+        )
+        # Two distinct reviewed command IDs force a pause after Verifier evidence exists.
+        verification_path = target / ".fleet/project/verification.yaml"
+        verification = yaml.safe_load(verification_path.read_text())
+        verification["commands"]["bootstrap-unittest-repeat"] = json.loads(
+            json.dumps(verification["commands"]["bootstrap-unittest"])
+        )
+        verification["requiredForCodeChange"].append("bootstrap-unittest-repeat")
+        verification_path.write_text(yaml.safe_dump(verification, sort_keys=False))
+        _, snapshot = container.projects.config.load_snapshot(target / ".fleet/fleet.yaml")
+        project = container.permissions.project_at(target)
+        container.state.save_project(
+            project.model_copy(
+                update={
+                    "fleet_spec_hash": container.projects.config.snapshot_hash(snapshot),
+                }
+            )
+        )
+        container.permissions.configure(target, mode=TrustMode.SAFE, allowed_paths=("src",))
+        run = await container.workflow.start(
+            project_path=target,
+            goal="Fix the canary behavior",
+            runtime_name="fake",
+            sandbox_name="docker",
+            fake_scenario=FakeScenario.SUCCESS,
+        )
+        for expected_role in ("engineer", "engineer", "verifier", "verifier"):
+            assert run.status is RunStatus.PAUSED_FOR_APPROVAL
+            assert run.pending_approval_id is not None
+            container = build_container(state_root)
+            request = container.state.get_approval(run.pending_approval_id)
+            assert request.principal_role == expected_role
+            container.approvals.approve(request.request_id, choice=choice)
+            container = build_container(state_root)
+            run = await container.workflow.resume(run.run_id)
+        assert run.status is RunStatus.READY_FOR_REVIEW
+        assert run.verified_complete is True
+        assert run.verification_checkpoint is None
+        evidence = [
+            CommandEvidence.model_validate_json(container.artifacts.read_text(item))
+            for item in run.command_evidence_artifact_ids
+        ]
+        verified = [item for item in evidence if item.principal_role == "verifier"]
+        assert len(evidence) == 4
+        assert len(verified) == 2
+        assert all(item.strength is EvidenceStrength.INDEPENDENTLY_VERIFIED for item in verified)
+        assert {item.agent_instance_id for item in verified} == {run.verifier_agent_instance_id}
+        assert len({item.sandbox_id for item in verified}) == 1
+        assert container.state.count_executed_intents(run.run_id, "command.run") == 4
+        assert container.state.outstanding_leases(run.run_id) == []
+        if choice is ApprovalChoice.ALLOW_ALWAYS:
+            container = build_container(state_root)
+            subsequent = await container.workflow.start(
+                project_path=target,
+                goal="Fix the canary behavior",
+                runtime_name="fake",
+                sandbox_name="docker",
+                fake_scenario=FakeScenario.SUCCESS,
+            )
+            assert subsequent.verified_complete is True
+            receipts = container.state.list_grants(subsequent.run_id)
+            assert len(receipts) == 4
+            assert all(item.request_id is None and item.remaining_uses == 0 for item in receipts)
+            assert not any(
+                event.event_type == "approval.requested"
+                for event in container.state.list_events(subsequent.run_id)
+            )
+            assert container.state.outstanding_leases(subsequent.run_id) == []
+        assert (
+            await provider._list_exact(
+                provider._require_executable(), {"agent-fleet.installation": installation_id}
+            )
+            == []
+        )
     finally:
         await _cleanup_real_installation_scope(provider, installation_id)

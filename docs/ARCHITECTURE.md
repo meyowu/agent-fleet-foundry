@@ -32,11 +32,11 @@ The control plane is deterministic application code. The LLM/harness adapter is 
 
 The architecture implements a project-specific organization runtime, not a generic agent chat bus. Role instances are created from a validated per-run FleetPlan. The plan may be adaptive, but the execution graph, budgets, workspace ownership, and assurance rules remain system-controlled.
 
-Implementation boundary: Phase 0–3 enforces durable state/artifacts, hardened Git worktrees, bounded static repository intelligence, adaptive direct/single/pair plans, an independently injected baseline PermissionBroker, exact allow-once, guarded patch application, strict fake/Docker/local-unsafe sandbox dispatch, bounded gateway file/command operations, resource recovery, evidence-gated bootstrap, and either a deterministic fake runtime or an explicit BYOK PydanticAI runtime. The PydanticAI adapter supports only the wired `openai:` Responses and `openai-chat:` Chat Completions model families, returns strict project-owned types, and exposes only gateway-backed tools. Docker is the sole current isolated execution provider; fake remains simulated and local-unsafe remains non-isolating. Parallel/specialist scheduling, complete trust semantics, persistent chat, remote sandboxes, and operational FleetPatch remain later phases.
+Implementation boundary: Phase 0–3 provides durable state/artifacts, hardened Git worktrees, bounded repository intelligence, direct/single/pair plans, guarded patch application, exact fake/Docker/local-unsafe dispatch, bounded gateway operations, recovery and evidence-gated bootstrap. Phase 4's independently injected current-policy broker, reviewed paths, exact once/run/project approvals, external trust store and management CLI were accepted on 2026-09-05: default suite `1001 passed, 10 skipped`, with nine separately passing real-Docker tests; full results are in `MVP_ACCEPTANCE.md`. The fake and BYOK PydanticAI runtimes share project-owned contracts and gateway-backed tools; the live adapter supports only wired `openai:` and `openai-chat:` families, but live-provider acceptance was not run. Docker is the sole current isolated provider; fake is simulated and local-unsafe non-isolating. Persistent chat/parallel/specialist execution (Phase 5), operational FleetPatch (Phase 6) and release hardening (Phase 7) remain unimplemented. Remote sandboxes are post-MVP, and the full MVP/license gates remain open.
 
 ## 2. Layering and dependency rule
 
-Recommended package layout:
+Conceptual target package layout (not an inventory of implemented files):
 
 ```text
 src/agent_fleet/
@@ -331,7 +331,7 @@ class FleetEvent(BaseModel):
     redaction_summary: list[str] = []
 ```
 
-Initial event types:
+Event vocabulary below includes future workflows; it is not a claim that every listed event currently has an emitting path:
 
 ```text
 project.initialized
@@ -485,7 +485,7 @@ The runtime adapter turns a typed role invocation into one of the strict role ou
 
 An invocation contains logical run/task/agent identity, role/stage/iteration, bounded relative content, and artifact references only. It never contains a host filesystem path, `SandboxHandle`, provider credential/reference, permission grant, or callable executor. A runtime may request a typed action through the supplied catalog; it cannot perform that action directly. Built-in runtime adapters must not import concrete repository/sandbox adapters or subprocess execution code.
 
-Conceptual interface:
+Implemented evaluation interface (abridged):
 
 ```python
 class RuntimeCapability(str, Enum):
@@ -606,14 +606,19 @@ class PermissionBroker(Protocol):
     def evaluate(
         self, intent: ToolIntent, task: TaskSpec, sandbox: SandboxCapabilities
     ) -> PermissionDecision: ...
-    async def resolve_approval(
-        self, request_id: PermissionRequestId, resolution: ApprovalResolution
-    ) -> CapabilityGrant | None: ...
 ```
 
-Evaluation is pure where possible. Persistence and user interaction belong to application services.
+Persistence and user interaction belong to application services. `PolicyPermissionBroker` reads current state/policy through `PermissionPolicyService`; `ApprovalService` owns resolution, not the runtime or broker protocol. The composition root injects the broker into ToolGateway and a `FilesystemTrustStore` behind `TrustStore`. The store lives at `<Fleet state root>/trust/trust.yaml`, outside the repository; it does not belong to ConfigSnapshot or the worker filesystem.
 
-PermissionBroker is independently injected into ToolGateway; it is not a private conditional inside the gateway and is not supplied by the runtime adapter. The broker evaluates canonical identity and resource context built by the control plane. Phase 1.5 retains the narrow baseline rules and exact allow-once grant. Run-wide and persistent exact rules, explanation/revocation UI, and the user trust store remain Phase 4.
+Evaluation applies the supported baseline executor ceiling, current repository/Run/Task/configuration bindings, reviewed user paths, role `allowedTools`, optional workflow `allowedTools`, repository `requestedPermissions`, exact deny rules, applicable grants/rules, then documented mode defaults. No lower layer adds authority absent above it. Safe asks for supported exact commands; Balanced and Autonomous-sandbox currently share the same reviewed-command ceiling. They do not enable arbitrary commands or networking and cannot improve sandbox assurance. Engineer and Verifier roles/stages require distinct scopes.
+
+Exact scope binds project/repository identity, role, workflow/stage, action/resource/parameters, full CommandSpec where applicable, workspace kind, provider/security/network and source-checkout read-only status. Once grants bind the original intent/agent/hash and expire within ten minutes or request expiry, whichever is sooner. Run grants match the same run/task/scope until termination or invalidation; they have no automatic expiry and outlive the request's approval deadline. An always-allow rule is separate durable user-owned state; it can match later runs while active and within current ceilings. Legacy registrations retain only their previous Balanced/`.` baseline; new registrations require completed reviewed settings. Unchanged legacy generated permission requests receive narrow compatibility normalization, not new authority. Historical unscoped approvals remain once-only.
+
+Policy publication crosses two stores: validate/secret-scan candidate → durable `permission.policy_change_prepared` → expected-revision atomic trust publication → `permission.policy_change_completed`. The event pair shares mutation ID, action, revisions and before/after hashes. Immutable prior-revision backups support exact reconciliation after an interrupted publication/completion; they never auto-activate or justify rolling back newer state. Always-allow stages a deterministic request-bound rule that remains dormant until its matching SQLite approval resolution activates it. A later-run rule use reserves the intent and creates a consumed capability receipt in one SQLite transaction, with exact source rule/scope and issued/consumed events but no fabricated approval. Revoke affects future decisions. Reset preserves reviewed settings, revokes project rules and publishes a monotonic `grants_revoked_before` cutoff before SQLite grant cleanup; grants issued at or before it cannot authorize execution even if cleanup fails.
+
+Immediately before any executor, Gateway calls `StateStore.claim_reserved_intent_for_dispatch`. Its SQLite transaction checks the active trusted context and inserts the intent's permanent unique claim with `intent.dispatch_claimed`; only one concurrent caller wins. A loser returns a completed authoritative result or fails ambiguous, never dispatches again. The claim is not an expiring lease and an incomplete claimed operation is not replayed after restart. This separates idempotent reservation/grant consumption from exclusive dispatch ownership.
+
+See `CONFIG_AND_SCHEMAS.md` for the actual validated schema and CLI, and `SECURITY_MODEL.md` for filesystem, mutation and compatibility limitations. The store requires its POSIX no-follow/lock protections; unsupported platforms fail closed.
 
 ## 4.4 SandboxProvider
 
@@ -801,10 +806,14 @@ When ToolGateway returns `REQUIRE_APPROVAL`:
 4. emit events;
 5. stop executing new side effects;
 6. release or retain sandbox according to a documented policy;
-7. on approval, issue a scoped capability and resume the same logical tool intent idempotently;
+7. on explicit once/run/project approval, revalidate current target/configuration/policy and issue a scoped capability; explicit resume revalidates again and reserves the same logical intent idempotently;
 8. on denial, return structured denial to the agent or fail the stage according to policy.
 
 Do not simply throw an in-memory exception and lose the run.
+
+The implemented Engineer and Verifier approval paths persist paused intent/request state and resume the recorded stage. `AgentStatus.PAUSED` preserves the paused role rather than marking it failed. `Run.engineer_checkpoint: AgentExecutionCheckpoint` retains agent/workspace/sandbox/iteration/creation time and clears after implementation. Its `VerificationCheckpoint` subclass additionally binds final patch and baseline workspace fingerprint; resume reuses the same verifier context and validates canonical patch bytes, with another exact mutation check before accepting its result. After CLI reconstruction, only known active parent sandbox/workspace leases may be rehydrated under the same logical identities and inspected capabilities; outstanding execution leases require recovery and are never replayed. Logical tool retry preserves the original reason (display prose), while every execution-bearing field still participates in exact intent-hash checks. Approval itself does not execute the tool. General interrupted-stage recovery, provider conversation checkpoints and durable usage/budget accounting across pauses remain Phase 5; this flow does not promise restoration of arbitrary provider internals or exactly-once external services.
+
+For a legacy once-only Engineer pause without a checkpoint, resume may adopt only the exact original persisted agent after validated state lookup and run/task/role binding checks. It never substitutes a new principal or upgrades that historical grant's lifetime.
 
 ## 6. Agent orchestration target
 
@@ -828,7 +837,7 @@ Output:
 - explicit ambiguities, risks, and required approvals;
 - selected workflow.
 
-The application validates and freezes the TaskSpec and FleetPlan. The CoS cannot invent undeclared tools or roles, raise limits, schedule unsupported topology, or claim assurance that the plan/evidence cannot provide. Phase 2 validates proposed `allowed_paths` for canonical form, protected boundaries, and conflicts, but does not independently derive a semantic path ceiling from the natural-language goal; the accepted CoS paths become the TaskSpec candidate scope. This does not mutate the target checkout—explicit patch review/apply remains required—but a reviewed user-scope intersection is still Phase 4 work.
+The application validates and freezes TaskSpec and FleetPlan. CoS cannot invent undeclared tools/roles, raise limits, schedule unsupported topology or claim assurance absent from evidence. Phase 4 validates proposed `allowed_paths` against canonical/protected boundaries and the separately user-reviewed project ceiling; current policy is checked again before execution/resume. Fleet does not derive that ceiling from natural-language intent. Candidate work never implicitly mutates the target checkout: explicit patch review/apply remains required.
 
 ## 6.2 Engineer invocation
 
@@ -925,12 +934,14 @@ Loading order:
 
 1. parse repository `.fleet/fleet.yaml` as an untrusted request;
 2. parse referenced repository role/workflow files within the `.fleet/` boundary;
-3. load user settings and trust rules from user config/data directories;
+3. load current user settings and trust rules from the separate Fleet-owned trust store;
 4. calculate effective configuration through intersection and validation;
-5. snapshot the effective non-secret configuration for the run;
+5. snapshot repository configuration for the run, retaining current policy as a separate, revocable authority source;
 6. validate runtime and sandbox capability requirements before starting.
 
-Phase 3 implements steps 1–2 and 5–6 for the current repository-owned/Fleet-owned configuration split, including exact runtime and sandbox selection. It captures the exact bounded UTF-8 content/hash of `fleet.yaml` plus every referenced role, workflow, and project file in a sorted content-addressed `ConfigSnapshot`. The repository file may request `fake` or `pydantic-ai`, an opaque provider/model ID where required, and an exact fake/Docker/local-unsafe sandbox configuration. The user-selected `env:NAME` binding is loaded only from Fleet-owned state and must agree with explicit run overrides; repository files cannot select it. The composition root injects the same Redactor used by state/artifacts; generated and loaded configuration is scanned before parsing, writing, or snapshotting, and secret-bearing parser failures are replaced by cause-free generic errors. Project and every TaskSpec/Run bind this snapshot. User settings/trust intersection and a broader effective configuration remain Phase 4 work.
+ConfigSnapshot captures the exact bounded UTF-8 content/hash of `fleet.yaml` plus every referenced role, workflow and project file, sorted and content-addressed. Referenced role/workflow content is captured, not parsed into a general executable workflow language. The repository requests fake/PydanticAI runtime, provider/model where applicable and an exact fake/Docker/local-unsafe configuration. The explicit `env:NAME` reference comes only from Fleet-owned state and must agree with run overrides. A shared Redactor scans configuration before parsing, writing or snapshotting, with cause-free generic failures for secret-bearing input. Project and every TaskSpec/Run bind this snapshot. Phase 4 separately reloads user policy and checks role/workflow/request/task/sandbox intersections at authorization and resume; frozen repository configuration cannot freeze or bypass later revocation.
+
+Init preview includes the reviewed mode/path proposal and policy revision without creating state. Confirmed initialization binds that review to the current revision; new Project records require a completed trust registration, so a partial registration cannot silently acquire a legacy default. Reinitialization preserves existing mode/paths when their flags are omitted.
 
 `fleet init` is not an in-place merge mechanism. When the proposal differs from an existing generated tree, it fails before changing Project/artifact state or `.fleet/`; the recovery is whole-tree review and replacement by the user followed by explicit initialization. Operational review/apply/rollback for organization changes remains the Phase 6 FleetPatch responsibility.
 
@@ -940,12 +951,11 @@ Do not allow YAML custom object tags. Use safe loading and Pydantic validation. 
 
 ## 9. Persistence schema
 
-Initial SQLite tables may include:
+Current SQLite tables (schema version 4):
 
 ```text
 schema_migrations
 projects
-fleet_spec_versions
 runs
 tasks
 agent_instances
@@ -953,7 +963,8 @@ run_events
 approvals
 capability_grants
 artifacts
-fleet_patches
+tool_intents
+tool_dispatch_claims
 resource_leases
 ```
 
@@ -962,7 +973,9 @@ Key design points:
 - `run_events` has a monotonically increasing per-run sequence.
 - schema migration `0002` copies all v1 AgentInstance rows and permits a null `task_id` only for `role='cos'`, so the running CoS lifecycle can be persisted before its ScopeDecision creates TaskSpec; completed CoS rows are rebound afterward.
 - approvals have request state and resolution audit fields.
-- capability grants record exact scope, expiry, remaining uses, issuer, and consumption.
+- migration `0004` preserves prior grants and makes their approval reference nullable for persistent-rule receipts. Grants record exact scope hash, source rule, expiry, uses, issuer and consumption/revocation. Request-free receipts are bounded and consumed during reservation, not invented approvals or reusable run grants.
+- migration `0004` also adds `tool_dispatch_claims(intent_id PRIMARY KEY, intent_hash, claimed_at)`. Claims are permanent at-most-once execution ownership, with no timeout/reclaim path; interrupted dispatch requires reconciliation rather than replay.
+- project settings and persistent exact rules live in the separately validated/revisioned trust store, not SQLite; policy mutation events record the cross-store publication protocol. FleetPatch persistence and conversation/node tables are still future work.
 - resource leases track worktrees/containers for crash recovery.
 - exact ConfigSnapshot and TaskSpec serializations are content-addressed, immutable, and identity-bound to Project/Run artifacts.
 - artifact rows point to content-addressed local files.

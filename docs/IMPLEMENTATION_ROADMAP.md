@@ -4,7 +4,7 @@
 
 Implement phases in order. Every phase must leave a runnable, tested repository and produce an updated ExecPlan outcome. Do not begin a later phase by creating empty placeholder abstractions across the whole system. Add only the contracts required by the current vertical slice, while preserving the specified architectural boundaries.
 
-Current boundary as of 2026-09-04: Phase 0/1, the Phase 1.5 North-Star foundation, the Phase 2 BYOK PydanticAI vertical slice, and the Phase 3 local Docker sandbox/evidence-gated bootstrap slice are implemented. Phase 3 release acceptance and delivery evidence are governed by its living ExecPlan. Phase 4–7 remain roadmap; no later-phase implementation begins until the Phase 3 acceptance gates pass.
+Current boundary as of 2026-09-05: Phase 0–4 is implemented and accepted, including the exact permission lifecycle, external user-owned trust and safe approval resume. The final Phase 4 default suite passed `1001 passed, 10 skipped`; nine separately enabled real-Docker tests passed. See `MVP_ACCEPTANCE.md` and the active MVP completion ExecPlan for exact evidence. Phase 5–7 remain unimplemented; live-provider acceptance and the owner license decision remain open. Phase 4 acceptance is not a complete MVP release or GitHub delivery claim.
 
 For each phase:
 
@@ -308,6 +308,10 @@ Unit/security tests do not require Docker. Add opt-in Docker integration tests t
 A manual canary with a real or fake runtime modifies and tests code inside Docker, produces a control-plane patch, and demonstrates that a provider secret and host sentinel are inaccessible from the worker.
 
 ## Phase 4 — PermissionBroker, approvals, and exact always-allow
+
+**Status: accepted, 2026-09-05.** Final gates: default suite `1001 passed, 10 skipped in 431.79s` (nine opt-in Docker and one live-provider skip); unit `510/53.30s`, contract `281/4.47s`, marked integration `156 passed, 49 deselected/311.72s`, E2E `4/44.40s`; Ruff formatting/lint (165 files), mypy (141 source files), schema/diff checks; real Docker `9 passed in 42.32s` with zero managed-container residue; offline wheel/sdist inspection of 129 package files, 37 schemas, four migrations and three prompts each. These are local working-tree results, not a frozen Git commit or installed-user release proof.
+
+Accepted hardening includes exact current-policy revalidation, reviewed init paths/revision, prepared→publish→completion audit, dormant always-rule activation, reset cutoff, source-rule receipts without fabricated approvals, permanent single-winner dispatch, exact Engineer/Verifier checkpoints and legacy once-agent restoration. Logical retries preserve original explanatory prose without relaxing execution-bearing identity checks. Safe prompts supported commands; Balanced and Autonomous Sandbox deliberately share the supported reviewed-command ceiling, without arbitrary command/network expansion. Provider history and aggregate usage/budgets across pauses remain Phase 5; no live provider was run. The deliverables below remain the contract for regression, not unfinished Phase 4 work.
 
 ### Goal
 

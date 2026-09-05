@@ -9,6 +9,7 @@ from agent_fleet.application.sandboxes import SandboxRegistry
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
+    FleetEvent,
     LeaseKind,
     LeaseStatus,
     ResourceLease,
@@ -189,6 +190,114 @@ class ResourceService:
             f"Active engineer sandbox lease is missing for run {run_id}.",
             "Inspect resource leases and resume from a valid checkpoint.",
         )
+
+    def checkpoint_workspace(self, run_id: str, workspace_id: str) -> Workspace:
+        for lease in self.state.active_leases(run_id):
+            if lease.kind is LeaseKind.WORKTREE and lease.resource_id == workspace_id:
+                return _workspace_from_lease(lease)
+        raise FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "The exact checkpoint workspace lease is no longer active.",
+            "Recover or cancel this run; do not substitute another workspace.",
+        )
+
+    def checkpoint_sandbox(self, run_id: str, sandbox_id: str) -> SandboxHandle:
+        for lease in self.state.active_leases(run_id):
+            if lease.kind is LeaseKind.SANDBOX and lease.resource_id == sandbox_id:
+                return _sandbox_handle_from_lease(lease)
+        raise FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "The exact checkpoint sandbox lease is no longer active.",
+            "Recover or cancel this run; do not substitute another sandbox.",
+        )
+
+    async def rehydrate_paused_sandboxes(self, run: Run) -> None:
+        """Revalidate logical sandboxes after CLI restart, never replay an execution."""
+        leases = self.state.outstanding_leases(run.run_id)
+        if run.status is not RunStatus.PAUSED_FOR_APPROVAL or any(
+            lease.kind is LeaseKind.EXECUTION or lease.status is not LeaseStatus.ACTIVE
+            for lease in leases
+        ):
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "Paused sandbox restoration requires only known active parent leases.",
+                "Cancel the run or reconcile its interrupted execution before retrying.",
+            )
+        if run.sandbox_configuration is None or run.sandbox_requirements is None:
+            raise RuntimeError("Run sandbox binding is missing")
+        for lease in leases:
+            if lease.kind is not LeaseKind.SANDBOX:
+                continue
+            handle = _sandbox_handle_from_lease(lease)
+            workspaces = [
+                _workspace_from_lease(item)
+                for item in leases
+                if item.kind is LeaseKind.WORKTREE and item.path == handle.workspace_host_path
+            ]
+            if (
+                len(workspaces) != 1
+                or workspaces[0].base_revision != run.base_revision
+                or handle.run_id != run.run_id
+                or handle.project_id != run.project_id
+                or handle.configuration_hash != run.sandbox_configuration_hash
+                or handle.capabilities != run.sandbox_capabilities_snapshot
+                or handle.image_identity != run.sandbox_image_identity
+                or handle.daemon_identity != run.sandbox_daemon_identity
+            ):
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "Paused sandbox bindings do not match their exact run and workspace.",
+                    "Cancel this run; Fleet will not substitute execution boundaries.",
+                )
+            provider = self.sandboxes.require(run.sandbox_configuration, run.sandbox_requirements)
+            # Current providers create only a logical context here. Commands use
+            # separately journaled execution resources and are never recreated.
+            restored = await provider.create(
+                run.run_id,
+                SandboxSpec(
+                    workspace_host_path=handle.workspace_host_path,
+                    project_id=run.project_id,
+                    configuration=run.sandbox_configuration,
+                    requirements=run.sandbox_requirements,
+                    environment={},
+                    unsafe_local_confirmed=run.unsafe_local_confirmed,
+                    image_identity=run.sandbox_image_identity,
+                    daemon_identity=run.sandbox_daemon_identity,
+                ),
+                sandbox_id=handle.sandbox_id,
+            )
+            inspection = await provider.inspect(restored)
+            if (
+                restored != handle
+                or not inspection.ready
+                or inspection.sandbox_id != handle.sandbox_id
+                or inspection.provider != handle.provider
+                or inspection.configuration_hash != handle.configuration_hash
+                or inspection.capabilities != handle.capabilities
+                or inspection.image_identity != handle.image_identity
+                or inspection.daemon_identity != handle.daemon_identity
+                or inspection.effective_network_mode != run.sandbox_configuration.network_mode
+                or inspection.missing_requirements(run.sandbox_requirements)
+            ):
+                raise FleetError(
+                    ErrorCode.SANDBOX_INSPECTION_FAILED,
+                    "Restored sandbox failed its exact effective-boundary inspection.",
+                    "Cancel or recover this run; no command was replayed.",
+                )
+            self.state.append_event(
+                FleetEvent(
+                    event_id=self.ids.new(IdPrefix.EVENT),
+                    event_type="sandbox.rehydrated",
+                    project_id=run.project_id,
+                    run_id=run.run_id,
+                    correlation_id=run.correlation_id,
+                    occurred_at=self.clock.now(),
+                    payload={
+                        "sandbox_id": handle.sandbox_id,
+                        "workspace_id": workspaces[0].workspace_id,
+                    },
+                )
+            )
 
     async def cleanup_run(self, run: Run, *, recovered: bool = False) -> None:
         target_status = LeaseStatus.RECOVERED if recovered else LeaseStatus.RELEASED

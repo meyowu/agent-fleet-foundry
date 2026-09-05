@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -49,6 +50,7 @@ from agent_fleet.domain.models import (
 from agent_fleet.domain.offline_canary import BOOTSTRAP_SANDBOX_PROBE_MARKER
 from agent_fleet.domain.repository_profile import ProjectKnowledge, RepositoryProfile
 from agent_fleet.domain.security import Redactor, canonical_json_hash, path_is_within
+from agent_fleet.domain.trust import TrustMode
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
 from agent_fleet.ports.id_generator import IdGenerator
@@ -128,7 +130,29 @@ class BootstrapService:
         docker_image: str | None = None,
         allow_unsafe_local: bool = False,
         expected_proposal_hash: str | None = None,
+        trust_mode: TrustMode | None = None,
+        allowed_paths: tuple[str, ...] | None = None,
+        expected_trust_revision: int | None = None,
     ) -> dict[str, object]:
+        permissions = self.workflow.permission_policy
+        if permissions is None:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "Bootstrap requires a user policy service.",
+                "Use the complete Fleet composition root.",
+            )
+        reviewed = permissions.review_initialization(
+            root, mode=trust_mode, allowed_paths=allowed_paths
+        )
+        reviewed_mode = TrustMode(cast(str, reviewed["trust_mode"]))
+        reviewed_paths = tuple(cast(list[str], reviewed["allowed_paths"]))
+        reviewed_revision = cast(int, reviewed["policy_revision"])
+        if expected_trust_revision is not None and reviewed_revision != expected_trust_revision:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "User trust changed after the initialization preview.",
+                "Review the new user policy and retry initialization.",
+            )
         started_at = self.clock.now()
         target_info = self.repository.inspect(root)
         target_root = Path(target_info.root)
@@ -339,6 +363,12 @@ class BootstrapService:
             Path(target_info.root),
             verified=verified_report,
         )
+        settings = permissions.configure(
+            Path(target_info.root),
+            mode=reviewed_mode,
+            allowed_paths=reviewed_paths,
+            expected_revision=reviewed_revision,
+        )
         initialized.update(
             {
                 "bootstrap_report_artifact_id": report_artifact.artifact_id,
@@ -354,6 +384,7 @@ class BootstrapService:
                 "bootstrap_proof_gaps": report.proof_gaps,
                 "bootstrap_remaining_risks": report.remaining_risks,
                 "sandbox_preflight": preflight.model_dump(mode="json"),
+                "user_permission_settings": settings.model_dump(mode="json"),
             }
         )
         return initialized

@@ -255,6 +255,7 @@ class AgentLifecycle(StrEnum):
 class AgentStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -372,6 +373,8 @@ class PermissionOutcome(StrEnum):
 class ApprovalChoice(StrEnum):
     DENY = "deny"
     ALLOW_ONCE = "allow_once"
+    ALLOW_RUN = "allow_run"
+    ALLOW_ALWAYS = "allow_always"
 
 
 class ApprovalStatus(StrEnum):
@@ -527,6 +530,7 @@ class Project(StrictModel):
     bootstrap_report_sha256: Sha256 | None = None
     bootstrap_canary_run_id: RunId | None = None
     bootstrap_verified: bool = False
+    permission_scope_required: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -568,6 +572,23 @@ class Project(StrictModel):
         return self
 
 
+class AgentExecutionCheckpoint(FrozenStrictModel):
+    """Identity-bound specialist session retained across approval pauses."""
+
+    agent_instance_id: AgentInstanceId
+    workspace_id: WorkspaceId
+    sandbox_id: SandboxId
+    iteration: int = Field(ge=0, le=5)
+    created_at: datetime
+
+    _created_utc = field_validator("created_at")(_require_utc)
+
+
+class VerificationCheckpoint(AgentExecutionCheckpoint):
+    patch_sha256: Sha256
+    baseline_fingerprint: Sha256
+
+
 class Run(StrictModel):
     run_id: RunId
     project_id: ProjectId
@@ -606,6 +627,8 @@ class Run(StrictModel):
     command_evidence_artifact_ids: list[ArtifactId] = Field(default_factory=list)
     runtime_usage_artifact_ids: list[ArtifactId] = Field(default_factory=list)
     verifier_agent_instance_id: AgentInstanceId | None = None
+    engineer_checkpoint: AgentExecutionCheckpoint | None = None
+    verification_checkpoint: VerificationCheckpoint | None = None
     verifier_verdict_artifact_id: ArtifactId | None = None
     evidence_bundle_artifact_id: ArtifactId | None = None
     evidence_bundle_hash: Sha256 | None = None
@@ -1125,6 +1148,25 @@ class PermissionDecision(StrictModel):
     decision_code: str
     explanation: str
     protected: bool = False
+    matched_rule_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Field(
+        default_factory=list, max_length=128
+    )
+    effective_scope: dict[str, JsonValue] | None = None
+    risk: str = Field(default="unknown", min_length=1, max_length=64)
+    available_choices: list[ApprovalChoice] = Field(default_factory=list, max_length=4)
+    grant_id: GrantId | None = None
+    source_rule_id: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
+
+    @field_validator("effective_scope")
+    @classmethod
+    def validate_effective_scope(
+        cls, value: dict[str, JsonValue] | None
+    ) -> dict[str, JsonValue] | None:
+        if value is not None:
+            _validate_bounded_json(
+                value, field_name="effective permission scope", max_bytes=131_072
+            )
+        return value
 
 
 class ApprovalRequest(StrictModel):
@@ -1138,8 +1180,13 @@ class ApprovalRequest(StrictModel):
     reason: str
     status: ApprovalStatus = ApprovalStatus.PENDING
     available_choices: list[ApprovalChoice] = Field(
-        default_factory=lambda: [ApprovalChoice.DENY, ApprovalChoice.ALLOW_ONCE]
+        default_factory=lambda: [ApprovalChoice.DENY, ApprovalChoice.ALLOW_ONCE],
+        min_length=1,
+        max_length=4,
     )
+    authorization_scope: dict[str, JsonValue] | None = None
+    resolution_choice: ApprovalChoice | None = None
+    source_rule_id: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
     created_at: datetime
     expires_at: datetime
     resolved_at: datetime | None = None
@@ -1151,10 +1198,28 @@ class ApprovalRequest(StrictModel):
         lambda value: _require_utc(value) if value is not None else value
     )
 
+    @field_validator("authorization_scope")
+    @classmethod
+    def validate_authorization_scope(
+        cls, value: dict[str, JsonValue] | None
+    ) -> dict[str, JsonValue] | None:
+        if value is not None:
+            _validate_bounded_json(
+                value, field_name="approval authorization scope", max_bytes=131_072
+            )
+        return value
+
+    @field_validator("available_choices")
+    @classmethod
+    def validate_available_choices(cls, values: list[ApprovalChoice]) -> list[ApprovalChoice]:
+        if len(values) != len(set(values)):
+            raise ValueError("approval choices must be unique")
+        return values
+
 
 class CapabilityGrant(StrictModel):
     grant_id: GrantId
-    request_id: ApprovalRequestId
+    request_id: ApprovalRequestId | None = None
     intent_id: IntentId
     project_id: ProjectId
     run_id: RunId
@@ -1166,15 +1231,49 @@ class CapabilityGrant(StrictModel):
     intent_hash: Sha256
     issued_by: Literal["user"] = "user"
     issued_at: datetime
-    expires_at: datetime
-    remaining_uses: int = Field(default=1, ge=0, le=1)
+    expires_at: datetime | None = None
+    choice: ApprovalChoice = ApprovalChoice.ALLOW_ONCE
+    scope_sha256: Sha256 | None = None
+    remaining_uses: int | None = Field(default=1, ge=0, le=10_000)
     consumed_at: datetime | None = None
+    revoked_at: datetime | None = None
+    source_rule_id: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
 
     _issued_utc = field_validator("issued_at")(_require_utc)
-    _expires_utc = field_validator("expires_at")(_require_utc)
+    _expires_utc = field_validator("expires_at")(
+        lambda value: _require_utc(value) if value is not None else value
+    )
     _consumed_utc = field_validator("consumed_at")(
         lambda value: _require_utc(value) if value is not None else value
     )
+    _revoked_utc = field_validator("revoked_at")(
+        lambda value: _require_utc(value) if value is not None else value
+    )
+
+    @model_validator(mode="after")
+    def validate_grant_choice(self) -> CapabilityGrant:
+        if self.choice is ApprovalChoice.DENY:
+            raise ValueError("a denied request cannot issue a capability")
+        if self.request_id is None and (
+            self.choice is not ApprovalChoice.ALLOW_ALWAYS
+            or self.source_rule_id is None
+            or self.remaining_uses not in {0, 1}
+            or (self.remaining_uses == 0 and self.consumed_at is None)
+        ):
+            raise ValueError("request-free grants require a bounded persistent-rule receipt")
+        if self.choice is ApprovalChoice.ALLOW_ONCE and self.remaining_uses not in {0, 1}:
+            raise ValueError("allow-once grants have exactly one use before consumption")
+        if self.choice is ApprovalChoice.ALLOW_ONCE and (
+            self.expires_at is None
+            or not 0 < (self.expires_at - self.issued_at).total_seconds() <= 600
+        ):
+            raise ValueError("allow-once grants require an expiry within ten minutes of issuance")
+        if (
+            self.choice in {ApprovalChoice.ALLOW_RUN, ApprovalChoice.ALLOW_ALWAYS}
+            and self.scope_sha256 is None
+        ):
+            raise ValueError("reusable grants require an exact authorization scope hash")
+        return self
 
 
 class ImplementationReport(StrictModel):

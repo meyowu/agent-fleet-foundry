@@ -5,6 +5,7 @@ from typing import Protocol
 
 from agent_fleet.domain.models import (
     AgentInstance,
+    ApprovalChoice,
     ApprovalRequest,
     ArtifactMetadata,
     CapabilityGrant,
@@ -39,6 +40,8 @@ class StateStore(Protocol):
 
     def save_agent_instance(self, instance: AgentInstance) -> None: ...
 
+    def get_agent_instance(self, agent_instance_id: str) -> AgentInstance: ...
+
     def append_event(self, event: FleetEvent) -> FleetEvent: ...
 
     def list_events(self, run_id: str) -> Sequence[FleetEvent]: ...
@@ -51,7 +54,11 @@ class StateStore(Protocol):
 
     def find_intent(self, run_id: str, idempotency_key: str) -> StoredToolIntent | None: ...
 
+    def get_intent(self, intent_id: str) -> StoredToolIntent: ...
+
     def reserve_intent(self, intent: ToolIntent, intent_hash: str) -> StoredToolIntent: ...
+
+    def claim_reserved_intent_for_dispatch(self, intent_id: str, intent_hash: str) -> bool: ...
 
     def create_approval_and_pause(
         self, intent: ToolIntent, intent_hash: str, request: ApprovalRequest
@@ -60,10 +67,37 @@ class StateStore(Protocol):
     def get_approval(self, request_id: str) -> ApprovalRequest: ...
 
     def resolve_approval(
-        self, request_id: str, *, approve: bool, denial_reason: str | None
+        self,
+        request_id: str,
+        *,
+        approve: bool,
+        denial_reason: str | None,
+        choice: ApprovalChoice = ApprovalChoice.ALLOW_ONCE,
+        scope_sha256: str | None = None,
+        source_rule_id: str | None = None,
     ) -> CapabilityGrant | None: ...
 
     def consume_grant_and_reserve(self, request_id: str, intent_hash: str) -> StoredToolIntent: ...
+
+    def list_grants(self, run_id: str) -> list[CapabilityGrant]: ...
+
+    def list_project_grants(self, project_id: str) -> list[CapabilityGrant]: ...
+
+    def get_grant(self, grant_id: str) -> CapabilityGrant: ...
+
+    def revoke_grant(self, grant_id: str) -> CapabilityGrant: ...
+
+    def consume_matching_grant_and_reserve(
+        self, grant_id: str, intent: ToolIntent, intent_hash: str, scope_sha256: str
+    ) -> StoredToolIntent: ...
+
+    def reserve_trust_rule_intent(
+        self,
+        intent: ToolIntent,
+        intent_hash: str,
+        scope_sha256: str,
+        source_rule_id: str,
+    ) -> StoredToolIntent: ...
 
     def complete_intent(self, intent_id: str, result: dict[str, object]) -> StoredToolIntent: ...
 

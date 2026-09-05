@@ -34,15 +34,16 @@ def _run() -> Run:
     )
 
 
-def test_valid_transition_path_and_pause_resume() -> None:
+@pytest.mark.parametrize(
+    "stage", [WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING, WorkflowStage.VERIFYING]
+)
+def test_valid_transition_path_and_pause_resume(stage: WorkflowStage) -> None:
     run = _run()
     validate_transition(run, RunStatus.RUNNING, WorkflowStage.INTAKE)
-    implementing = run.model_copy(
-        update={"status": RunStatus.RUNNING, "stage": WorkflowStage.IMPLEMENTING}
-    )
-    validate_transition(implementing, RunStatus.PAUSED_FOR_APPROVAL, WorkflowStage.IMPLEMENTING)
+    implementing = run.model_copy(update={"status": RunStatus.RUNNING, "stage": stage})
+    validate_transition(implementing, RunStatus.PAUSED_FOR_APPROVAL, stage)
     paused = implementing.model_copy(update={"status": RunStatus.PAUSED_FOR_APPROVAL})
-    validate_transition(paused, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
+    validate_transition(paused, RunStatus.RUNNING, stage)
 
 
 def test_invalid_transition_has_stable_error() -> None:

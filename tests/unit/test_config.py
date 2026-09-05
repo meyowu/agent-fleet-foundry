@@ -39,6 +39,7 @@ def test_default_fleet_spec_round_trips_strictly() -> None:
         "workspace.apply_edit",
         "workspace.delete_path",
         "command.run",
+        "fixture.record_side_effect",
     ]
     assert spec.spec.agents["verifier"].allowed_tools == [
         "repo.list_files",

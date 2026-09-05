@@ -1,0 +1,57 @@
+{
+  "$defs": {
+    "TrustMode": {
+      "enum": [
+        "safe",
+        "balanced",
+        "autonomous-sandbox"
+      ],
+      "title": "TrustMode",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "allowed_paths": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Allowed Paths",
+      "type": "array"
+    },
+    "grants_revoked_before": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Grants Revoked Before"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "repository_identity": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repository Identity",
+      "type": "string"
+    },
+    "trust_mode": {
+      "$ref": "#/$defs/TrustMode",
+      "default": "balanced"
+    }
+  },
+  "required": [
+    "project_id",
+    "repository_identity"
+  ],
+  "title": "ProjectTrustSettings",
+  "type": "object"
+}

@@ -25,6 +25,7 @@ from agent_fleet.domain.evidence import CommandEvidence, EvidenceStrength
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     AgentInstance,
+    ApprovalChoice,
     ApprovalRequest,
     ApprovalStatus,
     ArtifactKind,
@@ -122,7 +123,10 @@ class ToolGateway:
             action=scripted.action,
             resource=scripted.resource,
             parameters=scripted.parameters,
-            reason=scripted.reason,
+            # Display prose may change when a model reconstructs a paused call.
+            # Preserve the originally reviewed explanation; every execution-bearing
+            # field still participates in the exact immutable intent hash below.
+            reason=existing.intent.reason if existing is not None else scripted.reason,
             side_effect=scripted.side_effect,
             idempotency_key=scripted.idempotency_key,
             requested_ttl_seconds=600 if scripted.action == "fixture.record_side_effect" else None,
@@ -145,6 +149,20 @@ class ToolGateway:
                 return existing.result or {}
             if existing.status is IntentStatus.DENIED:
                 raise ApprovalDeniedError(existing.approval_request_id or "unknown")
+        provider = self.sandboxes.get(sandbox_handle.provider)
+        decision = self.permission_broker.evaluate(intent, task, provider.capabilities)
+        self._record_permission_decision(run, intent, decision)
+        if decision.outcome is PermissionOutcome.DENY:
+            if existing is None:
+                self.state.reserve_intent(intent, intent_hash)
+            self.state.deny_intent(intent.intent_id)
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                decision.explanation,
+                "Review the exact role, task, command, and user policy scope.",
+                details={"decision_code": decision.decision_code},
+            )
+        if existing is not None:
             if existing.status is IntentStatus.PENDING_APPROVAL:
                 if existing.approval_request_id is None:
                     raise FleetError(
@@ -157,6 +175,12 @@ class ToolGateway:
                     raise ApprovalRequiredError(request.request_id)
                 if request.status is ApprovalStatus.DENIED:
                     raise ApprovalDeniedError(request.request_id)
+                if decision.outcome is not PermissionOutcome.ALLOW:
+                    raise FleetError(
+                        ErrorCode.APPROVAL_INVALID,
+                        "The earlier approval is no longer authorized by current policy.",
+                        "Review revoked or expired grants, then start a new run if needed.",
+                    )
                 existing = self.state.consume_grant_and_reserve(
                     request.request_id, existing.intent_hash
                 )
@@ -165,6 +189,12 @@ class ToolGateway:
                     ErrorCode.COMMAND_DENIED,
                     "The recorded tool intent is not executable.",
                     "Inspect the approval and run event history.",
+                )
+            if decision.outcome is not PermissionOutcome.ALLOW:
+                raise FleetError(
+                    ErrorCode.APPROVAL_INVALID,
+                    "The reserved operation is not authorized by current policy.",
+                    "Inspect the interrupted operation and start a fresh run after review.",
                 )
             if resumed_reserved_command:
                 raise FleetError(
@@ -175,18 +205,6 @@ class ToolGateway:
                     details={"intent_id": existing.intent.intent_id},
                 )
         else:
-            provider = self.sandboxes.get(sandbox_handle.provider)
-            decision = self.permission_broker.evaluate(intent, task, provider.capabilities)
-            self._record_permission_decision(run, intent, decision)
-            if decision.outcome is PermissionOutcome.DENY:
-                self.state.reserve_intent(intent, intent_hash)
-                self.state.deny_intent(intent.intent_id)
-                raise FleetError(
-                    ErrorCode.COMMAND_DENIED,
-                    decision.explanation,
-                    "Use only the bounded Phase 1 candidate-write and fake-command actions.",
-                    details={"decision_code": decision.decision_code},
-                )
             if decision.outcome is PermissionOutcome.REQUIRE_APPROVAL:
                 now = self.clock.now()
                 request = ApprovalRequest(
@@ -198,12 +216,55 @@ class ToolGateway:
                     action=intent.action,
                     resource=intent.resource,
                     reason=intent.reason,
+                    authorization_scope=decision.effective_scope,
+                    available_choices=decision.available_choices
+                    or [ApprovalChoice.DENY, ApprovalChoice.ALLOW_ONCE],
                     created_at=now,
                     expires_at=now + timedelta(minutes=10),
                 )
                 self.state.create_approval_and_pause(intent, intent_hash, request)
                 raise ApprovalRequiredError(request.request_id)
-            self.state.reserve_intent(intent, intent_hash)
+            if decision.grant_id is not None:
+                if decision.effective_scope is None:
+                    raise FleetError(
+                        ErrorCode.APPROVAL_INVALID,
+                        "A reusable grant has no exact authorization scope.",
+                        "Inspect the stored grant before retrying.",
+                    )
+                self.state.consume_matching_grant_and_reserve(
+                    decision.grant_id,
+                    intent,
+                    intent_hash,
+                    canonical_json_hash(decision.effective_scope),
+                )
+            elif decision.source_rule_id is not None:
+                if decision.effective_scope is None:
+                    raise FleetError(
+                        ErrorCode.APPROVAL_INVALID,
+                        "A persistent rule has no exact authorization scope.",
+                        "Inspect the stored rule before retrying.",
+                    )
+                self.state.reserve_trust_rule_intent(
+                    intent,
+                    intent_hash,
+                    canonical_json_hash(decision.effective_scope),
+                    decision.source_rule_id,
+                )
+            else:
+                self.state.reserve_intent(intent, intent_hash)
+        if not self.state.claim_reserved_intent_for_dispatch(intent.intent_id, intent_hash):
+            authoritative = self.state.get_intent(intent.intent_id)
+            if (
+                authoritative.intent_hash == intent_hash
+                and authoritative.status is IntentStatus.EXECUTED
+            ):
+                return authoritative.result or {}
+            raise FleetError(
+                ErrorCode.COMMAND_OUTCOME_AMBIGUOUS,
+                "This tool intent already has an execution owner without a terminal result.",
+                "Inspect or recover the existing operation; Fleet will not dispatch it twice.",
+                details={"intent_id": intent.intent_id},
+            )
         result = await self._execute_reserved(
             run=run,
             task=task,
@@ -895,6 +956,12 @@ class ToolGateway:
                 "outcome": decision.outcome.value,
                 "decision_code": decision.decision_code,
                 "explanation": decision.explanation,
+                "protected": decision.protected,
+                "matched_rule_ids": decision.matched_rule_ids,
+                "effective_scope": decision.effective_scope,
+                "risk": decision.risk,
+                "grant_id": decision.grant_id,
+                "source_rule_id": decision.source_rule_id,
             }
         )
         self.state.append_event(

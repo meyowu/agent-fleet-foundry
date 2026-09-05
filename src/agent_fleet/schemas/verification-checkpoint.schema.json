@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "agent_instance_id": {
+      "pattern": "^agent_[0-9a-f]{32}$",
+      "title": "Agent Instance Id",
+      "type": "string"
+    },
+    "baseline_fingerprint": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Baseline Fingerprint",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "iteration": {
+      "maximum": 5,
+      "minimum": 0,
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "patch_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Patch Sha256",
+      "type": "string"
+    },
+    "sandbox_id": {
+      "pattern": "^sandbox_[0-9a-f]{32}$",
+      "title": "Sandbox Id",
+      "type": "string"
+    },
+    "workspace_id": {
+      "pattern": "^ws_[0-9a-f]{32}$",
+      "title": "Workspace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent_instance_id",
+    "workspace_id",
+    "sandbox_id",
+    "iteration",
+    "created_at",
+    "patch_sha256",
+    "baseline_fingerprint"
+  ],
+  "title": "VerificationCheckpoint",
+  "type": "object"
+}

@@ -100,14 +100,15 @@ The adapter-code distinction is important: models, provider responses, and harne
 ### Current enforcement boundary
 
 - **Enforced in Phase 0–3:** bounded static profiling with pre-output/pre-write registered-secret rejection; canonical runtime-tool intents; an independently injected baseline PermissionBroker with three decision values, default deny, decision events, and exact allow-once; descriptor-relative workspace operations; Git 2.45+ hardened worktrees and trusted executable resolution; canonical patches and guarded apply; exact fake/Docker/local-unsafe selection with no fallback; immutable local Docker daemon/image binding; inspected network-off, non-root, read-only, resource-bounded one-shot containers; durable execution recovery; fresh-verifier evidence; canary-before-publication BootstrapReport validation; strict `env:NAME` BYOK; complete model/request/artifact registered-secret scans; and no harness-native execution path.
-- **Still partial:** FakeSandbox remains simulated, local-unsafe remains non-isolating, only direct/single/pair plans run, permission persistence is allow-once only, FleetPatch is a protected schema/validator rather than an operational workflow, and installed Python adapter code shares the trusted control-plane process. Docker trusts the local account, CLI/configuration, daemon, kernel/VM, and preloaded image and does not defend against a hostile same-user process.
-- **Roadmap:** run/persistent trust plus explain/revoke (Phase 4), the complete adaptive/chat workflow (Phase 5), operational FleetPatch evolution (Phase 6), and broader release/platform hardening (Phase 7).
+- **Phase 4 accepted, 2026-09-05:** current user/project/workflow/role/task/sandbox intersection, reviewed paths, bounded trust modes, exact once/run/project approvals, list/explain/revoke/reset, validated external trust storage, permanent one-winner dispatch and identity-bound approval resume passed their acceptance gates. The final default suite reported `1001 passed, 10 skipped`; nine separately enabled real-Docker tests passed with zero managed-container residue. `MVP_ACCEPTANCE.md` records exact results and the retained findings/fixes. This closes Phase 4, not the later MVP or live-provider/license release gates; no live provider was run.
+- **Still partial:** FakeSandbox remains simulated, local-unsafe remains non-isolating, only direct/single/pair plans run, FleetPatch is a protected schema/validator rather than an operational workflow, and installed Python adapter code shares the trusted control-plane process. Docker trusts the local account, CLI/configuration, daemon, kernel/VM, and preloaded image and does not defend against a hostile same-user process.
+- **Roadmap:** the complete adaptive/chat workflow (Phase 5), operational FleetPatch evolution (Phase 6), and broader release/platform hardening (Phase 7) remain unimplemented.
 
 ## 5. Authorization model
 
 ## 5.1 Canonical ToolIntent
 
-Every model-requested action becomes a trusted-context-enriched intent:
+Every model-requested action becomes a trusted-context-enriched intent. This is an abridged field sketch; generated schemas and domain validators define the full serialized contract:
 
 ```python
 class ToolIntent(BaseModel):
@@ -140,13 +141,13 @@ DENY
 REQUIRE_APPROVAL
 ```
 
-The target Phase 4 decision payload contains:
+The implemented decision payload contains:
 
 - reason and stable rule/error code;
 - matched rule IDs;
 - effective canonical scope;
 - risk classification;
-- maximum grant permitted;
+- available approval choices and an optional matching grant/source-rule ID;
 - whether the decision is protected/non-overridable;
 - user-facing explanation.
 
@@ -161,13 +162,15 @@ system hard ceiling
 ∩ workflow/stage permissions
 ∩ role permissions
 ∩ task scope
-∩ active capability grant
+∩ an applicable exact grant/rule or documented baseline permission
 ∩ sandbox technical capabilities
 ```
 
 No union/accumulation may create authority absent from an upper layer.
 
-PermissionBroker is an independently injected project-owned contract. ToolGateway constructs and persists canonical intents, but does not privately decide policy; runtime adapters neither supply nor replace the broker. Every runtime-requested side effect must reach the same gateway/broker path regardless of harness. Phase 1.5 introduced, and Phase 2 retains, only three exact baseline cases (bounded Engineer write, one fake command, and one approval proof), default deny, and exact allow-once behavior. CoS-proposed TaskSpec paths are canonically/protected-boundary validated, but Phase 2 does not independently translate the natural-language user goal into a deterministic upper path scope; target-checkout mutation remains behind explicit patch review/apply. The full user/project/task intersection and reviewed user-scope ceiling, allow-for-run, persistent exact trust, rich matched-rule explanation, and revoke remain Phase 4.
+PermissionBroker is an independently injected project-owned contract. ToolGateway constructs and persists canonical intents, but does not privately decide policy; runtime adapters neither supply nor replace the broker. `PolicyPermissionBroker` first applies the bounded baseline executor ceiling, then loads current trusted context and intersects role `allowedTools`, optional workflow `allowedTools`, repository `requestedPermissions`, immutable TaskSpec paths/commands, the separately user-reviewed path ceiling, and exact sandbox capabilities. Referenced workflow YAML is still captured as content, not executed as a general workflow language. CoS may narrow the reviewed paths but cannot expand them. Fleet does not infer a deterministic path ceiling from natural-language intent; the user reviews it through init/configure, and target-checkout changes still require explicit patch apply.
+
+New registrations require completed user-scope registration and fail closed if it is missing. Pre-Phase-4 Project records retain the prior balanced, repository-local `.` baseline until explicitly configured; this compatibility path creates no persistent rule. Only the exact three-entry legacy generated permission-request set is normalized, still intersected with current role/workflow/task ceilings. A changed or partial request set receives no blanket legacy allowance. Historical approvals lacking an exact authorization scope can authorize only their original one-use intent, not run-wide or persistent access.
 
 Evaluation precedence:
 
@@ -182,6 +185,14 @@ Evaluation precedence:
 9. otherwise -> deny or ask according to trust mode, choosing deny for secrets/protected actions.
 
 Deny overrides allow at the same or broader scope. More-specific allow cannot override a hard deny.
+
+| Mode | Current command behavior |
+| --- | --- |
+| `safe` | Ask for each supported exact command scope unless an active matching grant or rule exists. Engineer and Verifier stages are separate scopes. |
+| `balanced` | Allow the supported, reviewed project commands within all current ceilings. |
+| `autonomous-sandbox` | Currently the same reviewed-command ceiling as Balanced; no additional executables, arbitrary shell, network access or isolation guarantees. |
+
+The simulated approval fixture always asks. Local-unsafe command execution also asks unless an exact grant/rule matches, and still requires its separate unsafe-mode confirmation. Command scopes currently require `network_requirement: none`; neither a mode nor an approval enables arbitrary network commands. Supported bounded workspace operations remain subject to the same path, role and request checks in every mode.
 
 ## 5.4 Runtime and harness isolation
 
@@ -198,30 +209,15 @@ The runtime registry performs exact adapter selection and typed capability check
 
 ## 5.5 CapabilityGrant
 
-An approval issues a bounded grant, not a boolean:
+An approval issues a bounded grant, not a boolean. The implemented `CapabilityGrant` binds project, run, task, original intent/hash, agent instance, role, action and resource, with a choice, exact `scope_sha256`, optional `request_id`/`source_rule_id`, issuer, issuance/expiry/consumption/revocation timestamps and remaining uses. See the generated `capability-grant.schema.json` and the validated trust schema in `CONFIG_AND_SCHEMAS.md`.
 
-```python
-class CapabilityGrant(BaseModel):
-    grant_id: GrantId
-    principal_role: str
-    agent_instance_id: AgentInstanceId | None
-    project_id: ProjectId
-    run_id: RunId | None
-    task_id: TaskId | None
-    workflow: str | None
-    stage: str | None
-    action: str
-    resource: CanonicalResource
-    conditions: GrantConditions
-    issued_by: Literal["user", "system_baseline"]
-    issued_at: datetime
-    expires_at: datetime | None
-    remaining_uses: int | None
-    source_approval_request_id: PermissionRequestId | None
-    revoked_at: datetime | None
-```
+| Choice | Effective lifetime and reuse |
+| --- | --- |
+| `allow_once` | One original intent/agent/hash, one use, expires no later than the request expiry or ten minutes after issuance. |
+| `allow_run` | Same exact scope in the same run/task, including after reconstruction, until the run terminates or permission is invalidated. Issued run grants have no automatic expiry; the request's approval deadline does not shorten them. |
+| `allow_always` | The initiating run gets a run-bounded grant; a separate exact project rule can match later runs until revoked or its optional expiry. CLI-created rules currently have no automatic expiry. |
 
-Consumption must be transactional with side-effect reservation/idempotency state where duplicate execution would be dangerous.
+Approval requests expire after ten minutes. Expiry, exhaustion, explicit revoke, reset cutoff, current-policy changes and source-rule revocation all prevent reuse. SQLite transactionally reserves the intent with grant consumption before dispatch. A separate atomic `claim_reserved_intent_for_dispatch` admits only one executor and records `intent.dispatch_claimed`; the permanent claim is not a renewable lease. A losing caller can return an authoritative completed result, but an incomplete claimed intent requires recovery and is never replayed, even after process restart. This is at-most-once dispatch, not a guarantee that every approved effect completes. A later-run persistent-rule match creates a one-use receipt already consumed by reservation (`request_id: null`, exact scope hash/source rule); `capability.issued` and `capability.consumed` record that use without fabricating an ApprovalRequest or another human approval. Receipts cannot themselves authorize another operation.
 
 ## 6. Always-allow semantics
 
@@ -229,39 +225,17 @@ Consumption must be transactional with side-effect reservation/idempotency state
 
 Required dimensions:
 
-- principal role, and optionally a specific agent class;
+- exact principal role;
 - action;
 - canonical resource;
-- project ID;
-- optional workflow and stage;
-- required sandbox security level;
-- path, command, network, or service constraints;
+- project ID and repository identity;
+- exact workflow and stage;
+- workspace kind, provider, security level, network mode and source-checkout read-only requirement;
+- exact parameters and, for commands, the full canonical CommandSpec (including executable, argv, cwd and limits), its hash and declared command ID;
 - expiration/revocation metadata;
-- creator must be the user or an explicitly trusted admin process.
+- creator is `user` in the implemented schema.
 
-Example safe rule:
-
-```yaml
-id: rule_017
-effect: allow
-principal:
-  role: engineer
-action: command.run
-resource:
-  project_id: prj_...
-  workspace: candidate
-  executable: npm
-  argv:
-    exact: ["test"]
-conditions:
-  sandbox_security_level: isolated
-  network_mode: none
-  cwd: workspace://current/
-  source_checkout_read_only: true
-scope:
-  project_id: prj_...
-created_by: user
-```
+The current on-disk schema uses `UserTrustRule.scope: ExactPermissionScope`, not glob/conditions expressions. See the validated example and field map in `CONFIG_AND_SCHEMAS.md`; an illustrative rule permitting Engineer's declared `npm test` in an isolated, network-off candidate workspace is not a wildcard npm permission.
 
 This rule must not authorize:
 
@@ -280,7 +254,7 @@ This rule must not authorize:
 - allow for run: matching scope for the current run only;
 - always allow exact scope for project: persistent user trust rule;
 - deny once;
-- persistent deny/revoke where supported.
+- revoke an exact rule/grant, or reset one project's grants and rules. The schema supports exact deny rules and deny precedence, but there is no CLI command to create a persistent deny rule yet.
 
 Avoid “session” unless its lifetime is precisely defined and visible.
 
@@ -314,13 +288,13 @@ Repository configuration:
 
 may declare requested permissions, commands, roles, workflows, and project knowledge. It cannot grant authority.
 
-User trust and settings live outside the repository via `platformdirs`, for example:
+User trust and settings live outside the repository under Fleet's state root:
 
 ```text
-~/.config/agent-fleet/trust.yaml
+<Fleet state root>/trust/trust.yaml
 ```
 
-or the OS-equivalent path.
+The root is `AGENT_FLEET_HOME` when explicitly set, otherwise `platformdirs.user_data_path("agent-fleet", "agent-fleet")`. There is no separate implemented user `config.yaml`. Repository/state roots must be disjoint.
 
 Requirements:
 
@@ -329,12 +303,18 @@ Requirements:
 - ownership/source fields;
 - no raw secrets;
 - rule IDs and revocation;
-- backup/rollback for mutation;
+- immutable prior-revision backups for mutation reconciliation, never automatic authorization rollback;
 - symlink and path safety;
 - project identity binding stronger than display name/path alone;
 - agents and worker containers cannot write this location.
 
 CoS may propose a FleetPatch under `.fleet/`; it may not patch the trust store.
+
+`FilesystemTrustStore` reads strict bounded YAML/JSON (2,000,000 bytes), rejects duplicate/non-string mapping keys, anchors/aliases, unsafe tags, unknown fields, registered secrets, symlinks/hardlinks and non-regular files, and verifies owner/mode and descriptor identity. Writes use a lock, expected-revision compare-and-swap, atomic publication and a validated immutable `trust.yaml.revision-<20-digit-revision>.json` backup. Missing-file reads create nothing; corrupt policy fails closed and backups never activate themselves. Required POSIX descriptor/lock features are enforced; unsupported platforms fail closed, not into a weaker store.
+
+Policy mutations validate and secret-scan the entire candidate, then persist `permission.policy_change_prepared`, publish the revision, and persist `permission.policy_change_completed`. Both events share a mutation/correlation ID, action, expected/published revisions, previous/published policy hashes and details. This is an auditable cross-store protocol, not a single SQLite/filesystem transaction: an interrupted or failed completion write can leave the policy published. Reconcile the prepared hashes with the current policy or exact immutable backup; do not infer failure solely from a missing completion event or roll back a newer revision.
+
+Always-allow first stages a deterministic rule bound to its pending request. It remains dormant until SQLite records that exact approved `allow_always` resolution, scope and source-rule ID; retry reuses the staged ID. Revoking the rule prevents future matches and reuse of its derived grants. Project reset preserves the reviewed mode/path ceiling, revokes its rules and persists a monotonic UTC `grants_revoked_before` cutoff before individual SQLite revocations. All project grants with `issued_at <= cutoff` are rejected even if that revocation loop is interrupted. Configure preserves the cutoff; other projects are untouched. Neither operation deletes audit history.
 
 Phase 1.5 binds configuration by content, not by filename or top-level parsed FleetSpec alone. A `ConfigSnapshot` contains the exact bounded UTF-8 contents and individual SHA-256 of `fleet.yaml` and every referenced role/workflow/project file. The loader rejects symlink and non-regular inputs, checks size before open, performs a bounded descriptor read, and detects identity/size/mtime changes during that read. Project registration stores its identity, every TaskSpec/Run binds a run-scoped snapshot artifact, and evidence assembly validates all three identities before accepting downstream proof. Referenced-file drift fails before run creation even when Git's untracked status fingerprint is unchanged, and patch apply re-loads the complete snapshot against the Run binding.
 
@@ -565,6 +545,10 @@ When MCP support is added:
 - Persist request, resolution, issuer, timestamp, grant, and consumption.
 - Expired or revoked grants fail closed.
 
+Approval-pause recovery preserves both Engineer and Verifier identity. Their checkpoints bind agent/workspace/sandbox/iteration; Verifier additionally binds the patch hash and baseline fingerprint, with exact patch-byte validation on resume and final mutation detection. Engineer's checkpoint clears after implementation; Verifier's clears after verification. Logical sandbox rehydration is permitted only for known active parent leases with matching Run/workspace/provider/image/daemon bindings and a successful effective inspection; it never recreates an interrupted execution. Outstanding execution leases require recovery. An existing logical retry preserves its original reviewed reason (display prose); all execution-bearing fields must still match the original canonical intent hash. This bounded approval flow is distinct from future general workflow/model-checkpoint recovery. Provider usage and aggregate budgets across pauses are not yet durably preserved; Phase 5 must close that accounting gap.
+
+Legacy once-only Engineer pauses without a checkpoint can restore only their exact original persisted agent after validated run/task/role lookup. Compatibility never transfers a grant to a new principal or widens its duration.
+
 ## 15. Idempotency and side effects
 
 Every external or irreversible action requires an idempotency strategy:
@@ -631,7 +615,7 @@ The complete Phase 3/5 limit target includes:
 - max event payload size;
 - concurrency limit.
 
-Agents must never be allowed to raise these limits. Phase 3 enforces bounded repair counts, model validation sizes, profiler/config bounds, FleetPlan collection/concurrency ceilings, per-invocation PydanticAI request/tool/token/time/retry ceilings, command output/time bounds, local process-group termination, and Docker CPU/memory/no-swap/PID/shm/file-descriptor limits. Provider-reported usage is persisted without price estimation. Portable writable-bind disk quotas and comprehensive cross-run artifact/event/cost budgets remain later work; exhaustion produces a typed failure with current artifacts preserved where the implemented boundary supports it.
+Agents must never be allowed to raise these limits. Phase 3 enforces bounded repair counts, model validation sizes, profiler/config bounds, FleetPlan collection/concurrency ceilings, per-invocation PydanticAI request/tool/token/time/retry ceilings, command output/time bounds, local process-group termination, and Docker CPU/memory/no-swap/PID/shm/file-descriptor limits. Completed-invocation provider usage is persisted without price estimation; paused/failed invocation accounting and cross-pause budgets remain Phase 5. Portable writable-bind disk quotas and comprehensive cross-run artifact/event/cost budgets remain later work; exhaustion produces a typed failure with current artifacts preserved where the implemented boundary supports it.
 
 ## 19. Recovery
 

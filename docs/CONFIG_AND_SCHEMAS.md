@@ -1,6 +1,6 @@
 # Configuration and canonical schemas — Agent Fleet
 
-This document distinguishes target public contracts from the implementation boundary. Phase 0–3 now enforces extensible role/workflow identifiers, one-use approval, bounded RepositoryProfile/ProjectKnowledge generation, exact ConfigSnapshot and TaskSpec bindings, FleetPlan, strict sandbox requirements/configuration/capabilities, command and cleanup evidence, EvidenceBundle/CompletionDecision, a hash-linked BootstrapReport, FleetPatch validation, and shared fake/PydanticAI runtime contracts. Phase 2 added explicit BYOK provider configuration; Phase 3 adds exact fake/Docker/local-unsafe selection, immutable Docker image/daemon binding, bounded command execution and recovery, and canary-before-publication bootstrap. Persistent trust, parallel scheduling, and operational FleetPatch remain later phases.
+This document distinguishes implemented contracts from targets. Phase 0–3 provides repository intelligence, exact configuration/task/evidence bindings, bounded fake/Docker/local-unsafe execution, bootstrap canaries and shared fake/PydanticAI runtime contracts. Phase 4's current-policy intersection, user-owned trust store, exact once/run/project approvals and permission CLI were accepted on 2026-09-05: `1001 passed, 10 skipped` in the default suite, with nine separately passing real-Docker tests. See `MVP_ACCEPTANCE.md` for the exact snapshot. No live-provider acceptance was run. Persistent chat/parallel scheduling (Phase 5), operational FleetPatch (Phase 6), release hardening (Phase 7) and remaining live-provider/license gates stay open.
 
 ## 1. Configuration ownership
 
@@ -18,22 +18,21 @@ Versioned in Git. It may define roles, workflows, verification commands, project
 
 ### User-owned settings and trust
 
-Location selected with `platformdirs`, for example:
+Implemented location:
 
 ```text
-<user-config-dir>/agent-fleet/config.yaml
-<user-config-dir>/agent-fleet/trust.yaml
+<Fleet state root>/trust/trust.yaml
 ```
 
-Not stored in the repository. It selects defaults and grants/revokes bounded permissions.
+The root is the explicit `AGENT_FLEET_HOME`, otherwise `platformdirs.user_data_path("agent-fleet", "agent-fleet")`. No separate user `config.yaml` is implemented. The repository and state root must be disjoint. Settings select reviewed mode/path ceilings; exact rules grant or deny only within all remaining ceilings. Use the CLI for mutations so revision checks and audit evidence are retained.
 
 ### Resolved secrets
 
 Phase 2 resolves only strict `env:NAME` references. The reference originates in an explicit user command and is persisted only in Fleet-owned Project/Run state. Repository `.fleet/` configuration may contain the runtime and opaque provider/model identifier but never the credential reference or value. The raw value remains in trusted control-plane memory. OS keyring and other backends are future work.
 
-## 2. Current Phase 3 FleetSpec fields and later extensions
+## 2. Current FleetSpec fields and later extensions
 
-The checked-in Phase 3 `fleet.schema.json` accepts `runtime.adapter` as `fake` or `pydantic-ai`. `pydantic-ai` requires `runtime.providerModel`; `fake` forbids it. Both require the `structured_output` and `tool_calling` capabilities. Sandbox `provider` is exactly `fake`, `docker`, or `local-unsafe`: fake and Docker require `networkMode: none`, Docker additionally requires an already-local image reference and bounded CPU/memory/PID/shm/tmpfs values, while local-unsafe must honestly declare `approved-unrestricted`. A current real-runtime/isolated-worker fragment is:
+The checked-in `fleet.schema.json` accepts `runtime.adapter` as `fake` or `pydantic-ai`. `pydantic-ai` requires `runtime.providerModel`; `fake` forbids it. Both require the `structured_output` and `tool_calling` capabilities. Sandbox `provider` is exactly `fake`, `docker`, or `local-unsafe`: fake and Docker require `networkMode: none`, Docker additionally requires an already-local image reference and bounded CPU/memory/PID/shm/tmpfs values, while local-unsafe must honestly declare `approved-unrestricted`. A current real-runtime/isolated-worker fragment is:
 
 ```yaml
 spec:
@@ -58,7 +57,7 @@ The adapter-level live allowlist is narrower than the generic `providerModel` gr
 
 Phase 3 init accepts an identical generated `.fleet/` tree but does not merge or overwrite a differing one. A runtime/provider-model/sandbox proposal that changes repository files fails before Project/artifact state or repository mutation. For a new Docker registration, the proposal remains staged until a disposable canary reaches independently verified completion, cleanup is proven, and its BootstrapReport validates; only then is `.fleet/` published. After reviewing `--preview`, the user moves any complete conflicting generated tree aside and reruns explicit init. Changing only `credential_ref` can succeed without `.fleet/` changes because it belongs exclusively to Fleet-owned state. General atomic configuration evolution remains the Phase 6 FleetPatch workflow.
 
-The richer example below is a Phase 4/5 target and is **not** accepted as a whole by the Phase 3 parser. In particular, current FleetSpec has no `models`, agent model selection, workflow parallelism, permission conditions, nested resource section, or budget section. Docker image and flat bounded resource fields are accepted only in the exact current sandbox shape shown above. `fleet init --preview --json` is the authoritative way to see a current parseable proposal.
+The richer example below is conceptual future configuration and is **not** accepted as a whole by the current parser. In particular, current FleetSpec has no `models`, agent model selection, workflow parallelism, permission conditions, nested resource section, or budget section. Docker image and flat bounded resource fields are accepted only in the exact current sandbox shape shown above. `fleet init --preview --json` is the authoritative way to see a current parseable proposal.
 
 ```yaml
 apiVersion: agentfleet.dev/v1alpha1
@@ -190,7 +189,7 @@ Notes:
 - Provider/model strings are bounded opaque values in the domain; the concrete adapter applies its explicit prefix allowlist.
 - `credentialRef` is a reference, never a secret value, and is intentionally stored outside repository FleetSpec in Phase 2.
 - Referenced paths must resolve under `.fleet/` and may not escape through symlinks.
-- Phase 1.5 applies a narrow hard-coded baseline broker and exact allow-once grant. Full requested-permission intersection with user policy and sandbox capabilities is Phase 4.
+- Phase 4 intersects role `allowedTools`, optional workflow `allowedTools`, `requestedPermissions`, the reviewed user path ceiling, TaskSpec and sandbox capabilities. These repository fields request authority; they never grant it. Only the exact unchanged three-entry legacy generated request set receives compatibility normalization, still bounded by current role/workflow/task ceilings.
 - Unknown configuration fields fail validation for `v1alpha1` unless intentionally placed in a documented extension map.
 
 ## 3. Verification configuration example
@@ -283,51 +282,67 @@ limits:
 
 Phase 2 captures this referenced file in ConfigSnapshot but does not parse it into executable stages; `WorkflowEngine` owns the hard-coded deterministic state machine. A later workflow parser may accept only supported stage types and transitions. Arbitrary Python imports, executable expressions, templates with code execution, or user-defined transition code remain forbidden.
 
-## 5. Target user trust configuration (Phase 4)
+## 5. Implemented user trust configuration (Phase 4)
 
-`trust.yaml`:
+This complete example validates as `UserTrustPolicy`. Its synthetic project identity illustrates the schema, not a registration to copy into a real store. Trust models use **snake_case**, unlike repository FleetSpec's aliases. The writer emits JSON, which is valid YAML, at `trust.yaml`.
 
 ```yaml
-apiVersion: agentfleet.dev/v1alpha1
+api_version: agentfleet.dev/v1alpha1
 kind: UserTrustPolicy
-
-hardDenies:
-  - action: host.sudo
-  - action: sandbox.privileged
-  - action: sandbox.mount-docker-socket
-  - action: secret.read-raw
-  - action: audit.delete
-  - action: policy.change-approver
-  - action: policy.self-approve
-  - action: production.deploy
-
+revision: 0
 projects:
-  "prj_example":
-    trustMode: balanced
-    rules:
-      - id: rule_unit_tests
-        effect: allow
-        principal:
-          role: engineer
-        action: command.run
-        resource:
-          kind: command
-          executable: uv
-          argv:
-            exact: ["run", "pytest", "-q"]
-          cwd: "workspace://current/"
-        conditions:
-          sandboxSecurityLevel: isolated
-          networkMode: none
-        createdBy: user
-        createdAt: "2026-09-03T00:00:00Z"
+  - project_id: prj_11111111111111111111111111111111
+    repository_identity: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    trust_mode: safe
+    allowed_paths: [src, tests]
+    grants_revoked_before: null
+rules: []
 ```
 
-This file and the `fleet permissions` command family do not exist through Phase 2. Phase 4 must provide schema validation, atomic update support, and a CLI before manual editing is supported.
+The generated `user-trust-policy`, `project-trust-settings`, `user-trust-rule` and `exact-permission-scope` schemas define the wire shape; domain validators additionally enforce canonical paths, exact command hashes, provider/network consistency, UTC timestamps, protected-action denial and project identity binding.
+
+| Model | Required/current fields and constraints |
+| --- | --- |
+| `UserTrustPolicy` | `api_version`, `kind`, nonnegative integer `revision`; at most 1,024 project settings and 8,192 rules. IDs must be unique and each rule must bind a registered project/repository identity. Unknown fields fail. |
+| `ProjectTrustSettings` | `project_id`, `repository_identity`, `trust_mode` (`safe`, `balanced`, `autonomous-sandbox`), `allowed_paths` (at most 128 canonical, case-insensitively unique paths; `.` means the unprotected repository), nullable UTC `grants_revoked_before`. The model can represent an empty/deny-all path set; init/configure review requires a nonempty set. |
+| `UserTrustRule` | `rule_id` (`rule_` plus 32 lowercase hex digits), complete `scope`, `effect` (`allow` or `deny`), `created_by: user`, UTC `created_at`, optional `expires_at`, `revoked_at`, `source_approval_request_id`. There are no rule globs or executable condition expressions. |
+| `ExactPermissionScope` | `project_id`, `repository_identity`, `principal_role`, `workflow`, `stage`, `action`, canonical `resource`, exact `parameters`, optional full `command`, `workspace_kind`, `sandbox_provider`, `sandbox_security_level`, `network_mode`, `source_checkout_read_only: true`. Its canonical JSON SHA-256 is the grant's `scope_sha256`. |
+
+For `command.run`, `resource.kind` is `project_command`, its identifier equals `command.command_id`, and parameters are exactly `command_id`, `command_spec_sha256` and `network_mode`. The full CommandSpec binds executable, argv, logical cwd, environment, timeout, output limit and network requirement. Currently only `network_requirement: none` can form an authorizable command scope. A changed role, stage, workflow, project, command or sandbox context cannot reuse that rule. Supported command IDs still resolve server-side from reviewed TaskSpec; a rule cannot add an executable.
+
+The store rejects files over 2,000,000 bytes, registered secrets, duplicate/non-string keys, YAML anchors/aliases or unsafe tags, symlinks/hardlinks, unsafe ownership/modes and file-identity changes. Saving requires expected-revision compare-and-swap under a lock, advances the revision by one and retains an immutable prior-revision sibling backup. It requires the implemented POSIX lock/descriptor protections and fails closed when unavailable. Missing-file reads are side-effect-free; corruption does not trigger fallback to a backup.
+
+Application policy changes record `permission.policy_change_prepared`, atomically publish the trust revision, then record `permission.policy_change_completed`, sharing a mutation ID, action, expected/published revisions and both policy hashes. This is not one cross-store transaction. If publication/completion is interrupted, reconcile the exact prepared hash against current policy or its immutable backup; never automatically undo a newer revision. Always-allow stages a deterministic rule first, but the rule stays inactive until its exact originating approval resolves as `allow_always` in SQLite. Retrying a failed activation reuses the same rule.
+
+### Modes, approval lifetimes and CLI
+
+Safe asks for supported exact commands without an existing matching grant/rule. Balanced and Autonomous-sandbox currently share the same supported reviewed-command ceiling; Autonomous-sandbox does not expand command/network authority. Bounded workspace operations remain policy-checked in every mode. The simulated approval fixture and local-unsafe commands ask independently of those baseline defaults; local-unsafe retains its separate explicit confirmation and never becomes isolated.
+
+| Command syntax (IDs/paths are placeholders) | Effect |
+| --- | --- |
+| `fleet init /repo --preview --trust-mode safe --allow-path src --allow-path tests` | Review proposed mode/paths without writes; confirmed init registers the reviewed scope. Omitted flags preserve existing settings or use Balanced and `.` for a new project. |
+| `fleet permissions configure --project /repo --mode safe --allow-path src --allow-path tests` | Explicitly update user-owned settings. Omit `--allow-path` to preserve the current ceiling. |
+| `fleet approve perm_ID --once` | One exact original intent/agent/hash, one use; at most ten minutes and never beyond request expiry. |
+| `fleet approve perm_ID --run` | Matching exact scope only in the same run/task until termination or invalidation. Issued run grants have no automatic expiry and survive the request's approval deadline. |
+| `fleet approve perm_ID --always --scope project` | Run-bounded initiating grant plus a durable exact project rule; CLI-created rules currently have no automatic expiry. Later matches remain subject to current ceilings. |
+| `fleet deny perm_ID` | Deny the pending request; does not create a persistent deny rule. |
+| `fleet permissions list --project /repo` | Settings, revision, exact rules and grants, including rule active state and grant lifetime/status/reset-cutoff details. Grant availability is not a fresh authorization decision. |
+| `fleet permissions explain rule_ID` / `fleet permissions explain perm_ID` | Inspect an exact rule or re-evaluate an active-stage request. Terminal/changed-stage requests return historical decisions, not current permission. Grant-ID explanation is not implemented. |
+| `fleet permissions revoke rule_ID` / `fleet permissions revoke grant_ID` | Preserve history and revoke that exact rule/grant. Rule revoke also prevents reuse of derived grants. |
+| `fleet permissions reset --project /repo` | Revoke this project's rules/grants; preserve its mode/path ceiling and other projects. |
+| `fleet resume run_ID` | Revalidate current target/configuration/policy, then continue the paused workflow; approving alone does not execute it. |
+
+Each command supports `--json`. Approval requests expire after ten minutes; exactly one approve flag is required, and `--scope project` is required only with `--always`. Engineer and Verifier commands require separate exact scopes. Reset persists a monotonic `grants_revoked_before` cutoff before SQLite grant revocation, so grants issued at or before the cutoff cannot match even after interrupted cleanup. Configure preserves that cutoff. Exact deny rules are supported in the model/evaluator; the CLI does not yet create them.
+
+Legacy Project records lacking the new required-scope marker retain the previous Balanced/`.` baseline without acquiring persistent trust. New registrations fail closed if their reviewed settings are missing. Historical approvals without `authorization_scope` remain once-only. Persistent-rule use in a later run creates an already-consumed, exact `CapabilityGrant` receipt with `request_id: null` and `source_rule_id`; issued/consumed events bind the use without fabricating another approval. This receipt is not reusable authority.
+
+A historical once-only Engineer pause lacking a checkpoint restores only its exact original persisted agent after validated run/task/role lookup, not a replacement identity or a wider approval duration.
+
+All gateway dispatches additionally need one durable SQLite claim (`tool_dispatch_claims`: primary-key `intent_id`, `intent_hash`, `claimed_at`). A claimed but incomplete intent is never automatically replayed, even across restart. Logical retries preserve the original reviewed reason while retaining exact execution-bearing identity/hash checks. Run's `engineer_checkpoint: AgentExecutionCheckpoint` retains agent/workspace/sandbox/iteration/creation time across approval pauses and clears after implementation. `VerificationCheckpoint` extends those fields with patch hash and baseline fingerprint; exact patch bytes are checked on resume and before accepting an unmutated verifier result. These are control-plane checkpoints, not durable provider conversation or cross-pause usage/budget state; those remain Phase 5.
 
 ## 6. Target semantic models and current contracts
 
-The checked-in generated JSON Schemas are authoritative for the Phase 3 serialized wire shape. Mandatory Python and application validators enforce cross-field, graph, filesystem, current-state, registered-secret, permission, runtime, sandbox-lifecycle, and evidence-integrity rules that JSON Schema cannot express. Some conceptual snippets below describe richer later-phase contracts and are labeled as targets; implemented sections describe the current models.
+The checked-in generated JSON Schemas are authoritative for the current serialized wire shape. Mandatory Python and application validators enforce cross-field, graph, filesystem, current-state, registered-secret, permission, runtime, sandbox-lifecycle, and evidence-integrity rules that JSON Schema cannot express. Python snippets below are abridged field sketches, not standalone model definitions; richer future contracts are explicitly labeled as targets.
 
 ### 6.1 ScopeDecision
 
@@ -343,7 +358,7 @@ class ScopeDecision(BaseModel):
     required_evidence: list[EvidenceRequirementId]
 ```
 
-FakeRuntime and PydanticAI CoS return this same strict model. The control plane validates paths, protected boundaries, known workflow/roles, strategy support, evidence requirements, and topology ceilings before constructing TaskSpec/FleetPlan. A model does not persist its own FleetPlan or directly authorize target-checkout mutation. Phase 2 does accept the validated CoS `allowed_paths` as candidate-worktree TaskSpec scope; it does not yet derive a separate deterministic path ceiling from the natural-language user goal, so explicit patch review/apply is required and the full reviewed user-scope intersection remains Phase 4 work.
+FakeRuntime and PydanticAI CoS return this same strict model. The control plane validates paths, protected boundaries, known workflow/roles, strategy support, evidence requirements, topology ceilings and, in Phase 4, the separately user-reviewed project path ceiling before constructing TaskSpec/FleetPlan. It also checks current scope before execution/resume. Fleet does not infer this user ceiling from natural-language intent. A model cannot expand the reviewed paths, persist its own FleetPlan or directly authorize target-checkout mutation; explicit patch review/apply remains required.
 
 ### 6.1.1 Runtime configuration, preflight, and usage
 
@@ -457,9 +472,15 @@ class PermissionDecision(BaseModel):
     decision_code: str
     explanation: str
     protected: bool = False
+    matched_rule_ids: list[str] = []
+    effective_scope: dict[str, JsonValue] | None = None
+    risk: str = "unknown"
+    available_choices: list[ApprovalChoice] = []
+    grant_id: GrantId | None = None
+    source_rule_id: str | None = None
 ```
 
-Matched-rule details, risk classification, effective scopes, and persistent-trust explanations are Phase 4 additions.
+Phase 4 populates these fields for applicable decisions. An effective scope describes a policy-checked intent, not permission for a model to submit trusted context or choose its own grant.
 
 ### 6.5 ApprovalRequest and resolution
 
@@ -474,6 +495,9 @@ class ApprovalRequest(BaseModel):
     resource: CanonicalResource
     reason: str
     available_choices: list[ApprovalChoice]
+    authorization_scope: dict[str, JsonValue] | None
+    resolution_choice: ApprovalChoice | None
+    source_rule_id: str | None
     created_at: datetime
     expires_at: datetime
 
@@ -481,17 +505,20 @@ class ApprovalRequest(BaseModel):
 class ApprovalChoice(str, Enum):
     DENY = "deny"
     ALLOW_ONCE = "allow_once"
+    ALLOW_RUN = "allow_run"
+    ALLOW_ALWAYS = "allow_always"
 ```
 
-Allow-for-run and persistent exact project trust choices remain Phase 4.
+The stored request also carries status, resolution time and denial reason. Choices do not override hard ceilings; approval and resume re-evaluate current policy and target bindings. Lifetimes and historical once-only compatibility are defined in section 5.
 
-### 6.6 Target real CommandSpec (Phase 3)
+### 6.6 Implemented CommandSpec (abridged)
 
 ```python
 class CommandSpec(BaseModel):
+    command_id: str
     executable: str
-    argv: list[str]
-    cwd: LogicalWorkspacePath
+    argv: tuple[str, ...]
+    logical_cwd: str
     environment: dict[str, str] = {}
     timeout_seconds: int
     max_output_bytes: int

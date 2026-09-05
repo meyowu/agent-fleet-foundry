@@ -14,9 +14,13 @@ from agent_fleet.domain.evidence import CommandEvidence, EvidenceBundle, Resourc
 from agent_fleet.domain.fleet_patch import FleetPatch
 from agent_fleet.domain.fleet_plan import FleetPlan
 from agent_fleet.domain.models import (
+    AgentExecutionCheckpoint,
+    ApprovalRequest,
+    CapabilityGrant,
     CommandSpec,
     ImplementationReport,
     JsonEnvelope,
+    PermissionDecision,
     SandboxCapabilities,
     SandboxCleanupResult,
     SandboxConfiguration,
@@ -30,9 +34,16 @@ from agent_fleet.domain.models import (
     TaskSpec,
     ToolIntent,
     UsageRecord,
+    VerificationCheckpoint,
     VerifierVerdict,
 )
 from agent_fleet.domain.repository_profile import ProjectKnowledge, RepositoryProfile
+from agent_fleet.domain.trust import (
+    ExactPermissionScope,
+    ProjectTrustSettings,
+    UserTrustPolicy,
+    UserTrustRule,
+)
 
 SCHEMAS: dict[str, type[BaseModel]] = {
     "fleet.schema.json": FleetSpec,
@@ -44,6 +55,15 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "implementation-report.schema.json": ImplementationReport,
     "usage-record.schema.json": UsageRecord,
     "tool-intent.schema.json": ToolIntent,
+    "approval-request.schema.json": ApprovalRequest,
+    "capability-grant.schema.json": CapabilityGrant,
+    "permission-decision.schema.json": PermissionDecision,
+    "verification-checkpoint.schema.json": VerificationCheckpoint,
+    "agent-execution-checkpoint.schema.json": AgentExecutionCheckpoint,
+    "exact-permission-scope.schema.json": ExactPermissionScope,
+    "project-trust-settings.schema.json": ProjectTrustSettings,
+    "user-trust-policy.schema.json": UserTrustPolicy,
+    "user-trust-rule.schema.json": UserTrustRule,
     "verifier-verdict.schema.json": VerifierVerdict,
     "repository-profile.schema.json": RepositoryProfile,
     "project-knowledge.schema.json": ProjectKnowledge,

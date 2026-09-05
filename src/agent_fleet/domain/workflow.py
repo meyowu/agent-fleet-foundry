@@ -33,10 +33,14 @@ _ALLOWED: dict[State, frozenset[State]] = {
     ),
     (RunStatus.RUNNING, WorkflowStage.VERIFYING): frozenset(
         {
+            (RunStatus.PAUSED_FOR_APPROVAL, WorkflowStage.VERIFYING),
             (RunStatus.RUNNING, WorkflowStage.REPAIRING),
             (RunStatus.RUNNING, WorkflowStage.PRESENTING),
             (RunStatus.REJECTED, WorkflowStage.VERIFYING),
         }
+    ),
+    (RunStatus.PAUSED_FOR_APPROVAL, WorkflowStage.VERIFYING): frozenset(
+        {(RunStatus.RUNNING, WorkflowStage.VERIFYING)}
     ),
     (RunStatus.RUNNING, WorkflowStage.REPAIRING): frozenset(
         {

@@ -81,7 +81,7 @@ def test_version_and_doctor_json_envelopes(tmp_path: Path) -> None:
     assert version.exit_code == 0, version.output
     version_data = json.loads(version.stdout)
     assert version_data["api_version"] == "agentfleet.dev/v1alpha1"
-    assert version_data["data"]["phase"] == "3"
+    assert version_data["data"]["phase"] == "4"
     assert version_data["data"]["sandboxes"] == ["docker", "fake", "local-unsafe"]
     assert version_data["data"]["runtime"] == "fake"
     assert version_data["data"]["runtimes"] == ["fake", "pydantic-ai"]

@@ -9,12 +9,14 @@ from importlib.resources import files
 from pathlib import Path
 from typing import cast
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     AgentInstance,
+    AgentStatus,
+    ApprovalChoice,
     ApprovalRequest,
     ApprovalStatus,
     ArtifactMetadata,
@@ -39,7 +41,7 @@ from agent_fleet.domain.workflow import validate_transition
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
 
-SUPPORTED_SCHEMA_VERSION = 3
+SUPPORTED_SCHEMA_VERSION = 4
 
 
 class SqliteStateStore:
@@ -238,12 +240,35 @@ class SqliteStateStore:
                 ),
             )
 
+    def get_agent_instance(self, agent_instance_id: str) -> AgentInstance:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_instances WHERE agent_instance_id = ?", (agent_instance_id,)
+            ).fetchone()
+        if row is None:
+            raise _not_found("agent instance", agent_instance_id)
+        invalid = FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "The stored agent instance does not match its durable identity.",
+            "Inspect the agent journal before resuming this run.",
+        )
+        try:
+            agent = AgentInstance.model_validate_json(row["data_json"])
+        except ValidationError:
+            raise invalid from None
+        if any(
+            getattr(agent, field) != row[field]
+            for field in ("agent_instance_id", "run_id", "task_id", "role")
+        ):
+            raise invalid
+        return agent
+
     def append_event(self, event: FleetEvent) -> FleetEvent:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             persisted = self._insert_event(connection, event)
             connection.commit()
-        return persisted
+            return persisted
 
     def emit(self, event: FleetEvent) -> FleetEvent:
         return self.append_event(event)
@@ -340,6 +365,119 @@ class SqliteStateStore:
             connection.commit()
         return stored
 
+    def get_intent(self, intent_id: str) -> StoredToolIntent:
+        with self._connect() as connection:
+            return self._get_intent_by_id(connection, intent_id)
+
+    def claim_reserved_intent_for_dispatch(self, intent_id: str, intent_hash: str) -> bool:
+        """Permanently claim one dispatch; a crash never makes its intent replayable.
+
+        Policy validation and grant consumption belong to the caller. This final
+        transactional fence only permits one caller to dispatch the exact reserved
+        intent in its current active context. An existing exact claim returns False,
+        even after completion or process restart; it is never a reusable lease.
+        """
+        invalid = FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "The dispatch claim does not match an active exact reserved intent.",
+            "Inspect the persisted intent and execution journal before recovery; do not replay it.",
+        )
+        if self.redactor.contains_secret_data({"intent_id": intent_id, "intent_hash": intent_hash}):
+            raise invalid
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM tool_intents WHERE intent_id = ?", (intent_id,)
+            ).fetchone()
+            if row is None:
+                raise invalid
+            try:
+                stored = StoredToolIntent.model_validate_json(row["data_json"])
+            except ValidationError:
+                raise invalid from None
+            intent = stored.intent
+            if (
+                intent.intent_id != intent_id
+                or intent.run_id != row["run_id"]
+                or intent.idempotency_key != row["idempotency_key"]
+                or stored.intent_hash != row["intent_hash"]
+                or stored.status.value != row["status"]
+                or stored.approval_request_id != row["approval_request_id"]
+                or stored.intent_hash != intent_hash
+                or canonical_json_hash(intent.model_dump(mode="json")) != intent_hash
+                or self.redactor.contains_secret_data(intent.model_dump(mode="json"))
+            ):
+                raise invalid
+            existing = connection.execute(
+                "SELECT intent_hash FROM tool_dispatch_claims WHERE intent_id = ?", (intent_id,)
+            ).fetchone()
+            if existing is not None:
+                if existing["intent_hash"] != intent_hash:
+                    raise invalid
+                connection.commit()
+                return False
+            if stored.status is not IntentStatus.RESERVED:
+                raise invalid
+            run_row = connection.execute(
+                "SELECT * FROM runs WHERE run_id = ?", (intent.run_id,)
+            ).fetchone()
+            task_row = connection.execute(
+                "SELECT * FROM tasks WHERE task_id = ?", (intent.task_id,)
+            ).fetchone()
+            agent_row = connection.execute(
+                "SELECT * FROM agent_instances WHERE agent_instance_id = ?",
+                (intent.agent_instance_id,),
+            ).fetchone()
+            if run_row is None or task_row is None or agent_row is None:
+                raise invalid
+            try:
+                run = Run.model_validate_json(run_row["data_json"])
+                task = TaskSpec.model_validate_json(task_row["data_json"])
+                agent = AgentInstance.model_validate_json(agent_row["data_json"])
+            except ValidationError:
+                raise invalid from None
+            if (
+                run.run_id != intent.run_id
+                or run.project_id != run_row["project_id"]
+                or run.status.value != run_row["status"]
+                or run.stage is None
+                or run.stage.value != run_row["stage"]
+                or run.status is not RunStatus.RUNNING
+                or run.pending_approval_id is not None
+                or run.stage is not intent.stage
+                or run.task_id != intent.task_id
+                or task.task_id != intent.task_id
+                or task.run_id != run.run_id
+                or task_row["run_id"] != run.run_id
+                or task.workflow != intent.workflow
+                or agent.agent_instance_id != intent.agent_instance_id
+                or agent.run_id != run.run_id
+                or agent_row["run_id"] != run.run_id
+                or agent.task_id != task.task_id
+                or agent_row["task_id"] != task.task_id
+                or agent.role != intent.principal_role
+                or agent_row["role"] != intent.principal_role
+                or agent.status is not AgentStatus.RUNNING
+                or agent.completed_at is not None
+            ):
+                raise invalid
+            connection.execute(
+                "INSERT INTO tool_dispatch_claims(intent_id, intent_hash, claimed_at) "
+                "VALUES (?, ?, ?)",
+                (intent_id, intent_hash, self.clock.now().isoformat()),
+            )
+            self._insert_event(
+                connection,
+                self._event_for_intent(
+                    run,
+                    intent,
+                    "intent.dispatch_claimed",
+                    {"intent_id": intent_id, "intent_hash": intent_hash},
+                ),
+            )
+            connection.commit()
+            return True
+
     def create_approval_and_pause(
         self, intent: ToolIntent, intent_hash: str, request: ApprovalRequest
     ) -> StoredToolIntent:
@@ -421,28 +559,82 @@ class SqliteStateStore:
         return ApprovalRequest.model_validate_json(row["data_json"])
 
     def resolve_approval(
-        self, request_id: str, *, approve: bool, denial_reason: str | None
+        self,
+        request_id: str,
+        *,
+        approve: bool,
+        denial_reason: str | None,
+        choice: ApprovalChoice = ApprovalChoice.ALLOW_ONCE,
+        scope_sha256: str | None = None,
+        source_rule_id: str | None = None,
     ) -> CapabilityGrant | None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             request = self._get_approval(connection, request_id)
+            selected_choice = choice if approve else ApprovalChoice.DENY
             if request.status is not ApprovalStatus.PENDING:
                 grant = self._get_grant_for_request(connection, request_id)
+                if grant is not None:
+                    self._validate_approval_binding(
+                        connection,
+                        request,
+                        self._get_intent_by_id(connection, request.intent_id),
+                        grant,
+                    )
+                resolved_choice = request.resolution_choice or (
+                    ApprovalChoice.ALLOW_ONCE
+                    if request.status is ApprovalStatus.APPROVED
+                    else ApprovalChoice.DENY
+                )
+                if selected_choice is not resolved_choice or (
+                    grant is not None
+                    and (
+                        grant.choice is not selected_choice
+                        or grant.scope_sha256 != scope_sha256
+                        or grant.source_rule_id != source_rule_id
+                    )
+                ):
+                    raise self._invalid_approval(request_id)
                 connection.commit()
                 return grant
             now = self.clock.now()
             intent = self._get_intent_by_id(connection, request.intent_id)
-            run = self._get_run(connection, request.run_id)
+            run = self._validate_approval_binding(connection, request, intent)
+            if (
+                selected_choice not in request.available_choices
+                or run.status is not RunStatus.PAUSED_FOR_APPROVAL
+                or run.pending_approval_id != request_id
+                or run.stage is not intent.intent.stage
+                or intent.status is not IntentStatus.PENDING_APPROVAL
+            ):
+                raise self._invalid_approval(request_id)
             if approve:
-                if request.expires_at <= now:
-                    raise FleetError(
-                        ErrorCode.APPROVAL_INVALID,
-                        "The approval request expired before it was resolved.",
-                        "Resume or start a new run to create a fresh exact request.",
-                        details={"request_id": request_id},
+                expected_scope = (
+                    canonical_json_hash(request.authorization_scope)
+                    if request.authorization_scope is not None
+                    else None
+                )
+                if (
+                    request.expires_at <= now
+                    or choice is ApprovalChoice.DENY
+                    or expected_scope != scope_sha256
+                    or (
+                        choice in {ApprovalChoice.ALLOW_RUN, ApprovalChoice.ALLOW_ALWAYS}
+                        and scope_sha256 is None
                     )
+                    or (
+                        request.source_rule_id is not None
+                        and request.source_rule_id != source_rule_id
+                    )
+                ):
+                    raise self._invalid_approval(request_id)
                 resolved = request.model_copy(
-                    update={"status": ApprovalStatus.APPROVED, "resolved_at": now}
+                    update={
+                        "status": ApprovalStatus.APPROVED,
+                        "resolved_at": now,
+                        "resolution_choice": choice,
+                        "source_rule_id": source_rule_id,
+                    }
                 )
                 grant = CapabilityGrant(
                     grant_id=self.ids.new(IdPrefix.GRANT),
@@ -457,7 +649,15 @@ class SqliteStateStore:
                     resource=intent.intent.resource,
                     intent_hash=request.intent_hash,
                     issued_at=now,
-                    expires_at=min(request.expires_at, now + timedelta(minutes=10)),
+                    expires_at=(
+                        min(request.expires_at, now + timedelta(minutes=10))
+                        if choice is ApprovalChoice.ALLOW_ONCE
+                        else None
+                    ),
+                    choice=choice,
+                    scope_sha256=scope_sha256,
+                    source_rule_id=source_rule_id,
+                    remaining_uses=1 if choice is ApprovalChoice.ALLOW_ONCE else None,
                 )
                 connection.execute(
                     "INSERT INTO capability_grants"
@@ -481,6 +681,7 @@ class SqliteStateStore:
                         "status": ApprovalStatus.DENIED,
                         "resolved_at": now,
                         "denial_reason": safe_denial_reason,
+                        "resolution_choice": ApprovalChoice.DENY,
                     }
                 )
                 grant = None
@@ -496,7 +697,11 @@ class SqliteStateStore:
                     run,
                     intent.intent,
                     "approval.resolved",
-                    {"request_id": request_id, "resolution": resolved.status.value},
+                    {
+                        "request_id": request_id,
+                        "resolution": resolved.status.value,
+                        "choice": selected_choice.value,
+                    },
                 ),
             )
             if grant is not None:
@@ -506,7 +711,13 @@ class SqliteStateStore:
                         run,
                         intent.intent,
                         "capability.issued",
-                        {"grant_id": grant.grant_id, "remaining_uses": 1},
+                        {
+                            "grant_id": grant.grant_id,
+                            "remaining_uses": grant.remaining_uses,
+                            "choice": grant.choice.value,
+                            "scope_sha256": grant.scope_sha256,
+                            "source_rule_id": grant.source_rule_id,
+                        },
                     ),
                 )
             connection.commit()
@@ -517,44 +728,426 @@ class SqliteStateStore:
             connection.execute("BEGIN IMMEDIATE")
             request = self._get_approval(connection, request_id)
             intent = self._get_intent_by_id(connection, request.intent_id)
+            grant = self._get_grant_for_request(connection, request_id)
+            if grant is None:
+                raise self._invalid_approval(request_id)
+            run = self._validate_approval_binding(connection, request, intent, grant)
+            self._validate_active_grant(run, request, grant, intent.intent)
+            if (
+                grant.intent_hash != intent_hash
+                or request.intent_hash != intent_hash
+                or intent.intent_hash != intent_hash
+            ):
+                raise self._invalid_approval(request_id)
             if intent.status in {IntentStatus.RESERVED, IntentStatus.EXECUTED}:
                 connection.commit()
                 return intent
-            grant = self._get_grant_for_request(connection, request_id)
-            now = self.clock.now()
-            if (
-                request.status is not ApprovalStatus.APPROVED
-                or grant is None
-                or grant.intent_hash != intent_hash
-                or request.intent_hash != intent_hash
-                or grant.expires_at <= now
-                or grant.remaining_uses != 1
-            ):
-                raise FleetError(
-                    ErrorCode.APPROVAL_INVALID,
-                    "The one-use capability does not exactly match the pending intent.",
-                    "Inspect the approval and start a new request if its scope or expiry changed.",
-                    details={"request_id": request_id},
-                )
-            consumed = grant.model_copy(update={"remaining_uses": 0, "consumed_at": now})
+            if intent.status is not IntentStatus.PENDING_APPROVAL:
+                raise self._invalid_approval(request_id)
             reserved = intent.model_copy(update={"status": IntentStatus.RESERVED})
-            connection.execute(
-                "UPDATE capability_grants SET remaining_uses = 0, data_json = ? WHERE grant_id = ?",
-                (consumed.model_dump_json(), consumed.grant_id),
-            )
+            self._consume_grant(connection, run, grant, intent.intent)
             self._update_intent(connection, reserved)
-            run = self._get_run(connection, intent.intent.run_id)
+            connection.commit()
+            return reserved
+
+    def list_grants(self, run_id: str) -> list[CapabilityGrant]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT grant_id FROM capability_grants WHERE run_id = ? ORDER BY rowid",
+                (run_id,),
+            ).fetchall()
+            grants = [self._get_grant(connection, row["grant_id"]) for row in rows]
+            if any(grant.run_id != run_id for grant in grants):
+                raise self._invalid_approval("grant-list-binding")
+            return grants
+
+    def list_project_grants(self, project_id: str) -> list[CapabilityGrant]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT g.grant_id FROM capability_grants g JOIN runs r ON r.run_id = g.run_id "
+                "WHERE r.project_id = ? ORDER BY g.rowid",
+                (project_id,),
+            ).fetchall()
+            grants = [self._get_grant(connection, row["grant_id"]) for row in rows]
+            if any(grant.project_id != project_id for grant in grants):
+                raise self._invalid_approval("grant-list-binding")
+            return grants
+
+    def get_grant(self, grant_id: str) -> CapabilityGrant:
+        with self._connect() as connection:
+            return self._get_grant(connection, grant_id)
+
+    def revoke_grant(self, grant_id: str) -> CapabilityGrant:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            grant = self._get_grant(connection, grant_id)
+            if grant.revoked_at is not None:
+                connection.commit()
+                return grant
+            revoked = grant.model_copy(update={"revoked_at": self.clock.now()})
+            self._update_grant(connection, revoked)
+            run = self._get_run(connection, grant.run_id)
+            self._insert_event(
+                connection,
+                self._event_for_run(run, "capability.revoked", {"grant_id": grant_id}),
+            )
+            connection.commit()
+            return revoked
+
+    def consume_matching_grant_and_reserve(
+        self, grant_id: str, intent: ToolIntent, intent_hash: str, scope_sha256: str
+    ) -> StoredToolIntent:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            grant = self._get_grant(connection, grant_id)
+            if grant.request_id is None:
+                raise self._invalid_approval(None)
+            request = self._get_approval(connection, grant.request_id)
+            source = self._get_intent_by_id(connection, grant.intent_id)
+            run = self._validate_approval_binding(connection, request, source, grant)
+            self._validate_active_grant(run, request, grant, intent)
+            self._validate_intent_context(connection, run, intent)
+            if (
+                run.status is not RunStatus.RUNNING
+                or grant.scope_sha256 != scope_sha256
+                or canonical_json_hash(intent.model_dump(mode="json")) != intent_hash
+                or intent.run_id != source.intent.run_id
+                or intent.task_id != source.intent.task_id
+                or intent.principal_role != source.intent.principal_role
+                or intent.workflow != source.intent.workflow
+                or intent.stage is not source.intent.stage
+                or intent.action != source.intent.action
+                or intent.resource != source.intent.resource
+                or intent.parameters != source.intent.parameters
+                or intent.side_effect != source.intent.side_effect
+                or (
+                    grant.choice is ApprovalChoice.ALLOW_ONCE
+                    and (intent != source.intent or intent_hash != source.intent_hash)
+                )
+            ):
+                raise self._invalid_approval(request.request_id)
+            existing = self._find_intent(connection, intent.run_id, intent.idempotency_key)
+            if existing is not None:
+                if (
+                    existing.intent != intent
+                    or existing.intent_hash != intent_hash
+                    or existing.approval_request_id != grant.request_id
+                    or existing.status not in {IntentStatus.RESERVED, IntentStatus.EXECUTED}
+                ):
+                    raise self._invalid_approval(request.request_id)
+                connection.commit()
+                return existing
+            if grant.choice is ApprovalChoice.ALLOW_ONCE:
+                raise self._invalid_approval(request.request_id)
+            if (
+                connection.execute(
+                    "SELECT 1 FROM tool_intents WHERE intent_id = ?", (intent.intent_id,)
+                ).fetchone()
+                is not None
+            ):
+                raise self._invalid_approval(request.request_id)
+            reserved = StoredToolIntent(
+                intent=intent,
+                intent_hash=intent_hash,
+                status=IntentStatus.RESERVED,
+                approval_request_id=grant.request_id,
+            )
+            self._consume_grant(connection, run, grant, intent)
+            self._insert_intent(connection, reserved)
             self._insert_event(
                 connection,
                 self._event_for_intent(
-                    run,
-                    intent.intent,
-                    "capability.consumed",
-                    {"grant_id": grant.grant_id, "intent_id": intent.intent.intent_id},
+                    run, intent, "tool.intent_created", {"action": intent.action}
                 ),
             )
             connection.commit()
             return reserved
+
+    def reserve_trust_rule_intent(
+        self,
+        intent: ToolIntent,
+        intent_hash: str,
+        scope_sha256: str,
+        source_rule_id: str,
+    ) -> StoredToolIntent:
+        """Record one current-policy-authorized action without inventing an approval.
+
+        The broker must revalidate the exact user-owned rule before this call.
+        This transaction records provenance and reservation; it never evaluates
+        a rule, widens its scope, or issues a reusable capability.
+        """
+        if self.redactor.contains_secret_data(
+            {
+                "intent": intent.model_dump(mode="json"),
+                "scope_sha256": scope_sha256,
+                "source_rule_id": source_rule_id,
+            }
+        ):
+            raise self._invalid_approval(None)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            run = self._get_run(connection, intent.run_id)
+            self._validate_intent_context(connection, run, intent)
+            if (
+                run.status is not RunStatus.RUNNING
+                or run.pending_approval_id is not None
+                or run.stage is not intent.stage
+                or canonical_json_hash(intent.model_dump(mode="json")) != intent_hash
+            ):
+                raise self._invalid_approval(None)
+            existing = self._find_intent(connection, intent.run_id, intent.idempotency_key)
+            if existing is not None:
+                row = connection.execute(
+                    "SELECT grant_id FROM capability_grants WHERE intent_id = ?",
+                    (existing.intent.intent_id,),
+                ).fetchone()
+                if row is None:
+                    raise self._invalid_approval(None)
+                receipt = self._get_grant(connection, row["grant_id"])
+                if (
+                    existing.intent != intent
+                    or existing.intent_hash != intent_hash
+                    or existing.approval_request_id is not None
+                    or existing.status not in {IntentStatus.RESERVED, IntentStatus.EXECUTED}
+                    or receipt.request_id is not None
+                    or receipt.choice is not ApprovalChoice.ALLOW_ALWAYS
+                    or receipt.source_rule_id != source_rule_id
+                    or receipt.scope_sha256 != scope_sha256
+                    or receipt.intent_id != intent.intent_id
+                    or receipt.intent_hash != intent_hash
+                    or receipt.project_id != run.project_id
+                    or receipt.run_id != run.run_id
+                    or receipt.task_id != intent.task_id
+                    or receipt.agent_instance_id != intent.agent_instance_id
+                    or receipt.principal_role != intent.principal_role
+                    or receipt.action != intent.action
+                    or receipt.resource != intent.resource
+                    or receipt.remaining_uses != 0
+                    or receipt.consumed_at is None
+                    or receipt.revoked_at is not None
+                    or (receipt.expires_at is not None and receipt.expires_at <= self.clock.now())
+                ):
+                    raise self._invalid_approval(None)
+                connection.commit()
+                return existing
+            if (
+                connection.execute(
+                    "SELECT 1 FROM tool_intents WHERE intent_id = ?", (intent.intent_id,)
+                ).fetchone()
+                is not None
+            ):
+                raise self._invalid_approval(None)
+            now = self.clock.now()
+            try:
+                receipt = CapabilityGrant(
+                    grant_id=self.ids.new(IdPrefix.GRANT),
+                    intent_id=intent.intent_id,
+                    project_id=run.project_id,
+                    run_id=run.run_id,
+                    task_id=intent.task_id,
+                    agent_instance_id=intent.agent_instance_id,
+                    principal_role=intent.principal_role,
+                    action=intent.action,
+                    resource=intent.resource,
+                    intent_hash=intent_hash,
+                    issued_at=now,
+                    choice=ApprovalChoice.ALLOW_ALWAYS,
+                    scope_sha256=scope_sha256,
+                    source_rule_id=source_rule_id,
+                    remaining_uses=0,
+                    consumed_at=now,
+                )
+            except ValidationError:
+                raise self._invalid_approval(None) from None
+            reserved = StoredToolIntent(
+                intent=intent, intent_hash=intent_hash, status=IntentStatus.RESERVED
+            )
+            self._insert_intent(connection, reserved)
+            connection.execute(
+                "INSERT INTO capability_grants "
+                "(grant_id, request_id, intent_id, run_id, remaining_uses, data_json) "
+                "VALUES (?, NULL, ?, ?, 0, ?)",
+                (receipt.grant_id, intent.intent_id, run.run_id, receipt.model_dump_json()),
+            )
+            self._insert_event(
+                connection,
+                self._event_for_intent(
+                    run, intent, "tool.intent_created", {"action": intent.action}
+                ),
+            )
+            for event_type in ("capability.issued", "capability.consumed"):
+                self._insert_event(
+                    connection,
+                    self._event_for_intent(
+                        run,
+                        intent,
+                        event_type,
+                        {
+                            "grant_id": receipt.grant_id,
+                            "intent_id": intent.intent_id,
+                            "choice": receipt.choice.value,
+                            "remaining_uses": 1 if event_type == "capability.issued" else 0,
+                            "source_rule_id": source_rule_id,
+                            "scope_sha256": scope_sha256,
+                        },
+                    ),
+                )
+            connection.commit()
+            return reserved
+
+    def _validate_approval_binding(
+        self,
+        connection: sqlite3.Connection,
+        request: ApprovalRequest,
+        source: StoredToolIntent,
+        grant: CapabilityGrant | None = None,
+    ) -> Run:
+        intent = source.intent
+        run = self._get_run(connection, request.run_id)
+        self._validate_intent_context(connection, run, intent)
+        if (
+            request.intent_id != intent.intent_id
+            or request.run_id != intent.run_id
+            or source.approval_request_id != request.request_id
+            or request.intent_hash != source.intent_hash
+            or source.intent_hash != canonical_json_hash(intent.model_dump(mode="json"))
+            or request.principal_role != intent.principal_role
+            or request.action != intent.action
+            or request.resource != intent.resource
+        ):
+            raise self._invalid_approval(request.request_id)
+        if grant is not None and (
+            grant.request_id != request.request_id
+            or grant.intent_id != intent.intent_id
+            or grant.project_id != run.project_id
+            or grant.run_id != run.run_id
+            or grant.task_id != intent.task_id
+            or grant.agent_instance_id != intent.agent_instance_id
+            or grant.principal_role != intent.principal_role
+            or grant.action != intent.action
+            or grant.resource != intent.resource
+            or grant.intent_hash != source.intent_hash
+            or grant.source_rule_id != request.source_rule_id
+            or grant.choice != (request.resolution_choice or ApprovalChoice.ALLOW_ONCE)
+            or grant.scope_sha256
+            != (
+                canonical_json_hash(request.authorization_scope)
+                if request.authorization_scope is not None
+                else None
+            )
+        ):
+            raise self._invalid_approval(request.request_id)
+        return run
+
+    @staticmethod
+    def _validate_intent_context(
+        connection: sqlite3.Connection, run: Run, intent: ToolIntent
+    ) -> None:
+        task_row = connection.execute(
+            "SELECT data_json FROM tasks WHERE task_id = ?", (intent.task_id,)
+        ).fetchone()
+        agent_row = connection.execute(
+            "SELECT data_json FROM agent_instances WHERE agent_instance_id = ?",
+            (intent.agent_instance_id,),
+        ).fetchone()
+        if task_row is None or agent_row is None:
+            raise SqliteStateStore._invalid_approval("unbound-intent")
+        task = TaskSpec.model_validate_json(task_row["data_json"])
+        agent = AgentInstance.model_validate_json(agent_row["data_json"])
+        if (
+            run.run_id != intent.run_id
+            or run.task_id != intent.task_id
+            or task.task_id != intent.task_id
+            or task.run_id != run.run_id
+            or task.workflow != intent.workflow
+            or agent.agent_instance_id != intent.agent_instance_id
+            or agent.run_id != run.run_id
+            or agent.task_id != task.task_id
+            or agent.role != intent.principal_role
+        ):
+            raise SqliteStateStore._invalid_approval("unbound-intent")
+
+    def _validate_active_grant(
+        self, run: Run, request: ApprovalRequest, grant: CapabilityGrant, intent: ToolIntent
+    ) -> None:
+        if (
+            request.status is not ApprovalStatus.APPROVED
+            or grant.choice not in request.available_choices
+            or grant.revoked_at is not None
+            or (grant.expires_at is not None and grant.expires_at <= self.clock.now())
+            or run.stage is not intent.stage
+            or run.status not in {RunStatus.RUNNING, RunStatus.PAUSED_FOR_APPROVAL}
+            or (run.status is RunStatus.RUNNING and run.pending_approval_id is not None)
+            or (
+                run.status is RunStatus.PAUSED_FOR_APPROVAL
+                and run.pending_approval_id != request.request_id
+            )
+        ):
+            raise self._invalid_approval(request.request_id)
+
+    def _consume_grant(
+        self, connection: sqlite3.Connection, run: Run, grant: CapabilityGrant, intent: ToolIntent
+    ) -> None:
+        if grant.remaining_uses is not None and grant.remaining_uses <= 0:
+            raise self._invalid_approval(grant.request_id)
+        consumed = grant.model_copy(
+            update={
+                "remaining_uses": (
+                    grant.remaining_uses - 1 if grant.remaining_uses is not None else None
+                ),
+                "consumed_at": self.clock.now(),
+            }
+        )
+        self._update_grant(connection, consumed)
+        self._insert_event(
+            connection,
+            self._event_for_intent(
+                run,
+                intent,
+                "capability.consumed",
+                {"grant_id": grant.grant_id, "intent_id": intent.intent_id},
+            ),
+        )
+
+    @staticmethod
+    def _get_grant(connection: sqlite3.Connection, grant_id: str) -> CapabilityGrant:
+        row = connection.execute(
+            "SELECT g.*, r.project_id AS owning_project_id FROM capability_grants g "
+            "JOIN runs r ON r.run_id = g.run_id WHERE g.grant_id = ?",
+            (grant_id,),
+        ).fetchone()
+        if row is None:
+            raise _not_found("capability grant", grant_id)
+        return SqliteStateStore._grant_from_row(row)
+
+    @staticmethod
+    def _grant_from_row(row: sqlite3.Row) -> CapabilityGrant:
+        grant = CapabilityGrant.model_validate_json(row["data_json"])
+        if (
+            any(
+                getattr(grant, field) != row[field]
+                for field in ("grant_id", "request_id", "intent_id", "run_id", "remaining_uses")
+            )
+            or grant.project_id != row["owning_project_id"]
+        ):
+            raise SqliteStateStore._invalid_approval(grant.request_id)
+        return grant
+
+    @staticmethod
+    def _update_grant(connection: sqlite3.Connection, grant: CapabilityGrant) -> None:
+        connection.execute(
+            "UPDATE capability_grants SET remaining_uses = ?, data_json = ? WHERE grant_id = ?",
+            (grant.remaining_uses, grant.model_dump_json(), grant.grant_id),
+        )
+
+    @staticmethod
+    def _invalid_approval(request_id: str | None) -> FleetError:
+        return FleetError(
+            ErrorCode.APPROVAL_INVALID,
+            "The capability does not match the current exact authorization context.",
+            "Inspect the request, scope, expiry, revocation, and run state before retrying.",
+            details={"request_id": request_id},
+        )
 
     def complete_intent(self, intent_id: str, result: dict[str, object]) -> StoredToolIntent:
         with self._connect() as connection:
@@ -1038,9 +1631,11 @@ class SqliteStateStore:
         connection: sqlite3.Connection, request_id: str
     ) -> CapabilityGrant | None:
         row = connection.execute(
-            "SELECT data_json FROM capability_grants WHERE request_id = ?", (request_id,)
+            "SELECT g.*, r.project_id AS owning_project_id FROM capability_grants g "
+            "JOIN runs r ON r.run_id = g.run_id WHERE g.request_id = ?",
+            (request_id,),
         ).fetchone()
-        return CapabilityGrant.model_validate_json(row["data_json"]) if row is not None else None
+        return SqliteStateStore._grant_from_row(row) if row is not None else None
 
 
 def _validate_lease_transition(current: LeaseStatus, target: LeaseStatus) -> None:

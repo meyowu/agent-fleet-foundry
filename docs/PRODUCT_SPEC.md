@@ -59,16 +59,16 @@ The product has differentiated value only when the following six properties are 
 
 The implementation status is deliberately explicit:
 
-| Differentiator | Implemented through Phase 3 | Remaining product milestone |
+| Differentiator | Implemented through accepted Phase 4 | Remaining product milestone |
 |---|---|---|
 | Repository-aware bootstrap | Static profile, knowledge artifacts, detected-command proposal, read-only diff preview, disposable deterministic canary through the ordinary Docker workflow, validated BootstrapReport, cleanup proof, and `.fleet/` publication only after success | Broader safe project-command discovery/execution and non-local sandbox support |
 | Adaptive Fleet | Validated plan plus direct/single-Engineer/Engineer+Verifier paths through fake or PydanticAI runtime | Parallel and specialist scheduling in Phase 5 |
-| Permission control plane | Independent broker contract, exact allow-once, and no runtime host-path or harness-tool bypass | Run/persistent exact trust, explain, and revoke in Phase 4 |
+| Permission control plane | Current user/project/workflow/role/task/sandbox intersection; exact once/run/project trust; explain/revoke/reset; durable single-winner dispatch and identity-bound approval resume; no harness-tool bypass | Preserve these ceilings through Phase 5 chat/adaptive execution and Phase 6 configuration evolution |
 | Sandbox abstraction | Exact fail-closed fake/Docker/local-unsafe dispatch; Docker pins a local daemon and immutable image, inspects one-shot containers, enforces network/resource boundaries, and recovers exact resources | Modal/hosted providers, approved network modes, and broader platform evidence |
 | Evidence-first delivery | Exact ConfigSnapshot/TaskSpec/FleetPlan/patch/command/cleanup/verdict/BootstrapReport bindings; fresh Docker verifier evidence can satisfy CompletionGate while fake/local-unsafe cannot | General multi-criterion model mapping and full Phase 5 workflow |
 | Versioned evolution | FleetPatch schema and protected-path validator | Proposal/diff/apply/rollback in Phase 6 |
 
-Implemented Phase 3 functionality is not shorthand for the complete MVP. CLI and documentation must label FakeSandbox as simulated, local-unsafe as non-isolating, Docker's local trusted-computing-base limits, and roadmap-only behaviors directly even when the selected model runtime is real.
+Phase 4 was accepted on 2026-09-05 with `1001 passed, 10 skipped` in the default suite and nine separately passing real-Docker tests; exact results and boundaries are in `MVP_ACCEPTANCE.md`. No live model-provider acceptance was run. Accepted Phase 0–4 functionality is not shorthand for the complete MVP: Phase 5–7 and live-provider/license gates remain open. CLI and documentation must label FakeSandbox as simulated, local-unsafe as non-isolating, Docker's local trusted-computing-base limits, and roadmap-only behaviors directly even when the selected model runtime is real.
 
 ## 3. Target users
 
@@ -406,6 +406,8 @@ Default restrictions:
 - no external side effects.
 
 ## 7. Default trust modes
+
+The lists below describe the broader product target. **Accepted Phase 4 behavior is narrower:** Safe asks for supported exact reviewed commands without a matching grant/rule; Balanced and Autonomous Sandbox currently share the same supported reviewed-command ceiling. All modes enforce reviewed paths and role/workflow/request/task/sandbox intersections. Unknown executables, arbitrary shell, package-registry/network expansion and external writes are not made executable by an approval. Isolated workers support only `network=none`; local-unsafe remains separately confirmed and non-isolating. See `CONFIG_AND_SCHEMAS.md` for implemented choices, lifetimes and CLI.
 
 ## 7.1 Safe
 

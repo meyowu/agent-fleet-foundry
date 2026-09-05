@@ -254,6 +254,7 @@ class ProjectService:
             bootstrap_report_sha256=report_artifact.sha256,
             bootstrap_canary_run_id=verified.canary_run_id,
             bootstrap_verified=True,
+            permission_scope_required=True,
         )
 
     def _initialize_without_canary(
@@ -277,6 +278,7 @@ class ProjectService:
         bootstrap_report_sha256: str | None = None,
         bootstrap_canary_run_id: str | None = None,
         bootstrap_verified: bool = False,
+        permission_scope_required: bool = False,
         sandbox_image_identity: str | None = None,
         sandbox_daemon_identity: str | None = None,
     ) -> dict[str, object]:
@@ -398,6 +400,8 @@ class ProjectService:
             "bootstrap_report_sha256": bootstrap_report_sha256,
             "bootstrap_canary_run_id": bootstrap_canary_run_id,
             "bootstrap_verified": bootstrap_verified,
+            "permission_scope_required": permission_scope_required
+            or (existing.permission_scope_required if existing is not None else False),
         }
         if existing is None:
             project = Project(
