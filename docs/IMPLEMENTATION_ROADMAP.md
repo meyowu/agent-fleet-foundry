@@ -4,7 +4,7 @@
 
 Implement phases in order. Every phase must leave a runnable, tested repository and produce an updated ExecPlan outcome. Do not begin a later phase by creating empty placeholder abstractions across the whole system. Add only the contracts required by the current vertical slice, while preserving the specified architectural boundaries.
 
-Current boundary as of 2026-09-05: Phase 0–6 is implemented and locally accepted. Checkpoints before Phase 6 extend through `a46b68800fb9725274db869f8c360b97a70c24ef` on `codex/mvp-completion`; remote main remains `c700de1`. E6 records1973 default passes15 explicit skips and fourteen separately enabled real-Docker passes, with82 schemas and migration8. Whole-phase metadata is6 after the successful behavioral freeze; metadata/package/checkpoint refresh is recorded separately in the evolution plan. Phase 7 guide/hardening, fresh-user/Linux platform release proof, live-provider acceptance and the owner license decision remain open. Local acceptance is not a complete release or final GitHub merge.
+Current boundary as of 2026-09-05: Phase0–6 is implemented and accepted under E4–E6 of `docs/MVP_ACCEPTANCE.md`; Phase7's guide, packaged runner/learning project, installation/upgrade/scale tests, security tooling and platform CI are implemented. The repaired release candidate and final GitHub delivery are tracked by E7, the release ExecPlan and PR #5. Whole-phase metadata remains6 because the Phase7 public-release gate still requires an explicitly authorized real-provider canary and an owner-selected license. Automated local/CI acceptance, a GitHub merge and a public release are separate outcomes.
 
 For each phase:
 
@@ -469,7 +469,7 @@ A natural-language organizational request produces a reviewable FleetPatch; noth
 
 ## Phase 7 — Hardening, packaging, documentation, and release candidate
 
-Status on2026-09-05: implemented candidate under `.agent/plans/2026-09-05-release-candidate.md`, following accepted Phase6 checkpoint b42cdf9. Packaged assets/guide, fresh-install/upgrade/scale tests, security tooling and pinned CI now exist; focused installed wheel/sdist/public-Docker proof passed. Final frozen full/platform gates and GitHub merge remain pending. The owner-license and live-provider requirements below remain separate unperformed public-release gates, not waived acceptance.
+Status on2026-09-05: local release candidate implemented under `.agent/plans/2026-09-05-release-candidate.md`, following accepted Phase6 checkpoint b42cdf9. Repaired runtime3293244 passed complete macOS/Linux default, six selected platform combinations, standalone security, real Docker and fresh installed journeys. The final help/doc/package refresh and GitHub delivery are recorded by exact identity in E7/the release plan/PR #5. The owner-license and live-provider requirements below remain separate unperformed public-release gates, not waived acceptance; whole-phase metadata stays6.
 
 ### Goal
 

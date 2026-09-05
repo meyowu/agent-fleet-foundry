@@ -587,7 +587,7 @@ def deny(
 
 @app.command()
 def resume(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False) -> None:
-    """Resume a durable approved fake workflow without duplicating its logical action."""
+    """Resume an approved workflow from its durable checkpoint."""
 
     redactor = _environment_redactor()
 

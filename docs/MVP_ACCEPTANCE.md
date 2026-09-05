@@ -4,7 +4,7 @@ This is a living review ledger, not a release declaration or a user guide. It ma
 
 ## Evidence boundary and update rules
 
-The initial audit on 2026-09-05 inspected the Phase 3 baseline at commit `c700de1fc357844113426d3352cf29b6ffeae0f1`, tree `eb778abcc5c073d4c58f54e6a55c7a04d6333ea4`. **Phases4–6 are locally accepted by E4/E5.1/E5.2/E5.3/E6 below.** Development checkpoints are committed/pushed through organization evolution `b42cdf9ccf5325acc99bf7fb43581329045c0490`, tree `bb5e669f9ce77ae45778b56c2286b4661b353a97`; remote main remains the initial baseline, rechecked at17:25 UTC. Phase7 is an implemented release candidate with focused E7 evidence and outstanding full/platform gates. Whole-phase metadata remains6. No complete public MVP release or final GitHub merge is claimed. Exact results and failed attempts are retained in ExecPlans; older entries remain historical unless explicitly superseded.
+The initial audit on 2026-09-05 inspected the Phase3 baseline at `c700de1fc357844113426d3352cf29b6ffeae0f1`. Phases4–6 are accepted by E4–E6; the repaired Phase7 candidate is checkpoint `329324430e4b712062f045fb613173cf4a8adea7`, tree `a6ac78acb11658d7dae8cddb10616f6ff140a5ed`, under [PR #5](https://github.com/meyowu/agent-fleet-codex-kit/pull/5). E7 records current results and final delivery separately. Whole-phase metadata remains6 because live-provider/public-license gates remain unperformed; no complete public release is claimed. Exact commands and failed attempts are retained in ExecPlans. Earlier snapshots and columns explicitly labeled starting/baseline describe historical evidence and regression obligations, not current missing implementations.
 
 - **Baseline:** relevant code and tests exist; this ledger's initial audit did not rerun those suites.
 - **Partial:** a working subset exists but does not meet the complete requirement.
@@ -125,6 +125,23 @@ Local platform: macOS arm64/Colima; image `sha256:15245c81b1efb7a68bad269f037379
 
 The governing [release-candidate ExecPlan](../.agent/plans/2026-09-05-release-candidate.md) retains exact attempts, inputs and boundaries. The current local runner built from packaged digest/hash-pinned resources is `agent-fleet-runner:0.1.0-py314-v1`, image `sha256:2afebd51ae66f07096063b53fc14b6a45b18dd63b01d7f31ed0cb640c51da241`, on macOS arm64/Colima. Prepared dependencies bind Python3.14.6, lock55 and52 applicable wheels; preparation is explicitly network-enabled, but installation/execution is offline with provider requests denied.
 
+Current repaired behavioral freeze: `c03fa3d455b073958ade3c4d365a0231319e1b59eb715af3b79bb278bff5d3c3`, checkpoint3293244. Linux exposed device/inode reuse in the prior static Git-shadow check; a retained read-only/non-inheritable descriptor now pins its lifetime, with metadata drift checks at both dispatch boundaries. No timestamp-only uniqueness or atomic Docker pathname handoff is claimed. The original unlink tests remain, same-inode/lifecycle tests were added, and the tracked organization fixture no longer depends on ambient Git identity. Historical de0e230 full Linux failed3/1983 passed/25 skipped; those failures are not hidden or counted as acceptance.
+
+| Repaired candidate gate | Exact current evidence |
+| --- | --- |
+| Static/dependencies | Ruff267; mypy219 on Darwin/Linux;82 schemas; lock55/sync53 and whitespace passed. |
+| Full default | macOS2004 passed/18 explicit skips1515.89s; Linux1997 passed/25 skips994.03s. Local JUnit partitions:unit1027,contract578,integration372,offline E2E22,four Docker-directory offline cases andone readiness case. |
+| Standalone offline / real Docker |734 passed199.76s /14 passed4 deselected148.37s, no skips/errors/failures; script manifest `8387db7309d7981c8e6b53ce52a46ad7459836d50534e7df6ea8f610e774f187` and verdict0 for both. Named replay is a subset; full/security/platform counts overlap. |
+| Fresh installed wheel/sdist/public Docker |3 passed105.72s on repaired source; final help/655-line guide refresh3 passed94.60s under `/Users/blackswan/.cache/agent-fleet-phase7-final-installed.EzciAj`. Prior six-database read-back:42 released leases, no outstanding/pending/active ownership;171 mixed fake/Docker blobs match persisted hash/size, no managed containers. Final evidence-text-only archive refresh is recorded in the plan. |
+| Independent repair / guide |277 Docker/native/proposal tests20.01s plus independent mutation/inode/lifecycle probes; PASS. Separate guide audit PASS:28 help checks without state creation,47 local links/anchors, balanced fences,2 asset tests0.51s and one archive/resource test2.03s. Final delta PASS proves production AST unchanged apart from resume docstring, actual no-state help, exact main/PR triggers with nine unchanged gates and CI-shape test1/0.07s. |
+| Linux platform selections |Python3.12.14/3.13.15/3.14.7 each1659 passed/5 exact Darwin metadata skips in465.07/440.14/489.22s. Real native Linux publication and original shadow-replacement contracts ran. |
+| macOS platform selections |Python3.12.14/3.13.15/3.14.7 each1664 passed, no skips, in446.19/505.08/515.57s. Git2.55.0 across CI. |
+| CI opt-ins |macOS fresh wheel/sdist2 passed1 deselected50.95s; Linux Docker+installed journey15 passed6 deselected153.57s, amd64 image `sha256:a5335772f0126e59e2cf5abe1fa0f44a21274697469a6309c4b76b97fa0309a3`. |
+| Complete CI verdict | All nine workflow33986257215 jobs passed. Linux standalone script729 passed/five named Darwin skips146.02s, no unexpected skips/errors/failures and verdict0. |
+| Final delivery refresh | Only resume-help prose, exact main/PR CI-trigger assertions and documentation change after the full behavioral freeze; final source/test/script aggregate `c400cdb40fa16bb13d2c1a8732893560ccc91db5fdbf916bdcf6868857378cf6`. Final package/cosmetic/head checks and GitHub merge/read-back remain separately recorded below/in the plan. L1/L2 public-release gates remain unperformed. |
+
+Historical preparation and earlier installed attempts (superseded where the current table supplies newer evidence):
+
 | Candidate gate | Observed result and boundary |
 | --- | --- |
 | Fresh wheel/sdist and installed public Docker journey | `3 passed in60.92s`. Each installs into a new environment outside the checkout with an empty cache, no system packages, frozen runtime/build constraints and lock-verified wheel hashes. Wheel/sdist prove packaged bytes,82 schemas/eight migrations, stable JSON, preview/fake-init refusal and an explicitly test-seeded fake flow. The separate installed wheel Docker journey uses public init, exact approvals, two independent five-test receipts and explicit code apply; no private init shortcut or real model key. |
@@ -222,7 +239,7 @@ Phase 6 must prove every roadmap negative case: invalid schema, traversal/symlin
 
 | ID | Deliverable | Starting evidence / missing work | Required proving evidence |
 | --- | --- | --- | --- |
-| F7-01 | Linux/macOS E2E matrix; Windows limitations and available tests. | Candidate `.github/workflows/ci.yml`: six OS/Python jobs plus complete-default/installed/Docker jobs, read-only permissions and pinned actions; not yet run. | Actual jobs, versions, Linux native exchange and failures; Windows/remote filesystems explicitly unsupported. Q1–Q6, M1. |
+| F7-01 | Linux/macOS E2E matrix; Windows limitations and available tests. | E7 six actual OS/Python platform jobs and installed/Docker jobs passed on3293244; complete-default/security and final-head acceptance remain separate. | Actual jobs, versions and Linux native exchange recorded above; Windows/remote filesystems explicitly unsupported. Q1–Q6, M1. |
 | F7-02 | SQLite migration upgrades. | Eight migrations; E7 realistic schema7 projection with paused approvals/active claims/leases/graphs/chat/budgets plus real organization-head reopen. | Preserve exact old rows/events/artifacts and current-head idempotency; older-version refusal without mutation. Q3, P4–P7. |
 | F7-03 | Orphan Docker/worktree recovery. | Baseline exact-run recovery and repeated-cancellation cleanup. | Preserve existing real Docker recovery matrix; extend node/parallel/apply crash cases; reconcile only exact owned resources and record zero outstanding leases/container residue. Q4, Q6, P5, P6. |
 | F7-04 | Stable CLI errors and JSON schemas. | Baseline versioned envelope/error enums/schema generation. | All new modes/slash operations/data/error surfaces have consistent persisted schemas and stable errors; compare generated schema files and package copies. Q1, Q3, Q5, P4–P6. |
@@ -240,14 +257,14 @@ Phase 6 must prove every roadmap negative case: invalid schema, traversal/symlin
 
 | Release gate | Starting status | Closing evidence |
 | --- | --- | --- |
-| R1 Default suite passes offline after dependencies are installed. | E6:1973 passed,15 explicitly gated skips; Phase7 full frozen repeat pending. | Repeat Q1–Q5 on the final release-candidate tree; current success does not pre-accept later code or public release. |
+| R1 Default suite passes offline after dependencies are installed. | E7 repaired runtime:macOS2004/18 skips and Linux1997/25 skips passed; final cosmetic/doc refresh uses exact-head CI. | Q1–Q5 evidence is recorded by identity; no actual provider or public-release acceptance follows. |
 | R2 Optional Docker integration suite passes. | E6:fourteen actual Docker cases passed with exact residue read-back; E7 rebuilt runner's separate14-case replay also passed. | Repeat Q6 for final freeze and inspect exact resource/inspection/candidate evidence. |
 | R3 Manual live-provider canary recorded. | Setup repaired to require real Docker and independent live inputs; readiness negatives pass offline. Actual gate remains unrun: no supplied disposable credential. | L2 and M3. Fake runtime or TestModel/FunctionModel is insufficient. |
-| R4 Every product MVP user-success criterion demonstrated. | U1–U12 below remain partial/unproven. | Current automatic/manual evidence for each individual row. |
+| R4 Every product MVP user-success criterion demonstrated. | U1–U12 have implemented automated paths under E4–E7, including installed real-Docker workflows with offline model responses; actual live-provider portions remain unperformed. | Preserve each mapped scenario; R3/M3 must separately prove real-provider behavior before public-release acceptance. |
 | R5 Security release gates met or explicitly documented as blocking gaps. | Baseline security foundation; final candidate unproven. | S01–S11 and mapped cases below; documenting a mandatory gap does not count as passing it. |
 | R6 README distinguishes enforcement/guidance and isolated/unsafe modes. | Baseline distinction exists. | Current guide/CLI review and M1; preserve honest fake/unsafe/loopback/host trust limitations. |
 | R7 No placeholders, fake claims, plaintext secrets or machine-specific paths. | Needs new candidate and distribution inspection. | Q1, Q2, Q5; inspect tracked/distributed product files and user-visible examples. Historical private acceptance paths are not portable setup instructions. |
-| R8 Fresh user follows quickstart successfully. | Missing independent installed-user proof. | M1 using the built distribution and published-accessible runner assets, with actual commands/results. |
+| R8 Fresh user follows quickstart successfully. | E7 independent fresh wheel/sdist and installed public Docker journey passed; runner/canary/guide are packaged resources. Organization proposal uses explicitly substituted offline FunctionModel, not a stock fake/live claim. | Refresh documentation-final bytes and keep real-provider M3 separate. No public registry publication is assumed. |
 
 ## All twelve MVP user-success criteria
 
@@ -336,7 +353,7 @@ The table above preserves the initial audit's starting targets and regression ob
 |10–12,16–17,20–21,27,32–33,40–42: actual worker/bootstrap/Git boundary | Existing bootstrap/path/Git/process contracts plus complete `tests/docker`, including independent verifier, sentinel, cancellation and exact owned-resource recovery. Real execution and final residue inspection remain mandatory; mocked calls alone cannot close these cases. |
 |45–49,51: release setup and credential boundary | Existing provider/doctor/runtime tests plus `tests/unit/test_release_prerequisites.py`, `tests/unit/test_release_tooling.py` and fresh installed CLI tests. Provider requests remain disabled; actual live-provider quality/compatibility is the separate unperformed L2/M3 gate. |
 
-The539-case standalone offline replay is a named subset, not all53 requirements proved by one aggregate count. Final security acceptance combines these mapped full-default tests, separately enabled real Docker, platform-specific native tests and exact artifact/resource read-back. Darwin-only metadata cases require actual macOS execution and are not counted as Linux passes.
+The standalone offline replay is a named subset, expanded from539 to734 cases with Docker contract/lifetime coverage; it is not all53 requirements proved by one aggregate count. Final security acceptance combines these mapped full-default tests, separately enabled real Docker, platform-specific native tests and exact artifact/resource read-back. Darwin-only metadata cases require actual macOS execution and are not counted as Linux passes.
 
 ## Known integration gaps discovered in the initial audits
 
@@ -356,8 +373,8 @@ The539-case standalone offline replay is a named subset, not all53 requirements 
 | Unsupported implicit registration remains intentionally denied. | Protected FleetSpec role/workflow registry remains immutable; existing workflow references activate only typed supported skills with known commands. | E6 proves required backend command evidence changes. Arbitrary new roles, executable skills and protected authority are not implicitly registered. |
 | Baseline init replacement gap addressed by separate Phase6 publisher. | Native full-directory exchange, durable prepared journal, monotonic admission and explicit recovery implement replace/remove without reusing init. | Headed init cannot rebind even identical bytes/credential reference. Unknown source/tree/index changes are preserved and remain fenced. |
 | Historical live-smoke setup mismatch repaired in Phase7. | The test now requires public PydanticAI+Docker initialization, actual independent evidence, separately gated provider/Docker inputs and credential redaction. | Offline prerequisite negatives pass; the actual live canary is still unrun, so this setup repair does not close L2/M3. |
-| Distributed quickstart lacks its runner recipe. | `pyproject.toml` sdist excludes tests; README points to `tests/docker/Dockerfile.runner`; recipe uses a mutable base. | Package or publish supported runner assets and prove installation without source-checkout-only files. Archive presence is not installed-user success. |
-| Release/platform infrastructure absent. | Empty `.github/workflows/`; no standalone scale/adversarial scripts, changelog/release process or owner license. | F7 obligations stay missing/unproven until artifacts and their actual execution evidence exist. |
+| Historical distributed-runner gap repaired in Phase7. | Canonical packaged digest/hash-pinned runner, learning project and guide ship in both archives and are used in fresh installed journeys. | Preserve exact documentation-final package bytes; no public image registry or live-model success is implied. |
+| Historical release/platform infrastructure gap implemented in Phase7. | Pinned read-only CI, upgrade/scale/adversarial scripts, changelog/release/dependency/data policies and detailed guide now exist; actual platform/installed/Docker results are in E7. | Final full/frozen/GitHub delivery remains separately recorded; owner license and actual live-provider gates remain open. |
 
 ## Proving commands and manual protocols
 

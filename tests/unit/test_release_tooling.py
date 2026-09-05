@@ -55,6 +55,8 @@ def test_ci_uses_read_only_pinned_actions_and_no_live_provider() -> None:
     workflow = yaml.load((_ROOT / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
     assert workflow["permissions"] == {"contents": "read"}
     assert set(workflow["on"]) == {"pull_request", "push", "workflow_dispatch"}
+    assert workflow["on"]["push"]["branches"] == ["main"]
+    assert workflow["on"]["pull_request"]["branches"] == ["main"]
     assert workflow["env"]["AGENT_FLEET_ENABLE_LIVE_PROVIDER_TESTS"] == "0"
     matrix = workflow["jobs"]["platform"]["strategy"]["matrix"]
     assert matrix == {"os": ["ubuntu-24.04", "macos-14"], "python": ["3.12", "3.13", "3.14"]}

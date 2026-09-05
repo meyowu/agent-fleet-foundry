@@ -2,7 +2,7 @@
 
 本指南用中文解释产品，保留命令、字段和架构名的 English 原名。目标是让你理解每一步会做什么、授权什么，以及什么证据才算完成。
 
-文档状态：Phase6 已通过本地验收并推送为 `b42cdf9`。Phase7 已完成首轮全新 wheel/sdist 安装和安装后公开 Docker 练习验证；最终冻结检查与跨平台 CI 仍单独记录。确切范围见 [MVP acceptance ledger](MVP_ACCEPTANCE.md)，不要把示例命令当成执行记录。当前没有已获授权的开源许可证，也没有真实模型供应商调用的验收结论。安装包附带本指南全文；跨文档相对链接请在同版本源码仓库中浏览。
+文档状态：本版本实现六项核心能力及本地 release-candidate 工具。全新 wheel/sdist、真实 Docker 练习、跨平台检查与 GitHub 交付的确切结果，见 [MVP acceptance ledger](MVP_ACCEPTANCE.md) 和 [README](../README.md#release-candidate-verification-2026-09-05)；不要把示例命令当成执行记录。CLI 的完整阶段标记保持6，因为 Phase7 的公开发布门槛还包括尚未执行的真实模型 canary 和 owner 许可证决定。当前没有公开包/镜像发布或已获授权的开源许可证。安装包附带本指南全文；跨文档相对链接请在同版本源码仓库中浏览。
 
 ## 目录
 
@@ -65,7 +65,7 @@ Agent Fleet 是本地优先、用户自带模型的 **Agent 组织运行时**，
 - 真正隔离执行需要本地 Linux Docker daemon，例如 Linux Docker 或 macOS 上的 Linux VM。远程/TCP daemon 不受支持。
 - 组织版本发布需要支持原生、同文件系统目录交换的本地文件系统；不支持的元数据或文件系统会被拒绝，不会退化成逐文件覆盖。
 
-当前实际平台证据和未完成的矩阵必须以 [验收账本](MVP_ACCEPTANCE.md) 为准。
+当前实际平台证据、测试选择和未覆盖范围必须以 [验收账本](MVP_ACCEPTANCE.md) 为准；支持版本声明不等于每个操作在所有组合上都执行过。
 
 ### 从源码安装
 
@@ -90,6 +90,12 @@ fleet version --json
 ```
 
 以上安装可能需要下载声明的依赖，不属于离线测试。不要把源码里的 `.venv` 或 `--no-deps` 解包检查当成全新依赖安装。当前没有承诺 PyPI 发布、公开 runner 镜像或已选择的许可证；不要根据包名安装来源不明的同名产品。
+
+在独立安装环境中，可用下面的只读命令找到随包附带的本指南；源码用户直接阅读 `docs/USER_GUIDE.md`：
+
+```bash
+python -c "from importlib.resources import files; print(files('agent_fleet').joinpath('assets/USER_GUIDE.md'))"
+```
 
 ### 选择状态目录
 
@@ -609,12 +615,12 @@ VM 必须能访问测试根目录。在已共享的 cache 目录下创建**全�
 普通测试不使用网络、外部 API key、Docker 或真实模型。贡献者基本检查：
 
 ```bash
-uv sync --all-extras
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy src tests
-uv run python -m agent_fleet.schemas.generate --check
-uv run pytest -q
+uv sync --all-extras --frozen
+uv run --offline ruff format --check .
+uv run --offline ruff check .
+uv run --offline mypy src tests
+uv run --offline python -m agent_fleet.schemas.generate --check
+uv run --offline pytest -q -ra
 ```
 
 从源码根目录执行。只将某个 tests 文件传给 mypy 可能缺少源码与共享 conftest 的分析上下文，不能替代规定的全量检查。
@@ -642,7 +648,7 @@ uv run --offline pytest -q -m 'installed_distribution and not docker_integration
 
 尚不能据此宣称任意模型稳定完成任意需求；Modal/Hosted sandbox、任意 harness/plugin、联网 worker、自动部署已经实现；或能隔离恶意宿主账户、daemon、内核和任意控制平面 adapter 代码。
 
-全新安装、Linux/macOS 矩阵、公开发布、许可证与最终 GitHub merge 都必须有实际记录，不能由示例命令、源码实现或本地测试推断。
+全新安装、Linux/macOS 矩阵、GitHub merge 与公开发布是独立结果，以验收记录为准。真实模型 canary、owner 许可证决定和公开发布仍未执行，不因本地或 CI 测试通过而自动完成。
 
 推荐学习顺序：只读 preview → 确定性 Docker Canary → 在无敏感信息的独立项目配置明确 BYOK → Safe 审批 → 审查完整证据并 apply 代码 → 提议验证规则 → 检查后续任务要求变化 → 当前头 rollback。
 

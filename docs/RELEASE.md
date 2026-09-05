@@ -53,7 +53,8 @@ stored proposals or represent this test fixture as a stock fake/live-provider fe
 CI uses pinned read-only actions, disabled checkout credential persistence, frozen
 dependency setup and no live key. Six jobs cover Linux/macOS with Python3.12–3.14:
 unit/contracts, all offline E2E, native publication/recovery, new operational
-checks and archive checks. One Linux3.14 job runs the complete default suite;
+checks and archive checks. One Linux3.14 job runs the complete default suite and
+the overlapping standalone offline adversarial entry point with exact platform skips;
 separate macOS fresh-install and Linux Docker/installed jobs cover those opt-ins.
 This is not every integration test on every Python/OS combination. Record actual
 job IDs/conclusions and tool versions; a YAML matrix alone proves no platform.
