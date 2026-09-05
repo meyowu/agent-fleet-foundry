@@ -13,7 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from agent_fleet.adapters.sandbox.process import ProcessResult, ProcessRunner
+from agent_fleet.adapters.sandbox.process import (
+    ProcessInvocationError,
+    ProcessResult,
+    ProcessRunner,
+    ProcessTerminationError,
+)
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
@@ -484,16 +489,17 @@ class DockerSandboxProvider:
                 ),
             )
         except asyncio.CancelledError as cancellation_error:
-            try:
-                cleanup = await asyncio.shield(
-                    self._cleanup_failed_execution(
-                        executable,
-                        created_id=created_id,
-                        container_name=container_name,
-                        labels=labels,
-                        create_attempted=create_attempted,
-                    )
+            cleanup_task = asyncio.create_task(
+                self._cleanup_failed_execution(
+                    executable,
+                    created_id=created_id,
+                    container_name=container_name,
+                    labels=labels,
+                    create_attempted=create_attempted,
                 )
+            )
+            try:
+                cleanup = await _await_cleanup_task(cleanup_task)
             except Exception as cleanup_error:
                 raise FleetError(
                     ErrorCode.SANDBOX_CLEANUP_FAILED,
@@ -507,20 +513,21 @@ class DockerSandboxProvider:
                 create_attempted=create_attempted,
                 labels=labels,
             )
-            raise
+            raise cancellation_error
         except Exception as execution_error:
             if dispatch_checkpoint_failed:
                 raise
-            try:
-                cleanup = await asyncio.shield(
-                    self._cleanup_failed_execution(
-                        executable,
-                        created_id=created_id,
-                        container_name=container_name,
-                        labels=labels,
-                        create_attempted=create_attempted,
-                    )
+            cleanup_task = asyncio.create_task(
+                self._cleanup_failed_execution(
+                    executable,
+                    created_id=created_id,
+                    container_name=container_name,
+                    labels=labels,
+                    create_attempted=create_attempted,
                 )
+            )
+            try:
+                cleanup = await _await_cleanup_task(cleanup_task)
             except Exception as cleanup_error:
                 raise FleetError(
                     ErrorCode.SANDBOX_CLEANUP_FAILED,
@@ -1818,7 +1825,13 @@ class DockerSandboxProvider:
                 timeout_seconds=timeout_seconds,
                 max_output_bytes=max_output_bytes,
             )
-        except (OSError, RuntimeError):
+        except ProcessTerminationError as error:
+            raise FleetError(
+                ErrorCode.SANDBOX_CLEANUP_FAILED,
+                "A trusted Docker CLI process could not be proven fully terminated.",
+                "Inspect local Docker processes and run Fleet recovery before retrying.",
+            ) from error
+        except ProcessInvocationError:
             raise FleetError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
                 "The trusted Docker CLI process could not be invoked.",
@@ -2047,6 +2060,19 @@ def _attach_cleanup_proof(
     error.__dict__["_agent_fleet_cleanup_result"] = cleanup.model_dump(mode="json")
     error.__dict__["_agent_fleet_create_attempted"] = create_attempted
     error.__dict__["_agent_fleet_cleanup_binding"] = dict(labels)
+
+
+async def _await_cleanup_task(
+    cleanup_task: asyncio.Task[SandboxCleanupResult],
+) -> SandboxCleanupResult:
+    """Finish bounded resource reconciliation despite repeated caller cancellation."""
+
+    while not cleanup_task.done():
+        try:
+            await asyncio.wait({cleanup_task})
+        except asyncio.CancelledError:
+            continue
+    return cleanup_task.result()
 
 
 def _format_cpu(value: float) -> str:

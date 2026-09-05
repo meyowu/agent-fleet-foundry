@@ -8,7 +8,11 @@ from typing import cast
 import pytest
 
 from agent_fleet.adapters.sandbox.docker import DockerSandboxProvider
-from agent_fleet.adapters.sandbox.process import ProcessResult
+from agent_fleet.adapters.sandbox.process import (
+    ProcessInvocationError,
+    ProcessResult,
+    ProcessTerminationError,
+)
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import (
@@ -85,6 +89,9 @@ class RecordingDockerRunner:
         self.block_start = False
         self.start_entered = asyncio.Event()
         self.start_release = asyncio.Event()
+        self.block_rm = False
+        self.rm_entered = asyncio.Event()
+        self.rm_release = asyncio.Event()
         self.privileged = False
         self.rm_returncode = 0
         self.inspection_mutation: str | None = None
@@ -92,6 +99,11 @@ class RecordingDockerRunner:
         self.listed_ids: list[str] = []
         self.id_lookup_ids: list[str] | None = None
         self.raise_os_error = False
+        self.raise_termination_error = False
+        self.raise_runtime_error = False
+        self.block_next_info_after_create = False
+        self.info_after_create_entered = asyncio.Event()
+        self.info_after_create_release = asyncio.Event()
         self.operation_results: dict[str, list[ProcessResult]] = {}
 
     async def run(
@@ -106,7 +118,11 @@ class RecordingDockerRunner:
         del timeout_seconds, max_output_bytes
         assert cwd is None
         if self.raise_os_error:
-            raise OSError("executable vanished")
+            raise ProcessInvocationError("trusted subprocess could not be invoked")
+        if self.raise_termination_error:
+            raise ProcessTerminationError("trusted subprocess termination was not proven")
+        if self.raise_runtime_error:
+            raise RuntimeError("runner invariant failed")
         self.calls.append((argv, environment))
         operation = _operation_name(argv)
         queued_results = self.operation_results.get(operation, [])
@@ -131,6 +147,10 @@ class RecordingDockerRunner:
                 + "\n"
             )
         if argv[1:2] == ("info",):
+            if self.block_next_info_after_create and self.create_argv is not None:
+                self.block_next_info_after_create = False
+                self.info_after_create_entered.set()
+                await self.info_after_create_release.wait()
             return _result(
                 json.dumps(
                     {
@@ -225,6 +245,9 @@ class RecordingDockerRunner:
                 self.daemon_id = "replacement-daemon-after-kill"
             return result
         if argv[1:3] == ("container", "rm"):
+            self.rm_entered.set()
+            if self.block_rm:
+                await self.rm_release.wait()
             result = _result(_CONTAINER_ID + "\n", returncode=self.rm_returncode)
             if self.replace_daemon_after_rm:
                 self.replace_daemon_after_rm = False
@@ -898,6 +921,110 @@ async def test_docker_provider_cancellation_removes_exact_created_container(
 
 
 @pytest.mark.asyncio
+async def test_docker_provider_repeated_cancellation_cannot_interrupt_cleanup_proof(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    runner.block_start = True
+    runner.block_rm = True
+    provider = _provider(tmp_path, runner)
+    handle = await provider.create(
+        "run_" + "1" * 32,
+        _docker_spec(workspace),
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+    request = _verification_request()
+    labels = provider._labels(handle, request)
+
+    execution = asyncio.create_task(provider.exec(handle, request))
+    await runner.start_entered.wait()
+    execution.cancel()
+    await runner.rm_entered.wait()
+    execution.cancel()
+    await asyncio.sleep(0)
+    assert not execution.done()
+
+    runner.rm_release.set()
+    with pytest.raises(asyncio.CancelledError) as captured:
+        await execution
+
+    cleanup = captured.value.__dict__["_agent_fleet_cleanup_result"]
+    assert cleanup["complete"] is True
+    assert cleanup["reconciled"] is True
+    assert cleanup["resources_found"] == 1
+    assert cleanup["resources_removed"] == 1
+    assert captured.value.__dict__["_agent_fleet_cleanup_binding"] == labels
+    rm_calls = [call[0] for call in runner.calls if call[0][1:3] == ("container", "rm")]
+    assert len(rm_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_docker_provider_late_cancellation_cannot_replace_failure_cleanup(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    runner.start_returncode = 23
+    runner.block_rm = True
+    provider = _provider(tmp_path, runner)
+    handle = await provider.create(
+        "run_" + "1" * 32,
+        _docker_spec(workspace),
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+
+    execution = asyncio.create_task(provider.exec(handle, _verification_request()))
+    await runner.rm_entered.wait()
+    execution.cancel()
+    await asyncio.sleep(0)
+    assert not execution.done()
+
+    runner.rm_release.set()
+    with pytest.raises(FleetError) as captured:
+        await execution
+
+    assert captured.value.code is ErrorCode.SANDBOX_EXECUTION_FAILED
+    cleanup = captured.value.__dict__["_agent_fleet_cleanup_result"]
+    assert cleanup["complete"] is True
+    assert cleanup["resources_removed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_docker_provider_cancellation_during_post_create_daemon_check(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    provider = _provider(tmp_path, runner)
+    handle = await provider.create(
+        "run_" + "1" * 32,
+        _docker_spec(workspace),
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+    request = _verification_request()
+    labels = provider._labels(handle, request)
+    runner.block_next_info_after_create = True
+
+    execution = asyncio.create_task(provider.exec(handle, request))
+    await runner.info_after_create_entered.wait()
+    execution.cancel()
+    with pytest.raises(asyncio.CancelledError) as captured:
+        await execution
+
+    cleanup = captured.value.__dict__["_agent_fleet_cleanup_result"]
+    assert cleanup["complete"] is True
+    assert cleanup["reconciled"] is True
+    assert cleanup["resources_found"] == 1
+    assert cleanup["resources_removed"] == 1
+    assert captured.value.__dict__["_agent_fleet_cleanup_binding"] == labels
+    _assert_final_remove_is_daemon_bound(runner.calls)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["timeout", "overflow", "malformed_id"])
 async def test_docker_ambiguous_create_reconciles_by_exact_execution_labels(
     tmp_path: Path,
@@ -1461,6 +1588,41 @@ async def test_docker_maps_vanished_cli_to_stable_unavailable_error(tmp_path: Pa
 
     assert captured.value.code is ErrorCode.SANDBOX_UNAVAILABLE
     assert "vanished" not in str(captured.value)
+
+
+@pytest.mark.asyncio
+async def test_docker_maps_typed_process_termination_failure_to_cleanup_error(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    runner.raise_termination_error = True
+    provider = _provider(tmp_path, runner)
+
+    with pytest.raises(FleetError) as captured:
+        await provider.preflight(
+            SandboxConfiguration(provider="docker", image="runner:test"),
+            _docker_spec(workspace).requirements,
+        )
+
+    assert captured.value.code is ErrorCode.SANDBOX_CLEANUP_FAILED
+    assert "termination was not proven" not in str(captured.value)
+
+
+@pytest.mark.asyncio
+async def test_docker_does_not_mask_untyped_runner_invariant_failure(tmp_path: Path) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    runner.raise_runtime_error = True
+    provider = _provider(tmp_path, runner)
+
+    with pytest.raises(RuntimeError, match="runner invariant failed"):
+        await provider.preflight(
+            SandboxConfiguration(provider="docker", image="runner:test"),
+            _docker_spec(workspace).requirements,
+        )
 
 
 @pytest.mark.asyncio
