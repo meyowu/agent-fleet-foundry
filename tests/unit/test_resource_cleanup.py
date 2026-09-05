@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -119,6 +120,165 @@ async def test_execution_cleanup_failure_preserves_parent_sandbox_and_worktree(
     assert state.get_lease(execution_lease.lease_id).status is LeaseStatus.FAILED
     assert state.get_lease(sandbox_lease.lease_id).status is LeaseStatus.ACTIVE
     assert state.get_lease(workspace_lease.lease_id).status is LeaseStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_repeated_cancellation_waits_for_sandbox_creation_cleanup(
+    harness: FleetHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = harness.container.state
+    resources = harness.container.recovery.resources
+    provider = harness.container.sandbox
+    project = state.get_project_by_root(str(harness.repository_root.resolve()))
+    assert project is not None
+    info = harness.container.repository.inspect(harness.repository_root)
+    now = datetime.now(UTC)
+    run = Run(
+        run_id=state.ids.new(IdPrefix.RUN),
+        project_id=project.project_id,
+        correlation_id=state.ids.new(IdPrefix.CORRELATION),
+        goal="sandbox creation cancellation cleanup",
+        base_revision=info.head_revision,
+        target_status_fingerprint=info.status_fingerprint,
+        created_at=now,
+        updated_at=now,
+    )
+    state.create_run(run)
+    creation_entered = asyncio.Event()
+    cleanup_entered = asyncio.Event()
+    cleanup_release = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+    never_release_creation = asyncio.Event()
+    original_terminate = provider.terminate
+
+    async def blocked_create(
+        run_id: str,
+        spec: SandboxSpec,
+        *,
+        sandbox_id: str | None = None,
+    ) -> object:
+        del run_id, spec, sandbox_id
+        creation_entered.set()
+        await never_release_creation.wait()
+        raise AssertionError("cancelled sandbox creation unexpectedly resumed")
+
+    async def blocked_terminate(handle: SandboxHandle) -> object:
+        cleanup_entered.set()
+        await cleanup_release.wait()
+        result = await original_terminate(handle)
+        cleanup_finished.set()
+        return result
+
+    monkeypatch.setattr(provider, "create", blocked_create)
+    monkeypatch.setattr(provider, "terminate", blocked_terminate)
+    creation = asyncio.create_task(
+        resources.create_sandbox(
+            run.run_id,
+            SandboxSpec(
+                workspace_host_path=str(harness.repository_root),
+                project_id=project.project_id,
+            ),
+        )
+    )
+    await creation_entered.wait()
+
+    creation.cancel()
+    await cleanup_entered.wait()
+    creation.cancel()
+    await asyncio.sleep(0)
+    assert not creation.done()
+    sandbox_leases = [
+        lease for lease in state.list_leases(run.run_id) if lease.kind is LeaseKind.SANDBOX
+    ]
+    assert len(sandbox_leases) == 1
+    assert sandbox_leases[0].status is LeaseStatus.CREATING
+    assert cleanup_finished.is_set() is False
+
+    cleanup_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await creation
+
+    assert cleanup_finished.is_set() is True
+    recovered = state.get_lease(sandbox_leases[0].lease_id)
+    assert recovered.status is LeaseStatus.RECOVERED
+
+
+@pytest.mark.asyncio
+async def test_sandbox_creation_cleanup_failure_wins_over_repeated_cancellation(
+    harness: FleetHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = harness.container.state
+    resources = harness.container.recovery.resources
+    provider = harness.container.sandbox
+    project = state.get_project_by_root(str(harness.repository_root.resolve()))
+    assert project is not None
+    info = harness.container.repository.inspect(harness.repository_root)
+    now = datetime.now(UTC)
+    run = Run(
+        run_id=state.ids.new(IdPrefix.RUN),
+        project_id=project.project_id,
+        correlation_id=state.ids.new(IdPrefix.CORRELATION),
+        goal="sandbox creation cleanup failure precedence",
+        base_revision=info.head_revision,
+        target_status_fingerprint=info.status_fingerprint,
+        created_at=now,
+        updated_at=now,
+    )
+    state.create_run(run)
+    creation_entered = asyncio.Event()
+    cleanup_entered = asyncio.Event()
+    cleanup_release = asyncio.Event()
+    never_release_creation = asyncio.Event()
+
+    async def blocked_create(
+        run_id: str,
+        spec: SandboxSpec,
+        *,
+        sandbox_id: str | None = None,
+    ) -> object:
+        del run_id, spec, sandbox_id
+        creation_entered.set()
+        await never_release_creation.wait()
+        raise AssertionError("cancelled sandbox creation unexpectedly resumed")
+
+    async def failed_terminate(_handle: SandboxHandle) -> object:
+        cleanup_entered.set()
+        await cleanup_release.wait()
+        raise RuntimeError("injected cleanup failure")
+
+    monkeypatch.setattr(provider, "create", blocked_create)
+    monkeypatch.setattr(provider, "terminate", failed_terminate)
+    creation = asyncio.create_task(
+        resources.create_sandbox(
+            run.run_id,
+            SandboxSpec(
+                workspace_host_path=str(harness.repository_root),
+                project_id=project.project_id,
+            ),
+        )
+    )
+    try:
+        await asyncio.wait_for(creation_entered.wait(), timeout=5)
+        creation.cancel()
+        await asyncio.wait_for(cleanup_entered.wait(), timeout=5)
+        creation.cancel()
+        cleanup_release.set()
+        with pytest.raises(FleetError) as captured:
+            await creation
+    finally:
+        cleanup_release.set()
+        if not creation.done():
+            creation.cancel()
+        await asyncio.gather(creation, return_exceptions=True)
+
+    assert captured.value.code is ErrorCode.SANDBOX_CLEANUP_FAILED
+    sandbox_leases = [
+        lease for lease in state.list_leases(run.run_id) if lease.kind is LeaseKind.SANDBOX
+    ]
+    assert len(sandbox_leases) == 1
+    assert sandbox_leases[0].status is LeaseStatus.FAILED
 
 
 def test_docker_execution_lease_rejects_optional_control_plane_label_drift() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
 import pytest
@@ -12,6 +13,7 @@ from agent_fleet.domain.models import (
     LeaseKind,
     LeaseStatus,
     SandboxExecutionHandle,
+    SandboxExecutionRecoveryRequest,
     SandboxHandle,
 )
 from agent_fleet.domain.security import canonical_json_hash
@@ -201,4 +203,117 @@ async def test_creation_callback_rejects_resource_outside_full_lease_binding(
     ]
     assert len(execution_leases) == 1
     assert execution_leases[0].status is LeaseStatus.RECOVERED
+    assert provider.executions == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("activate_resource", [True, False])
+async def test_repeated_cancellation_waits_for_durable_execution_recovery(
+    harness: FleetHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    activate_resource: bool,
+) -> None:
+    provider = harness.container.sandbox
+    execution_entered = asyncio.Event()
+    recovery_entered = asyncio.Event()
+    recovery_release = asyncio.Event()
+    recovery_finished = asyncio.Event()
+    never_release_execution = asyncio.Event()
+    original_cleanup = provider.cleanup_execution
+    original_reconcile = provider.reconcile_execution
+    cleanup_calls = 0
+    reconcile_calls = 0
+
+    async def block_after_resource_creation(
+        handle: SandboxHandle,
+        request: ExecRequest,
+        *,
+        on_creation_dispatched: Callable[[], None] | None = None,
+        on_resource_created: Callable[[SandboxExecutionHandle], None] | None = None,
+    ) -> object:
+        assert request.execution_id is not None
+        labels = {
+            "agent-fleet.execution": request.execution_id,
+            "agent-fleet.run": handle.run_id,
+            "agent-fleet.sandbox": handle.sandbox_id,
+        }
+        resource = SandboxExecutionHandle(
+            execution_id=request.execution_id,
+            sandbox_id=handle.sandbox_id,
+            run_id=handle.run_id,
+            provider="fake",
+            native_resource_id=f"fake:{request.execution_id}",
+            labels=labels,
+            labels_sha256=canonical_json_hash(labels),
+        )
+        if on_creation_dispatched is not None:
+            on_creation_dispatched()
+        provider.executions.add(request.execution_id)
+        if activate_resource and on_resource_created is not None:
+            on_resource_created(resource)
+        execution_entered.set()
+        await never_release_execution.wait()
+        raise AssertionError("cancelled execution unexpectedly resumed")
+
+    async def blocked_cleanup(handle: SandboxExecutionHandle) -> object:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        recovery_entered.set()
+        await recovery_release.wait()
+        result = await original_cleanup(handle)
+        recovery_finished.set()
+        return result
+
+    async def blocked_reconcile(
+        sandbox: SandboxHandle,
+        request: SandboxExecutionRecoveryRequest,
+    ) -> object:
+        nonlocal reconcile_calls
+        reconcile_calls += 1
+        recovery_entered.set()
+        await recovery_release.wait()
+        result = await original_reconcile(sandbox, request)
+        recovery_finished.set()
+        return result
+
+    monkeypatch.setattr(provider, "exec", block_after_resource_creation)
+    monkeypatch.setattr(provider, "cleanup_execution", blocked_cleanup)
+    monkeypatch.setattr(provider, "reconcile_execution", blocked_reconcile)
+    execution = asyncio.create_task(harness.start())
+    await execution_entered.wait()
+
+    execution.cancel()
+    await recovery_entered.wait()
+    execution.cancel()
+    await asyncio.sleep(0)
+    assert not execution.done()
+    with harness.container.state._connect() as connection:
+        run_row = connection.execute("SELECT run_id FROM runs").fetchone()
+    assert run_row is not None
+    run_id = str(run_row["run_id"])
+    execution_leases = [
+        lease
+        for lease in harness.container.state.list_leases(run_id)
+        if lease.kind is LeaseKind.EXECUTION
+    ]
+    assert len(execution_leases) == 1
+    expected_status = LeaseStatus.ACTIVE if activate_resource else LeaseStatus.CREATING
+    assert execution_leases[0].status is expected_status
+    assert recovery_finished.is_set() is False
+
+    recovery_release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await execution
+
+    assert recovery_finished.is_set() is True
+    assert cleanup_calls == int(activate_resource)
+    assert reconcile_calls == int(not activate_resource)
+    recovered = harness.container.state.get_lease(execution_leases[0].lease_id)
+    assert recovered.status is LeaseStatus.RECOVERED
+    recovery = recovered.metadata["recovery"]
+    assert isinstance(recovery, dict)
+    cleanup_result = recovery["cleanup_result"]
+    assert isinstance(cleanup_result, dict)
+    assert cleanup_result["complete"] is True
+    assert cleanup_result["reconciled"] is True
     assert provider.executions == set()

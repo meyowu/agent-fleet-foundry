@@ -662,14 +662,28 @@ async def test_real_docker_bounds_timeout_output_cancellation_and_recovers_orpha
                 },
             )
             if discovered:
-                break
+                assert len(discovered) == 1
+                raw_cancellation = await _raw_inspect(provider, discovered[0])
+                cancellation_state = raw_cancellation.get("State")
+                assert isinstance(cancellation_state, dict)
+                if cancellation_state.get("Running") is True:
+                    break
             await asyncio.sleep(0.05)
         else:
             cancellation.cancel()
-            raise AssertionError("real Docker cancellation fixture never created its container")
+            raise AssertionError("real Docker cancellation fixture never started its container")
         cancellation.cancel()
-        with pytest.raises(asyncio.CancelledError):
+        with pytest.raises(asyncio.CancelledError) as captured_cancellation:
             await cancellation
+        cancellation_cleanup = captured_cancellation.value.__dict__["_agent_fleet_cleanup_result"]
+        assert cancellation_cleanup["complete"] is True
+        assert cancellation_cleanup["reconciled"] is True
+        assert cancellation_cleanup["resources_found"] == 1
+        assert cancellation_cleanup["resources_removed"] == 1
+        assert (
+            captured_cancellation.value.__dict__["_agent_fleet_cleanup_binding"]
+            == cancellation_labels
+        )
         assert (
             await provider._list_exact(
                 provider._require_executable(),

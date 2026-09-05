@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 
 from agent_fleet.adapters.sandbox.local_unsafe import LocalUnsafeSandboxProvider
-from agent_fleet.adapters.sandbox.process import ProcessResult
+from agent_fleet.adapters.sandbox.process import (
+    ProcessInvocationError,
+    ProcessResult,
+    ProcessTerminationError,
+)
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import (
@@ -21,6 +25,7 @@ from agent_fleet.domain.security import Redactor
 class RecordingProcessRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[tuple[str, ...], dict[str, str], str | None]] = []
+        self.failure: Exception | None = None
 
     async def run(
         self,
@@ -33,6 +38,8 @@ class RecordingProcessRunner:
     ) -> ProcessResult:
         del timeout_seconds, max_output_bytes
         self.calls.append((argv, environment, cwd))
+        if self.failure is not None:
+            raise self.failure
         return ProcessResult(returncode=0, stdout=b"local diagnostic\n", stderr=b"")
 
 
@@ -144,3 +151,35 @@ async def test_local_unsafe_rejects_registered_secret_environment(
     assert captured.value.code is ErrorCode.COMMAND_DENIED
     assert sentinel not in str(captured.value)
     assert runner.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "expected_code"),
+    [
+        (
+            ProcessInvocationError("trusted subprocess could not be invoked"),
+            ErrorCode.SANDBOX_EXECUTION_FAILED,
+        ),
+        (
+            ProcessTerminationError("trusted subprocess termination was not proven"),
+            ErrorCode.SANDBOX_CLEANUP_FAILED,
+        ),
+    ],
+)
+async def test_local_unsafe_maps_typed_process_failures(
+    tmp_path: Path,
+    failure: Exception,
+    expected_code: ErrorCode,
+) -> None:
+    workspace = tmp_path / "candidate"
+    (workspace / "src").mkdir(parents=True)
+    runner = RecordingProcessRunner()
+    runner.failure = failure
+    provider = _provider(tmp_path, runner)
+    handle = await provider.create("run_" + "6" * 32, _spec(workspace, confirmed=True))
+
+    with pytest.raises(FleetError) as captured:
+        await provider.exec(handle, _request())
+
+    assert captured.value.code is expected_code

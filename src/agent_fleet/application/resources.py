@@ -14,6 +14,7 @@ from agent_fleet.domain.models import (
     ResourceLease,
     Run,
     RunStatus,
+    SandboxCleanupResult,
     SandboxExecutionHandle,
     SandboxExecutionRecoveryRequest,
     SandboxHandle,
@@ -43,6 +44,8 @@ class ResourceService:
         self.sandboxes = sandboxes
         self.clock = clock
         self.ids = ids
+        self._run_cleanup_tasks: dict[str, tuple[LeaseStatus, asyncio.Task[None]]] = {}
+        self._lease_cleanup_tasks: dict[str, tuple[LeaseStatus, asyncio.Task[None]]] = {}
 
     def lease_workspace(self, workspace: Workspace) -> ResourceLease:
         now = self.clock.now()
@@ -135,20 +138,31 @@ class ResourceService:
                 )
             self.state.update_lease_status(lease.lease_id, LeaseStatus.ACTIVE.value)
             return handle
-        except BaseException:
+        except BaseException as creation_error:
+            cleanup_task = asyncio.create_task(provider.terminate(expected))
             try:
-                result = await asyncio.shield(provider.terminate(expected))
+                result = await _await_sandbox_cleanup_task(cleanup_task)
                 if not result.complete:
                     raise FleetError(
                         ErrorCode.SANDBOX_CLEANUP_FAILED,
                         "Sandbox creation failed and cleanup could not prove absence.",
                         "Run Fleet recovery before continuing.",
                     )
-            except BaseException:
+            except BaseException as cleanup_error:
                 self.state.update_lease_status(lease.lease_id, LeaseStatus.FAILED.value)
+                if (
+                    isinstance(cleanup_error, FleetError)
+                    and cleanup_error.code is ErrorCode.SANDBOX_CLEANUP_FAILED
+                ):
+                    raise
+                raise FleetError(
+                    ErrorCode.SANDBOX_CLEANUP_FAILED,
+                    "Sandbox creation failed and cleanup could not prove absence.",
+                    "Run Fleet recovery before continuing.",
+                ) from cleanup_error
             else:
                 self.state.update_lease_status(lease.lease_id, LeaseStatus.RECOVERED.value)
-            raise
+            raise creation_error
 
     def candidate_workspace(self, run_id: str) -> Workspace:
         for lease in self.state.active_leases(run_id):
@@ -178,12 +192,44 @@ class ResourceService:
 
     async def cleanup_run(self, run: Run, *, recovered: bool = False) -> None:
         target_status = LeaseStatus.RECOVERED if recovered else LeaseStatus.RELEASED
+        active_cleanup = self._run_cleanup_tasks.get(run.run_id)
+        if active_cleanup is None:
+            cleanup_task = asyncio.create_task(
+                self._cleanup_run_ordered(run, target_status=target_status)
+            )
+            self._run_cleanup_tasks[run.run_id] = (target_status, cleanup_task)
+        else:
+            active_status, cleanup_task = active_cleanup
+            if active_status is not target_status:
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "A conflicting resource cleanup mode is already active for this run.",
+                    "Wait for the active cancellation or recovery cleanup to finish, then retry.",
+                    details={
+                        "run_id": run.run_id,
+                        "active_status": active_status.value,
+                        "requested_status": target_status.value,
+                    },
+                )
+        try:
+            await _await_resource_cleanup_task(cleanup_task)
+        finally:
+            current = self._run_cleanup_tasks.get(run.run_id)
+            if cleanup_task.done() and current is not None and current[1] is cleanup_task:
+                self._run_cleanup_tasks.pop(run.run_id, None)
+
+    async def _cleanup_run_ordered(
+        self,
+        run: Run,
+        *,
+        target_status: LeaseStatus,
+    ) -> None:
         leases = list(self.state.outstanding_leases(run.run_id))
         for kind in (LeaseKind.EXECUTION, LeaseKind.SANDBOX, LeaseKind.WORKTREE):
             failures: list[BaseException] = []
             for lease in (item for item in leases if item.kind is kind):
                 try:
-                    await self.cleanup_lease(run, lease, status=target_status)
+                    await self._join_lease_cleanup(run, lease, status=target_status)
                 except BaseException as error:
                     failures.append(error)
             if failures:
@@ -198,6 +244,70 @@ class ResourceService:
         lease: ResourceLease,
         *,
         status: LeaseStatus = LeaseStatus.RELEASED,
+    ) -> None:
+        cleanup_task = self._lease_cleanup_task(run, lease, status=status)
+        try:
+            await _await_resource_cleanup_task(cleanup_task)
+        finally:
+            self._forget_lease_cleanup_task(lease.lease_id, cleanup_task)
+
+    async def _join_lease_cleanup(
+        self,
+        run: Run,
+        lease: ResourceLease,
+        *,
+        status: LeaseStatus,
+    ) -> None:
+        cleanup_task = self._lease_cleanup_task(run, lease, status=status)
+        try:
+            await cleanup_task
+        finally:
+            self._forget_lease_cleanup_task(lease.lease_id, cleanup_task)
+
+    def _lease_cleanup_task(
+        self,
+        run: Run,
+        lease: ResourceLease,
+        *,
+        status: LeaseStatus,
+    ) -> asyncio.Task[None]:
+        active_cleanup = self._lease_cleanup_tasks.get(lease.lease_id)
+        if active_cleanup is None:
+            current = self.state.get_lease(lease.lease_id)
+            cleanup_task = asyncio.create_task(
+                self._cleanup_lease_once(run, current, status=status)
+            )
+            self._lease_cleanup_tasks[lease.lease_id] = (status, cleanup_task)
+        else:
+            active_status, cleanup_task = active_cleanup
+            if active_status is not status:
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "A conflicting resource cleanup mode is already active for this lease.",
+                    "Wait for the active cleanup to finish, then retry the exact lease.",
+                    details={
+                        "lease_id": lease.lease_id,
+                        "active_status": active_status.value,
+                        "requested_status": status.value,
+                    },
+                )
+        return cleanup_task
+
+    def _forget_lease_cleanup_task(
+        self,
+        lease_id: str,
+        cleanup_task: asyncio.Task[None],
+    ) -> None:
+        active_cleanup = self._lease_cleanup_tasks.get(lease_id)
+        if cleanup_task.done() and active_cleanup is not None and active_cleanup[1] is cleanup_task:
+            self._lease_cleanup_tasks.pop(lease_id, None)
+
+    async def _cleanup_lease_once(
+        self,
+        run: Run,
+        lease: ResourceLease,
+        *,
+        status: LeaseStatus,
     ) -> None:
         project = self.state.get_project(run.project_id)
         if lease.status in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED}:
@@ -320,7 +430,8 @@ class CancellationService:
 
     async def cancel(self, run_id: str) -> Run:
         run = self.state.get_run(run_id)
-        if is_terminal(run.status):
+        outstanding = bool(self.state.outstanding_leases(run_id))
+        if is_terminal(run.status) and (run.status is not RunStatus.CANCELLED or not outstanding):
             return run
         if run.status is not RunStatus.CANCELLED:
             run = run.model_copy(
@@ -329,8 +440,37 @@ class CancellationService:
             self.state.save_run(
                 run, "run.cancelled", {"stage": run.stage.value if run.stage else None}
             )
-        await self.resources.cleanup_run(run)
+        if outstanding:
+            await self.resources.cleanup_run(run)
         return self.state.get_run(run_id)
+
+
+async def _await_sandbox_cleanup_task(
+    cleanup_task: asyncio.Task[SandboxCleanupResult],
+) -> SandboxCleanupResult:
+    """Finish bounded sandbox-creation cleanup despite repeated cancellation."""
+
+    while not cleanup_task.done():
+        try:
+            await asyncio.wait({cleanup_task})
+        except asyncio.CancelledError:
+            continue
+    return cleanup_task.result()
+
+
+async def _await_resource_cleanup_task(cleanup_task: asyncio.Task[None]) -> None:
+    """Finish a retained cleanup operation before propagating caller cancellation."""
+
+    cancellation: asyncio.CancelledError | None = None
+    while not cleanup_task.done():
+        try:
+            await asyncio.wait({cleanup_task})
+        except asyncio.CancelledError as error:
+            if cancellation is None:
+                cancellation = error
+    cleanup_task.result()
+    if cancellation is not None:
+        raise cancellation
 
 
 def _workspace_from_lease(lease: ResourceLease) -> Workspace:

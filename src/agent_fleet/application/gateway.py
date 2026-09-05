@@ -748,7 +748,8 @@ class ToolGateway:
                         "The active execution lease identity binding is invalid.",
                         "Inspect the lease manually; Fleet did not delete any resource.",
                     )
-                cleanup = await asyncio.shield(provider.cleanup_execution(handle))
+                cleanup_task = asyncio.create_task(provider.cleanup_execution(handle))
+                cleanup = await _await_sandbox_cleanup_task(cleanup_task)
                 if not cleanup.complete:
                     raise FleetError(
                         ErrorCode.SANDBOX_CLEANUP_FAILED,
@@ -773,12 +774,13 @@ class ToolGateway:
                 if cleanup_proof is not None:
                     cleanup = cleanup_proof
                 else:
-                    cleanup = await asyncio.shield(
+                    cleanup_task = asyncio.create_task(
                         provider.reconcile_execution(
                             sandbox,
                             execution_recovery_request_from_lease(lease, sandbox),
                         )
                     )
+                    cleanup = await _await_sandbox_cleanup_task(cleanup_task)
                 if not cleanup.complete:
                     raise FleetError(
                         ErrorCode.SANDBOX_CLEANUP_FAILED,
@@ -946,6 +948,19 @@ def _cleanup_proof_binding_is_valid(
         "agent-fleet.stage": stage,
         "agent-fleet.task": task_id,
     }
+
+
+async def _await_sandbox_cleanup_task(
+    cleanup_task: asyncio.Task[SandboxCleanupResult],
+) -> SandboxCleanupResult:
+    """Finish bounded lease recovery despite repeated caller cancellation."""
+
+    while not cleanup_task.done():
+        try:
+            await asyncio.wait({cleanup_task})
+        except asyncio.CancelledError:
+            continue
+    return cleanup_task.result()
 
 
 def _task_command(

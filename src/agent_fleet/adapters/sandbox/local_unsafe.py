@@ -10,7 +10,11 @@ from agent_fleet.adapters.executable_resolution import (
     resolve_trusted_executable,
     trusted_search_path,
 )
-from agent_fleet.adapters.sandbox.process import ProcessRunner
+from agent_fleet.adapters.sandbox.process import (
+    ProcessInvocationError,
+    ProcessRunner,
+    ProcessTerminationError,
+)
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
@@ -236,7 +240,13 @@ class LocalUnsafeSandboxProvider:
                 timeout_seconds=request.timeout_seconds,
                 max_output_bytes=request.max_output_bytes,
             )
-        except OSError as error:
+        except ProcessTerminationError as error:
+            raise FleetError(
+                ErrorCode.SANDBOX_CLEANUP_FAILED,
+                "The local-unsafe host process could not be proven fully terminated.",
+                "Inspect local child processes before starting a fresh run.",
+            ) from error
+        except ProcessInvocationError as error:
             raise FleetError(
                 ErrorCode.SANDBOX_EXECUTION_FAILED,
                 "The local-unsafe host process could not be started.",
