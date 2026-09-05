@@ -469,7 +469,7 @@ A natural-language organizational request produces a reviewable FleetPatch; noth
 
 ## Phase 7 — Hardening, packaging, documentation, and release candidate
 
-Status on2026-09-05: local release candidate implemented under `.agent/plans/2026-09-05-release-candidate.md`, following accepted Phase6 checkpoint b42cdf9. Repaired runtime3293244 passed complete macOS/Linux default, six selected platform combinations, standalone security, real Docker and fresh installed journeys. The final help/doc/package refresh and GitHub delivery are recorded by exact identity in E7/the release plan/PR #5. The owner-license and live-provider requirements below remain separate unperformed public-release gates, not waived acceptance; whole-phase metadata stays6.
+Status on2026-09-05: authorized local release candidate and detailed guide accepted under `.agent/plans/2026-09-05-release-candidate.md`. Repaired runtime3293244 passed complete macOS/Linux default, standalone security, real Docker and fresh installed journeys. Final e413192 passed all nine PR CI jobs, including six Linux/macOS/Python3.12–3.14 selections, full Linux default/security and installed/Docker opt-ins. PR #5 merged as0cead7d with an identical accepted tree and local/remote main read-back; post-merge documentation/package/main checks are recorded separately in E7/the release plan. The owner-license and live-provider requirements below remain genuine unperformed public-release gates, not waived acceptance; whole-phase metadata stays6.
 
 ### Goal
 
