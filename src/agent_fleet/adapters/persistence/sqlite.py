@@ -27,17 +27,19 @@ from agent_fleet.domain.models import (
     ResourceLease,
     Run,
     RunStatus,
+    SandboxExecutionRecoveryRequest,
+    SandboxHandle,
     StoredToolIntent,
     TaskSpec,
     ToolIntent,
     jsonable,
 )
-from agent_fleet.domain.security import Redactor
+from agent_fleet.domain.security import Redactor, canonical_json_hash
 from agent_fleet.domain.workflow import validate_transition
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
 
-SUPPORTED_SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSION = 3
 
 
 class SqliteStateStore:
@@ -606,18 +608,25 @@ class SqliteStateStore:
                 ),
             )
             run = self._get_run(connection, lease.run_id)
-            event_type = (
-                "workspace.created" if lease.kind is LeaseKind.WORKTREE else "sandbox.created"
-            )
-            self._insert_event(
-                connection,
-                self._event_for_run(
-                    run,
-                    event_type,
-                    {"lease_id": lease.lease_id, "resource_id": lease.resource_id},
-                ),
-            )
+            for event_type in _lease_event_types(lease.kind, lease.status):
+                self._insert_event(
+                    connection,
+                    self._event_for_run(
+                        run,
+                        event_type,
+                        {"lease_id": lease.lease_id, "resource_id": lease.resource_id},
+                    ),
+                )
             connection.commit()
+
+    def get_lease(self, lease_id: str) -> ResourceLease:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT data_json FROM resource_leases WHERE lease_id = ?", (lease_id,)
+            ).fetchone()
+        if row is None:
+            raise _not_found("resource lease", lease_id)
+        return ResourceLease.model_validate_json(row["data_json"])
 
     def update_lease_status(self, lease_id: str, status: str) -> None:
         lease_status = LeaseStatus(status)
@@ -629,9 +638,10 @@ class SqliteStateStore:
             if row is None:
                 raise _not_found("resource lease", lease_id)
             current = ResourceLease.model_validate_json(row["data_json"])
-            if current.status is not LeaseStatus.ACTIVE:
+            if current.status is lease_status:
                 connection.commit()
                 return
+            _validate_lease_transition(current.status, lease_status)
             updated = current.model_copy(
                 update={"status": lease_status, "updated_at": self.clock.now()}
             )
@@ -640,17 +650,205 @@ class SqliteStateStore:
                 (lease_status.value, updated.model_dump_json(), lease_id),
             )
             run = self._get_run(connection, current.run_id)
+            for event_type in _lease_event_types(current.kind, lease_status):
+                self._insert_event(
+                    connection,
+                    self._event_for_run(
+                        run,
+                        event_type,
+                        {"lease_id": lease_id, "lease_status": lease_status.value},
+                    ),
+                )
+            connection.commit()
+
+    def mark_execution_creation_dispatched(self, lease_id: str) -> ResourceLease:
+        """Persist the one-way Docker-create dispatch checkpoint before side effects."""
+
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT data_json FROM resource_leases WHERE lease_id = ?", (lease_id,)
+            ).fetchone()
+            if row is None:
+                raise _not_found("resource lease", lease_id)
+            current = ResourceLease.model_validate_json(row["data_json"])
+            raw_sandbox = current.metadata.get("sandbox_handle")
+            if (
+                current.kind is not LeaseKind.EXECUTION
+                or current.status is not LeaseStatus.CREATING
+                or current.metadata.get("creation_dispatched") is not False
+                or not isinstance(raw_sandbox, dict)
+            ):
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "Execution creation dispatch checkpoint is not in its reserved state.",
+                    "Do not dispatch or replay the execution; inspect its persisted lease.",
+                    details={"lease_id": lease_id},
+                )
+            try:
+                sandbox = SandboxHandle.model_validate(raw_sandbox)
+                recovery = SandboxExecutionRecoveryRequest.model_validate(
+                    {
+                        "execution_id": current.resource_id,
+                        "sandbox_id": sandbox.sandbox_id,
+                        "run_id": current.run_id,
+                        "project_id": current.metadata.get("project_id"),
+                        "provider": current.metadata.get("provider"),
+                        "intent_id": current.metadata.get("intent_id"),
+                        "task_id": current.metadata.get("task_id"),
+                        "agent_instance_id": current.metadata.get("agent_instance_id"),
+                        "stage": current.metadata.get("stage"),
+                        "creation_dispatched": False,
+                    }
+                )
+            except ValueError as error:
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "Execution creation dispatch binding is incomplete or malformed.",
+                    "Do not dispatch the execution; inspect its persisted lease.",
+                    details={"lease_id": lease_id},
+                ) from error
+            if (
+                recovery.sandbox_id != sandbox.sandbox_id
+                or recovery.run_id != sandbox.run_id
+                or recovery.project_id != sandbox.project_id
+                or recovery.provider != sandbox.provider
+            ):
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "Execution creation dispatch binding does not match its sandbox.",
+                    "Do not dispatch the execution; inspect its persisted lease.",
+                    details={"lease_id": lease_id},
+                )
+            metadata = dict(current.metadata)
+            metadata["schema_version"] = 2
+            metadata["creation_dispatched"] = True
+            updated = ResourceLease.model_validate(
+                current.model_copy(
+                    update={
+                        "metadata": metadata,
+                        "updated_at": self.clock.now(),
+                    }
+                ).model_dump(mode="json")
+            )
+            connection.execute(
+                "UPDATE resource_leases SET data_json = ? WHERE lease_id = ?",
+                (updated.model_dump_json(), lease_id),
+            )
+            run = self._get_run(connection, current.run_id)
             self._insert_event(
                 connection,
                 self._event_for_run(
                     run,
-                    "workspace.cleaned"
-                    if current.kind is LeaseKind.WORKTREE
-                    else "sandbox.terminated",
-                    {"lease_id": lease_id, "lease_status": lease_status.value},
+                    "sandbox.exec_dispatch_recorded",
+                    {
+                        "lease_id": lease_id,
+                        "execution_id": current.resource_id,
+                    },
                 ),
             )
             connection.commit()
+            return updated
+
+    def activate_lease(self, lease_id: str, metadata: dict[str, object]) -> ResourceLease:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT data_json FROM resource_leases WHERE lease_id = ?", (lease_id,)
+            ).fetchone()
+            if row is None:
+                raise _not_found("resource lease", lease_id)
+            current = ResourceLease.model_validate_json(row["data_json"])
+            _validate_lease_transition(current.status, LeaseStatus.ACTIVE)
+            cleaned, _ = self.redactor.redact_data(metadata)
+            updated = current.model_copy(
+                update={
+                    "status": LeaseStatus.ACTIVE,
+                    "metadata": cast(dict[str, JsonValue], cleaned),
+                    "updated_at": self.clock.now(),
+                }
+            )
+            # Revalidate after model_copy because Pydantic does not validate updates.
+            updated = ResourceLease.model_validate(updated.model_dump(mode="json"))
+            connection.execute(
+                "UPDATE resource_leases SET status = ?, data_json = ? WHERE lease_id = ?",
+                (LeaseStatus.ACTIVE.value, updated.model_dump_json(), lease_id),
+            )
+            run = self._get_run(connection, current.run_id)
+            for event_type in _lease_event_types(current.kind, LeaseStatus.ACTIVE):
+                self._insert_event(
+                    connection,
+                    self._event_for_run(
+                        run,
+                        event_type,
+                        {
+                            "lease_id": lease_id,
+                            "resource_id": current.resource_id,
+                        },
+                    ),
+                )
+            connection.commit()
+            return updated
+
+    def finalize_lease(
+        self,
+        lease_id: str,
+        status: str,
+        metadata: dict[str, object],
+    ) -> ResourceLease:
+        lease_status = LeaseStatus(status)
+        if lease_status not in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED}:
+            raise ValueError("lease finalization requires a successful terminal status")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT data_json FROM resource_leases WHERE lease_id = ?", (lease_id,)
+            ).fetchone()
+            if row is None:
+                raise _not_found("resource lease", lease_id)
+            current = ResourceLease.model_validate_json(row["data_json"])
+            cleaned, _ = self.redactor.redact_data(metadata)
+            terminal_metadata = cast(dict[str, JsonValue], cleaned)
+            if current.status is lease_status:
+                if current.metadata != terminal_metadata:
+                    raise FleetError(
+                        ErrorCode.RECOVERY_REQUIRED,
+                        "A terminal resource lease was finalized with different metadata.",
+                        "Inspect the lease audit trail; do not replay the resource action.",
+                    )
+                connection.commit()
+                return current
+            _validate_lease_transition(current.status, lease_status)
+            updated = ResourceLease.model_validate(
+                current.model_copy(
+                    update={
+                        "status": lease_status,
+                        "metadata": terminal_metadata,
+                        "updated_at": self.clock.now(),
+                    }
+                ).model_dump(mode="json")
+            )
+            connection.execute(
+                "UPDATE resource_leases SET status = ?, data_json = ? WHERE lease_id = ?",
+                (lease_status.value, updated.model_dump_json(), lease_id),
+            )
+            run = self._get_run(connection, current.run_id)
+            metadata_hash = canonical_json_hash(terminal_metadata)
+            for event_type in _lease_event_types(current.kind, lease_status):
+                self._insert_event(
+                    connection,
+                    self._event_for_run(
+                        run,
+                        event_type,
+                        {
+                            "lease_id": lease_id,
+                            "lease_status": lease_status.value,
+                            "terminal_metadata_sha256": metadata_hash,
+                        },
+                    ),
+                )
+            connection.commit()
+            return updated
 
     def active_leases(self, run_id: str | None = None) -> Sequence[ResourceLease]:
         sql = "SELECT data_json FROM resource_leases WHERE status = ?"
@@ -658,6 +856,26 @@ class SqliteStateStore:
         if run_id is not None:
             sql += " AND run_id = ?"
             params = (LeaseStatus.ACTIVE.value, run_id)
+        sql += " ORDER BY rowid"
+        with self._connect() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [ResourceLease.model_validate_json(row["data_json"]) for row in rows]
+
+    def list_leases(self, run_id: str) -> Sequence[ResourceLease]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT data_json FROM resource_leases WHERE run_id = ? ORDER BY rowid",
+                (run_id,),
+            ).fetchall()
+        return [ResourceLease.model_validate_json(row["data_json"]) for row in rows]
+
+    def outstanding_leases(self, run_id: str | None = None) -> Sequence[ResourceLease]:
+        terminal = (LeaseStatus.RELEASED.value, LeaseStatus.RECOVERED.value)
+        sql = "SELECT data_json FROM resource_leases WHERE status NOT IN (?, ?)"
+        params: tuple[str, ...] = terminal
+        if run_id is not None:
+            sql += " AND run_id = ?"
+            params = (*terminal, run_id)
         sql += " ORDER BY rowid"
         with self._connect() as connection:
             rows = connection.execute(sql, params).fetchall()
@@ -823,6 +1041,69 @@ class SqliteStateStore:
             "SELECT data_json FROM capability_grants WHERE request_id = ?", (request_id,)
         ).fetchone()
         return CapabilityGrant.model_validate_json(row["data_json"]) if row is not None else None
+
+
+def _validate_lease_transition(current: LeaseStatus, target: LeaseStatus) -> None:
+    allowed: dict[LeaseStatus, frozenset[LeaseStatus]] = {
+        LeaseStatus.CREATING: frozenset(
+            {
+                LeaseStatus.ACTIVE,
+                LeaseStatus.RELEASING,
+                LeaseStatus.RELEASED,
+                LeaseStatus.RECOVERED,
+                LeaseStatus.FAILED,
+            }
+        ),
+        LeaseStatus.ACTIVE: frozenset(
+            {
+                LeaseStatus.RELEASING,
+                LeaseStatus.RELEASED,
+                LeaseStatus.RECOVERED,
+                LeaseStatus.FAILED,
+            }
+        ),
+        LeaseStatus.RELEASING: frozenset(
+            {LeaseStatus.RELEASED, LeaseStatus.RECOVERED, LeaseStatus.FAILED}
+        ),
+        LeaseStatus.FAILED: frozenset({LeaseStatus.RELEASING, LeaseStatus.RECOVERED}),
+        LeaseStatus.RELEASED: frozenset(),
+        LeaseStatus.RECOVERED: frozenset(),
+    }
+    if target not in allowed[current]:
+        raise FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            f"Invalid resource lease transition: {current.value} -> {target.value}.",
+            "Inspect the resource lease and use the recovery path instead of reopening it.",
+            details={"current_status": current.value, "target_status": target.value},
+        )
+
+
+def _lease_event_types(kind: LeaseKind, status: LeaseStatus) -> tuple[str, ...]:
+    if kind is LeaseKind.EXECUTION:
+        return {
+            LeaseStatus.CREATING: ("sandbox.exec_started",),
+            LeaseStatus.ACTIVE: ("sandbox.inspected",),
+            LeaseStatus.RELEASING: ("sandbox.cleanup_started",),
+            LeaseStatus.RELEASED: ("sandbox.exec_finished", "sandbox.cleaned"),
+            LeaseStatus.RECOVERED: ("sandbox.recovered",),
+            LeaseStatus.FAILED: ("sandbox.exec_failed",),
+        }[status]
+    subject = {
+        LeaseKind.WORKTREE: "workspace",
+        LeaseKind.SANDBOX: "sandbox",
+    }[kind]
+    suffix = {
+        LeaseStatus.CREATING: "create_started",
+        LeaseStatus.ACTIVE: "created",
+        LeaseStatus.RELEASING: "cleanup_started",
+        LeaseStatus.RELEASED: "cleaned",
+        LeaseStatus.RECOVERED: "recovered",
+        LeaseStatus.FAILED: "cleanup_failed",
+    }[status]
+    events = [f"{subject}.{suffix}"]
+    if kind is LeaseKind.SANDBOX and status is LeaseStatus.ACTIVE:
+        events.append("sandbox.inspected")
+    return tuple(events)
 
 
 def _not_found(kind: str, identifier: str) -> FleetError:

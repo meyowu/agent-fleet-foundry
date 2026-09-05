@@ -1,5 +1,8 @@
 """Deterministic fixture payloads for the offline orchestration canary."""
 
+BOOTSTRAP_HOST_SENTINEL_NAME = "outside-workspace-sentinel"
+BOOTSTRAP_SANDBOX_PROBE_MARKER = "AGENT_FLEET_SANDBOX_BOUNDARY_OK"
+
 BROKEN_CANARY = '''"""Tiny deterministic canary."""
 
 

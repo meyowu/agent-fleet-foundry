@@ -1,0 +1,56 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "provider": {
+      "enum": [
+        "fake",
+        "docker",
+        "local-unsafe"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "reconciled": {
+      "title": "Reconciled",
+      "type": "boolean"
+    },
+    "resource_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Resource Id",
+      "type": "string"
+    },
+    "resources_found": {
+      "maximum": 128,
+      "minimum": 0,
+      "title": "Resources Found",
+      "type": "integer"
+    },
+    "resources_removed": {
+      "maximum": 128,
+      "minimum": 0,
+      "title": "Resources Removed",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "provider",
+    "resource_id",
+    "resources_found",
+    "resources_removed",
+    "reconciled",
+    "complete",
+    "completed_at"
+  ],
+  "title": "SandboxCleanupResult",
+  "type": "object"
+}

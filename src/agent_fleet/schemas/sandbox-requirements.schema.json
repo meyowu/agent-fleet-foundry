@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "capability_drop_required": {
+      "default": false,
+      "title": "Capability Drop Required",
+      "type": "boolean"
+    },
+    "code_execution_required": {
+      "default": false,
+      "title": "Code Execution Required",
+      "type": "boolean"
+    },
+    "isolation_required": {
+      "default": false,
+      "title": "Isolation Required",
+      "type": "boolean"
+    },
+    "network_mode": {
+      "default": "none",
+      "enum": [
+        "none",
+        "approved-unrestricted"
+      ],
+      "title": "Network Mode",
+      "type": "string"
+    },
+    "no_new_privileges_required": {
+      "default": false,
+      "title": "No New Privileges Required",
+      "type": "boolean"
+    },
+    "non_root_required": {
+      "default": false,
+      "title": "Non Root Required",
+      "type": "boolean"
+    },
+    "read_only_root_required": {
+      "default": false,
+      "title": "Read Only Root Required",
+      "type": "boolean"
+    },
+    "resource_limits_required": {
+      "default": false,
+      "title": "Resource Limits Required",
+      "type": "boolean"
+    }
+  },
+  "title": "SandboxRequirements",
+  "type": "object"
+}

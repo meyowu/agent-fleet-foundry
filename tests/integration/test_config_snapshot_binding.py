@@ -188,7 +188,7 @@ def _provider_project(
     )
     monkeypatch.setenv("FLEET_SELECTED_PROVIDER_KEY", secret)
     container = build_container(state_root)
-    container.projects.initialize(
+    container.projects._initialize_without_canary(
         repository,
         runtime_name="pydantic-ai",
         provider_model="openai:gpt-test",

@@ -43,6 +43,26 @@
       "title": "Supported Network Modes",
       "type": "array"
     },
+    "supports_capability_drop": {
+      "default": false,
+      "title": "Supports Capability Drop",
+      "type": "boolean"
+    },
+    "supports_no_new_privileges": {
+      "default": false,
+      "title": "Supports No New Privileges",
+      "type": "boolean"
+    },
+    "supports_non_root": {
+      "default": false,
+      "title": "Supports Non Root",
+      "type": "boolean"
+    },
+    "supports_read_only_root": {
+      "default": false,
+      "title": "Supports Read Only Root",
+      "type": "boolean"
+    },
     "supports_recovery": {
       "title": "Supports Recovery",
       "type": "boolean"

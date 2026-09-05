@@ -23,6 +23,8 @@ from pydantic import (
     model_validator,
 )
 
+from agent_fleet.domain.security import canonical_json_hash
+
 OpaqueId = Annotated[str, StringConstraints(pattern=r"^[a-z]+_[0-9a-f]{32}$")]
 ProjectId = Annotated[str, StringConstraints(pattern=r"^prj_[0-9a-f]{32}$")]
 RunId = Annotated[str, StringConstraints(pattern=r"^run_[0-9a-f]{32}$")]
@@ -36,10 +38,12 @@ IntentId = Annotated[str, StringConstraints(pattern=r"^intent_[0-9a-f]{32}$")]
 LeaseId = Annotated[str, StringConstraints(pattern=r"^lease_[0-9a-f]{32}$")]
 CorrelationId = Annotated[str, StringConstraints(pattern=r"^corr_[0-9a-f]{32}$")]
 SandboxId = Annotated[str, StringConstraints(pattern=r"^sandbox_[0-9a-f]{32}$")]
+ExecutionId = Annotated[str, StringConstraints(pattern=r"^exec_[0-9a-f]{32}$")]
 WorkspaceId = Annotated[str, StringConstraints(pattern=r"^ws_[0-9a-f]{32}$")]
 FleetPlanId = Annotated[str, StringConstraints(pattern=r"^plan_[0-9a-f]{32}$")]
 FleetPatchId = Annotated[str, StringConstraints(pattern=r"^fpatch_[0-9a-f]{32}$")]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+ImageIdentity = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 RoleId = Annotated[
     str, StringConstraints(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
 ]
@@ -90,6 +94,7 @@ ResourceKind = Annotated[
 SandboxProviderId = Annotated[
     str, StringConstraints(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
 ]
+SandboxName = Literal["fake", "docker", "local-unsafe"]
 SandboxNetworkMode = Literal["none", "approved-unrestricted"]
 CriterionId = Annotated[
     str, StringConstraints(min_length=1, max_length=100, pattern=r"^[a-z][a-z0-9_-]*$")
@@ -333,6 +338,9 @@ class ArtifactKind(StrEnum):
     EVIDENCE_BUNDLE = "evidence_bundle"
     ERROR_REPORT = "error_report"
     RUNTIME_USAGE = "runtime_usage"
+    SANDBOX_INSPECTION = "sandbox_inspection"
+    RESOURCE_CLEANUP = "resource_cleanup"
+    BOOTSTRAP_REPORT = "bootstrap_report"
 
 
 class WorkspaceKind(StrEnum):
@@ -343,12 +351,16 @@ class WorkspaceKind(StrEnum):
 class LeaseKind(StrEnum):
     WORKTREE = "worktree"
     SANDBOX = "sandbox"
+    EXECUTION = "execution"
 
 
 class LeaseStatus(StrEnum):
+    CREATING = "creating"
     ACTIVE = "active"
+    RELEASING = "releasing"
     RELEASED = "released"
     RECOVERED = "recovered"
+    FAILED = "failed"
 
 
 class PermissionOutcome(StrEnum):
@@ -493,6 +505,11 @@ class Project(StrictModel):
     runtime_name: RuntimeName = "fake"
     provider_model: ProviderModelId | None = None
     credential_ref: CredentialReferenceString | None = None
+    sandbox_name: SandboxName = "fake"
+    sandbox_configuration: SandboxConfiguration | None = None
+    sandbox_configuration_hash: Sha256 | None = None
+    sandbox_image_identity: ImageIdentity | None = None
+    sandbox_daemon_identity: Sha256 | None = None
     init_status_fingerprint: Sha256 | None = None
     repository_profile_artifact_id: ArtifactId | None = None
     repository_profile_semantic_hash: Sha256 | None = Field(
@@ -506,6 +523,10 @@ class Project(StrictModel):
         default=None,
         validation_alias=AliasChoices("project_knowledge_semantic_hash", "project_knowledge_hash"),
     )
+    bootstrap_report_artifact_id: ArtifactId | None = None
+    bootstrap_report_sha256: Sha256 | None = None
+    bootstrap_canary_run_id: RunId | None = None
+    bootstrap_verified: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -519,6 +540,31 @@ class Project(StrictModel):
             self.provider_model,
             self.credential_ref,
         )
+        if self.sandbox_configuration is None:
+            if self.sandbox_name != "fake":
+                raise ValueError("non-fake Project requires an explicit sandbox configuration")
+            self.sandbox_configuration = SandboxConfiguration()
+        if self.sandbox_configuration.provider != self.sandbox_name:
+            raise ValueError("Project sandbox name and configuration provider must match")
+        configuration_hash = canonical_json_hash(self.sandbox_configuration.model_dump(mode="json"))
+        if self.sandbox_configuration_hash is None:
+            self.sandbox_configuration_hash = configuration_hash
+        elif self.sandbox_configuration_hash != configuration_hash:
+            raise ValueError("Project sandbox configuration hash does not match its content")
+        if self.sandbox_name == "docker" and (
+            self.sandbox_image_identity is None or self.sandbox_daemon_identity is None
+        ):
+            raise ValueError("Docker Project requires immutable image and daemon identities")
+        if self.sandbox_name != "docker" and (
+            self.sandbox_image_identity is not None or self.sandbox_daemon_identity is not None
+        ):
+            raise ValueError("Only Docker Project may carry image and daemon identities")
+        if (self.bootstrap_report_artifact_id is None) != (self.bootstrap_report_sha256 is None):
+            raise ValueError("Project bootstrap report ID and hash must be paired")
+        if self.bootstrap_report_artifact_id is None and (
+            self.bootstrap_canary_run_id is not None or self.bootstrap_verified
+        ):
+            raise ValueError("Project bootstrap status requires a report binding")
         return self
 
 
@@ -532,7 +578,15 @@ class Run(StrictModel):
     runtime_name: RuntimeName = "fake"
     provider_model: ProviderModelId | None = None
     credential_ref: CredentialReferenceString | None = None
-    sandbox_name: Literal["fake"] = "fake"
+    sandbox_name: SandboxName = "fake"
+    sandbox_configuration: SandboxConfiguration | None = None
+    sandbox_configuration_hash: Sha256 | None = None
+    sandbox_requirements: SandboxRequirements | None = None
+    sandbox_capabilities_snapshot: SandboxCapabilities | None = None
+    sandbox_capabilities_hash: Sha256 | None = None
+    sandbox_image_identity: ImageIdentity | None = None
+    sandbox_daemon_identity: Sha256 | None = None
+    unsafe_local_confirmed: bool = False
     fake_scenario: FakeScenario = FakeScenario.SUCCESS
     status: RunStatus = RunStatus.CREATED
     stage: WorkflowStage | None = None
@@ -555,6 +609,8 @@ class Run(StrictModel):
     verifier_verdict_artifact_id: ArtifactId | None = None
     evidence_bundle_artifact_id: ArtifactId | None = None
     evidence_bundle_hash: Sha256 | None = None
+    cleanup_receipt_artifact_id: ArtifactId | None = None
+    cleanup_receipt_sha256: Sha256 | None = None
     assurance_verdict: Verdict | None = None
     verified_complete: bool = False
     verifier_workspace_mutated: bool = False
@@ -579,6 +635,44 @@ class Run(StrictModel):
             self.provider_model,
             self.credential_ref,
         )
+        if self.sandbox_configuration is None:
+            if self.sandbox_name != "fake":
+                raise ValueError("non-fake Run requires an explicit sandbox configuration")
+            self.sandbox_configuration = SandboxConfiguration()
+        if self.sandbox_configuration.provider != self.sandbox_name:
+            raise ValueError("Run sandbox name and configuration provider must match")
+        configuration_hash = canonical_json_hash(self.sandbox_configuration.model_dump(mode="json"))
+        if self.sandbox_configuration_hash is None:
+            self.sandbox_configuration_hash = configuration_hash
+        elif self.sandbox_configuration_hash != configuration_hash:
+            raise ValueError("Run sandbox configuration hash does not match its content")
+        if self.sandbox_requirements is None:
+            if self.sandbox_name != "fake":
+                raise ValueError("non-fake Run requires explicit sandbox requirements")
+            self.sandbox_requirements = SandboxRequirements()
+        if self.sandbox_capabilities_snapshot is None:
+            if self.sandbox_name != "fake":
+                raise ValueError("non-fake Run requires a sandbox capability snapshot")
+            self.sandbox_capabilities_snapshot = SandboxCapabilities.phase1_fake()
+        if self.sandbox_capabilities_snapshot.provider != self.sandbox_name:
+            raise ValueError("Run sandbox name and capability provider must match")
+        capabilities_hash = canonical_json_hash(
+            self.sandbox_capabilities_snapshot.model_dump(mode="json")
+        )
+        if self.sandbox_capabilities_hash is None:
+            self.sandbox_capabilities_hash = capabilities_hash
+        elif self.sandbox_capabilities_hash != capabilities_hash:
+            raise ValueError("Run sandbox capabilities hash does not match its content")
+        if self.sandbox_name == "docker" and (
+            self.sandbox_image_identity is None or self.sandbox_daemon_identity is None
+        ):
+            raise ValueError("Docker Run requires immutable image and daemon identities")
+        if self.sandbox_name != "docker" and (
+            self.sandbox_image_identity is not None or self.sandbox_daemon_identity is not None
+        ):
+            raise ValueError("Only Docker Run may carry image and daemon identities")
+        if (self.cleanup_receipt_artifact_id is None) != (self.cleanup_receipt_sha256 is None):
+            raise ValueError("Run cleanup receipt ID and hash must be paired")
         return self
 
 
@@ -664,6 +758,97 @@ class ScopeDecision(StrictModel):
         return self
 
 
+class CommandSpec(FrozenStrictModel):
+    command_id: ActionId
+    executable: Annotated[
+        str,
+        StringConstraints(
+            min_length=1,
+            max_length=128,
+            pattern=r"^(?:[A-Za-z0-9._+-]+|\./[A-Za-z0-9._+-]+)$",
+        ),
+    ]
+    argv: tuple[Annotated[str, StringConstraints(max_length=4096)], ...] = Field(
+        default_factory=tuple,
+        max_length=128,
+    )
+    logical_cwd: Annotated[str, StringConstraints(min_length=1, max_length=4096)] = "."
+    environment: dict[
+        Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9_]{0,63}$")],
+        Annotated[str, StringConstraints(max_length=4096)],
+    ] = Field(default_factory=dict, max_length=32)
+    timeout_seconds: int = Field(default=60, ge=1, le=3600)
+    max_output_bytes: int = Field(default=64_000, ge=1, le=1_000_000)
+    network_requirement: Literal["none", "required"] = "none"
+
+    @field_validator("executable")
+    @classmethod
+    def reject_shell_executables(cls, value: str) -> str:
+        executable_name = PurePosixPath(value).name.casefold()
+        if executable_name in {
+            "bash",
+            "cmd",
+            "dash",
+            "env",
+            "fish",
+            "ksh",
+            "powershell",
+            "pwsh",
+            "sh",
+            "zsh",
+        } or executable_name.endswith((".bat", ".cmd", ".ps1", ".sh")):
+            raise ValueError("Phase 3 command profiles cannot execute a shell")
+        return value
+
+    @field_validator("argv")
+    @classmethod
+    def validate_argv_bytes(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        if any("\x00" in value for value in values):
+            raise ValueError("command argv cannot contain NUL bytes")
+        if sum(len(value.encode("utf-8")) for value in values) > 65_536:
+            raise ValueError("command argv exceeds the total byte limit")
+        return values
+
+    @field_validator("environment")
+    @classmethod
+    def validate_environment(cls, values: dict[str, str]) -> dict[str, str]:
+        allowed = {
+            "CI",
+            "LANG",
+            "LC_ALL",
+            "PYTHONDONTWRITEBYTECODE",
+            "PYTHONPATH",
+            "PYTHONUNBUFFERED",
+        }
+        unexpected = set(values) - allowed
+        if unexpected:
+            raise ValueError(
+                "command environment contains names outside the fixed allowlist: "
+                f"{sorted(unexpected)}"
+            )
+        if any("\x00" in value for value in values.values()):
+            raise ValueError("command environment values cannot contain NUL bytes")
+        return dict(sorted(values.items()))
+
+    @field_validator("logical_cwd")
+    @classmethod
+    def validate_logical_cwd(cls, value: str) -> str:
+        if value == ".":
+            return value
+        path = PurePosixPath(value)
+        if (
+            value.startswith("/")
+            or "\\" in value
+            or "\x00" in value
+            or not path.parts
+            or "." in path.parts
+            or ".." in path.parts
+            or path.as_posix() != value
+        ):
+            raise ValueError("command cwd must be a canonical repository-relative path")
+        return value
+
+
 class TaskSpec(StrictModel):
     task_id: TaskId
     run_id: RunId
@@ -678,6 +863,11 @@ class TaskSpec(StrictModel):
     required_evidence: list[EvidenceRequirementId] = Field(min_length=1, max_length=32)
     max_repair_iterations: int = Field(ge=0, le=5)
     config_snapshot_hash: Sha256
+    verification_commands: list[CommandSpec] = Field(default_factory=list, max_length=32)
+    required_verification_command_ids: list[ActionId] = Field(
+        default_factory=list,
+        max_length=32,
+    )
     created_at: datetime
 
     _created_utc = field_validator("created_at")(_require_utc)
@@ -750,6 +940,18 @@ class TaskSpec(StrictModel):
                         "TaskSpec allowed and forbidden path scopes overlap: "
                         f"{allowed_value!r} and {'/'.join(blocked)!r}"
                     )
+        command_ids = [command.command_id for command in self.verification_commands]
+        if len(command_ids) != len(set(command_ids)):
+            raise ValueError("TaskSpec verification command IDs must be unique")
+        if len(self.required_verification_command_ids) != len(
+            set(self.required_verification_command_ids)
+        ):
+            raise ValueError("TaskSpec required verification command IDs must be unique")
+        missing_commands = set(self.required_verification_command_ids) - set(command_ids)
+        if missing_commands:
+            raise ValueError(
+                f"TaskSpec required verification commands are missing: {sorted(missing_commands)}"
+            )
         return self
 
 
@@ -852,7 +1054,7 @@ class ResourceLease(StrictModel):
     lease_id: LeaseId
     run_id: RunId
     kind: LeaseKind
-    resource_id: WorkspaceId | SandboxId
+    resource_id: WorkspaceId | SandboxId | ExecutionId
     path: str | None = None
     status: LeaseStatus
     created_at: datetime
@@ -864,7 +1066,11 @@ class ResourceLease(StrictModel):
 
     @model_validator(mode="after")
     def validate_resource_identity(self) -> ResourceLease:
-        expected_prefix = "ws_" if self.kind is LeaseKind.WORKTREE else "sandbox_"
+        expected_prefix = {
+            LeaseKind.WORKTREE: "ws_",
+            LeaseKind.SANDBOX: "sandbox_",
+            LeaseKind.EXECUTION: "exec_",
+        }[self.kind]
         if not self.resource_id.startswith(expected_prefix):
             raise ValueError(
                 f"{self.kind.value} leases require a {expected_prefix.rstrip('_')!r} resource ID"
@@ -1169,6 +1375,10 @@ class SandboxCapabilities(StrictModel):
     supported_network_modes: tuple[SandboxNetworkMode, ...] = Field(min_length=1, max_length=2)
     supports_resource_limits: bool
     supports_recovery: bool
+    supports_non_root: bool = False
+    supports_read_only_root: bool = False
+    supports_no_new_privileges: bool = False
+    supports_capability_drop: bool = False
 
     @field_validator("provider")
     @classmethod
@@ -1201,11 +1411,16 @@ class SandboxCapabilities(StrictModel):
                 not self.isolation_enforced
                 or not self.executes_code
                 or not self.supports_resource_limits
+                or not self.supports_non_root
+                or not self.supports_read_only_root
+                or not self.supports_no_new_privileges
+                or not self.supports_capability_drop
                 or "none" not in self.supported_network_modes
             ):
                 raise ValueError(
                     "isolated sandbox capabilities require enforced isolation, code "
-                    "execution, resource limits, and a network-none mode"
+                    "execution, resource limits, non-root execution, a read-only root, "
+                    "no-new-privileges, capability dropping, and a network-none mode"
                 )
         elif self.security_level is SandboxSecurityLevel.UNSAFE_HOST and (
             self.isolation_enforced or not self.executes_code
@@ -1225,28 +1440,476 @@ class SandboxCapabilities(StrictModel):
             supported_network_modes=("none",),
             supports_resource_limits=False,
             supports_recovery=True,
+            supports_non_root=False,
+            supports_read_only_root=False,
+            supports_no_new_privileges=False,
+            supports_capability_drop=False,
         )
+
+
+class SandboxRequirements(FrozenStrictModel):
+    isolation_required: bool = False
+    code_execution_required: bool = False
+    resource_limits_required: bool = False
+    non_root_required: bool = False
+    read_only_root_required: bool = False
+    no_new_privileges_required: bool = False
+    capability_drop_required: bool = False
+    network_mode: SandboxNetworkMode = "none"
+
+
+class SandboxConfiguration(FrozenStrictModel):
+    provider: SandboxName = "fake"
+    network_mode: SandboxNetworkMode = "none"
+    image: (
+        Annotated[
+            str,
+            StringConstraints(
+                strip_whitespace=True,
+                min_length=1,
+                max_length=256,
+                pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$",
+            ),
+        ]
+        | None
+    ) = None
+    cpu_limit: float = Field(default=1.0, ge=0.001, le=16, multiple_of=0.001)
+    memory_mb: int = Field(default=512, ge=64, le=32768)
+    pids_limit: int = Field(default=128, ge=16, le=4096)
+    shm_mb: int = Field(default=64, ge=16, le=1024)
+    tmpfs_mb: int = Field(default=128, ge=16, le=4096)
+
+    @model_validator(mode="after")
+    def validate_provider_configuration(self) -> SandboxConfiguration:
+        if self.provider == "docker" and self.image is None:
+            raise ValueError("docker sandbox requires an explicit local image reference")
+        if self.provider != "docker" and self.image is not None:
+            raise ValueError("only the docker sandbox accepts an image reference")
+        if self.provider == "local-unsafe" and self.network_mode != "approved-unrestricted":
+            raise ValueError("local-unsafe must honestly report unrestricted host networking")
+        if self.provider != "local-unsafe" and self.network_mode != "none":
+            raise ValueError("Phase 3 isolated and fake configurations support network=none only")
+        return self
 
 
 class SandboxSpec(StrictModel):
     workspace_host_path: str
+    project_id: ProjectId | None = None
+    configuration: SandboxConfiguration = Field(default_factory=SandboxConfiguration)
+    requirements: SandboxRequirements = Field(default_factory=SandboxRequirements)
     timeout_seconds: int = Field(default=60, ge=1, le=3600)
     environment: dict[str, str] = Field(default_factory=dict)
+    unsafe_local_confirmed: bool = False
+    image_identity: ImageIdentity | None = None
+    daemon_identity: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def validate_image_binding(self) -> SandboxSpec:
+        if self.configuration.provider == "docker" and (
+            self.image_identity is None or self.daemon_identity is None
+        ):
+            raise ValueError("Docker sandbox spec requires preflight image and daemon identities")
+        if self.configuration.provider != "docker" and (
+            self.image_identity is not None or self.daemon_identity is not None
+        ):
+            raise ValueError("Only Docker sandbox spec may carry image and daemon identities")
+        return self
 
 
 class SandboxHandle(StrictModel):
     sandbox_id: SandboxId
     run_id: RunId
+    project_id: ProjectId | None = None
     workspace_host_path: str
+    provider: SandboxName = "fake"
+    capabilities: SandboxCapabilities = Field(default_factory=SandboxCapabilities.phase1_fake)
+    configuration_hash: Sha256 | None = None
+    image_identity: ImageIdentity | None = None
+    daemon_identity: Sha256 | None = None
+    recovery_scope_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")] | None = None
+
+    @model_validator(mode="after")
+    def validate_image_binding(self) -> SandboxHandle:
+        if self.provider == "docker" and (
+            self.image_identity is None
+            or self.daemon_identity is None
+            or self.recovery_scope_id is None
+        ):
+            raise ValueError(
+                "Docker sandbox handle requires immutable image, daemon, and recovery identities"
+            )
+        if self.provider != "docker" and (
+            self.image_identity is not None
+            or self.daemon_identity is not None
+            or self.recovery_scope_id is not None
+        ):
+            raise ValueError(
+                "Only Docker sandbox handles may carry image, daemon, and recovery identities"
+            )
+        return self
+
+
+class SandboxInspection(FrozenStrictModel):
+    sandbox_id: SandboxId
+    provider: SandboxName
+    ready: bool
+    capabilities: SandboxCapabilities
+    configuration_hash: Sha256
+    image_identity: ImageIdentity | None = None
+    daemon_identity: Sha256 | None = None
+    effective_network_mode: SandboxNetworkMode
+    non_root: bool
+    read_only_root: bool
+    no_new_privileges: bool
+    capabilities_dropped: bool
+    resource_limits_enforced: bool
+    exact_mounts: bool
+    inspected_at: datetime
+
+    _inspected_utc = field_validator("inspected_at")(_require_utc)
+
+    @model_validator(mode="after")
+    def validate_effective_security_claims(self) -> SandboxInspection:
+        if self.capabilities.provider != self.provider:
+            raise ValueError("sandbox inspection provider and capabilities do not match")
+        if self.ready and self.capabilities.security_level is SandboxSecurityLevel.ISOLATED:
+            if not all(
+                (
+                    self.capabilities.isolation_enforced,
+                    self.capabilities.executes_code,
+                    self.non_root,
+                    self.read_only_root,
+                    self.no_new_privileges,
+                    self.capabilities_dropped,
+                    self.resource_limits_enforced,
+                    self.exact_mounts,
+                )
+            ):
+                raise ValueError("isolated sandbox inspection reports weakened effective controls")
+            if (
+                self.image_identity is None
+                or self.daemon_identity is None
+                or self.effective_network_mode != "none"
+            ):
+                raise ValueError(
+                    "isolated sandbox inspection requires image, daemon, and network binding"
+                )
+        if self.provider != "docker" and (
+            self.image_identity is not None or self.daemon_identity is not None
+        ):
+            raise ValueError("only Docker inspection may report image and daemon identities")
+        return self
+
+    def missing_requirements(self, requirements: SandboxRequirements) -> list[str]:
+        checks = {
+            "isolation": (
+                requirements.isolation_required,
+                self.capabilities.isolation_enforced,
+            ),
+            "code_execution": (
+                requirements.code_execution_required,
+                self.capabilities.executes_code,
+            ),
+            "resource_limits": (
+                requirements.resource_limits_required,
+                self.resource_limits_enforced,
+            ),
+            "non_root": (requirements.non_root_required, self.non_root),
+            "read_only_root": (
+                requirements.read_only_root_required,
+                self.read_only_root,
+            ),
+            "no_new_privileges": (
+                requirements.no_new_privileges_required,
+                self.no_new_privileges,
+            ),
+            "capability_drop": (
+                requirements.capability_drop_required,
+                self.capabilities_dropped,
+            ),
+            f"network:{requirements.network_mode}": (
+                True,
+                self.effective_network_mode == requirements.network_mode,
+            ),
+        }
+        return sorted(
+            name for name, (required, present) in checks.items() if required and not present
+        )
+
+
+class SandboxPreflight(FrozenStrictModel):
+    provider: SandboxName
+    ready: bool
+    capabilities: SandboxCapabilities
+    configuration_hash: Sha256
+    requirements_hash: Sha256
+    image_identity: ImageIdentity | None = None
+    daemon_identity: Sha256 | None = None
+    recovery_scope_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")] | None = None
+    executable_path: Annotated[str, StringConstraints(min_length=1, max_length=4096)] | None = None
+    cli_version: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
+    daemon_os: Literal["linux"] | None = None
+    daemon_architecture: Literal["amd64", "arm64"] | None = None
+    daemon_server_version: (
+        Annotated[str, StringConstraints(min_length=1, max_length=128)] | None
+    ) = None
+    endpoint_kind: Literal["none", "local-unix", "host"]
+    diagnostic: BoundedText
+    checked_at: datetime
+
+    _checked_utc = field_validator("checked_at")(_require_utc)
+
+    @model_validator(mode="after")
+    def validate_provider_identity(self) -> SandboxPreflight:
+        if self.capabilities.provider != self.provider:
+            raise ValueError("sandbox preflight capability provider does not match")
+        if self.provider == "docker" and (
+            self.image_identity is None
+            or self.daemon_identity is None
+            or self.recovery_scope_id is None
+            or self.executable_path is None
+            or self.cli_version is None
+            or self.daemon_os is None
+            or self.daemon_architecture is None
+            or self.daemon_server_version is None
+        ):
+            raise ValueError(
+                "Docker preflight requires complete CLI, daemon, image, and recovery identities"
+            )
+        if self.provider != "docker" and (
+            self.image_identity is not None
+            or self.daemon_identity is not None
+            or self.recovery_scope_id is not None
+            or self.executable_path is not None
+            or self.cli_version is not None
+            or self.daemon_os is not None
+            or self.daemon_architecture is not None
+            or self.daemon_server_version is not None
+        ):
+            raise ValueError("only Docker preflight may report Docker runtime identities")
+        return self
+
+
+class SandboxExecutionHandle(FrozenStrictModel):
+    execution_id: ExecutionId
+    sandbox_id: SandboxId
+    run_id: RunId
+    provider: SandboxName
+    native_resource_id: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+    labels: dict[str, str] = Field(default_factory=dict, min_length=1, max_length=16)
+    labels_sha256: Sha256
+
+    @field_validator("labels")
+    @classmethod
+    def validate_labels(cls, values: dict[str, str]) -> dict[str, str]:
+        if any(
+            re.fullmatch(r"[a-z][a-z0-9.-]{0,63}", key) is None
+            or not value
+            or len(value) > 128
+            or "\x00" in value
+            for key, value in values.items()
+        ):
+            raise ValueError("sandbox execution labels must be bounded canonical strings")
+        return dict(sorted(values.items()))
+
+    @model_validator(mode="after")
+    def validate_label_binding(self) -> SandboxExecutionHandle:
+        if canonical_json_hash(self.labels) != self.labels_sha256:
+            raise ValueError("sandbox execution label hash does not match")
+        if self.provider == "docker":
+            allowed = {
+                "agent-fleet.agent",
+                "agent-fleet.daemon",
+                "agent-fleet.execution",
+                "agent-fleet.installation",
+                "agent-fleet.intent",
+                "agent-fleet.managed",
+                "agent-fleet.project",
+                "agent-fleet.run",
+                "agent-fleet.sandbox",
+                "agent-fleet.stage",
+                "agent-fleet.task",
+            }
+            if (
+                set(self.labels) != allowed
+                or self.labels.get("agent-fleet.managed") != "true"
+                or self.labels.get("agent-fleet.run") != self.run_id
+                or self.labels.get("agent-fleet.sandbox") != self.sandbox_id
+                or self.labels.get("agent-fleet.execution") != self.execution_id
+                or re.fullmatch(r"[0-9a-f]{32}", self.labels.get("agent-fleet.installation", ""))
+                is None
+                or re.fullmatch(r"[0-9a-f]{64}", self.labels.get("agent-fleet.daemon", "")) is None
+            ):
+                raise ValueError("Docker execution labels do not match their trusted identities")
+        return self
+
+
+class SandboxExecutionRecoveryRequest(FrozenStrictModel):
+    execution_id: ExecutionId
+    sandbox_id: SandboxId
+    run_id: RunId
+    project_id: ProjectId
+    provider: SandboxName
+    intent_id: IntentId
+    task_id: TaskId
+    agent_instance_id: AgentInstanceId
+    stage: WorkflowStage
+    creation_dispatched: bool
+
+
+class SandboxCleanupResult(FrozenStrictModel):
+    provider: SandboxName
+    resource_id: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+    resources_found: int = Field(ge=0, le=128)
+    resources_removed: int = Field(ge=0, le=128)
+    reconciled: bool
+    complete: bool
+    completed_at: datetime
+
+    _cleanup_utc = field_validator("completed_at")(_require_utc)
+
+    @model_validator(mode="after")
+    def validate_cleanup_counts(self) -> SandboxCleanupResult:
+        if self.resources_removed > self.resources_found:
+            raise ValueError("sandbox cleanup cannot remove more resources than it found")
+        if self.complete and not self.reconciled:
+            raise ValueError("complete sandbox cleanup must be reconciled")
+        if self.complete and self.resources_removed != self.resources_found:
+            raise ValueError("complete sandbox cleanup must remove every found resource")
+        return self
 
 
 class ExecRequest(StrictModel):
+    execution_id: ExecutionId | None = None
+    intent_id: IntentId | None = None
+    task_id: TaskId | None = None
+    agent_instance_id: AgentInstanceId | None = None
+    stage: WorkflowStage | None = None
     executable: str
     argv: list[str]
     cwd: str
     environment: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: int = Field(default=60, ge=1, le=3600)
     max_output_bytes: int = Field(default=64_000, ge=1, le=1_000_000)
+    network_mode: SandboxNetworkMode = "none"
+    command_spec_hash: Sha256 | None = None
+
+    @field_validator("executable")
+    @classmethod
+    def validate_executable(cls, value: str) -> str:
+        if re.fullmatch(r"(?:[A-Za-z0-9._+-]+|\./[A-Za-z0-9._+-]+)", value) is None:
+            raise ValueError("execution executable must be a canonical bare or ./ name")
+        executable_name = PurePosixPath(value).name.casefold()
+        if executable_name in {
+            "bash",
+            "cmd",
+            "dash",
+            "env",
+            "fish",
+            "ksh",
+            "powershell",
+            "pwsh",
+            "sh",
+            "zsh",
+        } or executable_name.endswith((".bat", ".cmd", ".ps1", ".sh")):
+            raise ValueError("execution request cannot invoke a shell")
+        return value
+
+    @field_validator("argv")
+    @classmethod
+    def validate_exec_argv(cls, values: list[str]) -> list[str]:
+        if len(values) > 128 or any("\x00" in value or len(value) > 4096 for value in values):
+            raise ValueError("execution argv must contain at most 128 bounded non-NUL values")
+        if sum(len(value.encode("utf-8")) for value in values) > 65_536:
+            raise ValueError("execution argv exceeds the total byte limit")
+        return values
+
+    @field_validator("cwd")
+    @classmethod
+    def validate_exec_cwd(cls, value: str) -> str:
+        if value == ".":
+            return value
+        path = PurePosixPath(value)
+        if (
+            value.startswith("/")
+            or "\\" in value
+            or "\x00" in value
+            or not path.parts
+            or "." in path.parts
+            or ".." in path.parts
+            or path.as_posix() != value
+        ):
+            raise ValueError("execution cwd must be a canonical repository-relative path")
+        return value
+
+    @field_validator("environment")
+    @classmethod
+    def validate_exec_environment(cls, values: dict[str, str]) -> dict[str, str]:
+        allowed = {
+            "CI",
+            "LANG",
+            "LC_ALL",
+            "PYTHONDONTWRITEBYTECODE",
+            "PYTHONPATH",
+            "PYTHONUNBUFFERED",
+        }
+        if set(values) - allowed or any("\x00" in value for value in values.values()):
+            raise ValueError("execution environment is outside the fixed non-secret allowlist")
+        return dict(sorted(values.items()))
+
+    @model_validator(mode="after")
+    def validate_execution_identity(self) -> ExecRequest:
+        identity_values = (
+            self.execution_id,
+            self.intent_id,
+            self.task_id,
+            self.agent_instance_id,
+            self.stage,
+            self.command_spec_hash,
+        )
+        if any(value is not None for value in identity_values) and any(
+            value is None for value in identity_values
+        ):
+            raise ValueError("execution identity must be supplied completely or omitted")
+        return self
+
+
+class SandboxExecutionMetadata(FrozenStrictModel):
+    execution_id: ExecutionId
+    provider: SandboxName
+    resource_id_sha256: Sha256
+    configuration_hash: Sha256
+    capabilities_hash: Sha256
+    inspection_hash: Sha256 | None = None
+    inspection: SandboxInspection | None = None
+    resource_handle: SandboxExecutionHandle
+    cleanup_result: SandboxCleanupResult
+
+    @model_validator(mode="after")
+    def validate_inspection_binding(self) -> SandboxExecutionMetadata:
+        if (self.inspection_hash is None) != (self.inspection is None):
+            raise ValueError("sandbox execution inspection content and hash must be paired")
+        if self.inspection is not None:
+            if self.inspection.provider != self.provider:
+                raise ValueError("sandbox execution inspection provider does not match")
+            if self.inspection.configuration_hash != self.configuration_hash:
+                raise ValueError("sandbox execution inspection configuration does not match")
+            if (
+                canonical_json_hash(self.inspection.capabilities.model_dump(mode="json"))
+                != self.capabilities_hash
+            ):
+                raise ValueError("sandbox execution inspection capabilities do not match")
+            if canonical_json_hash(self.inspection.model_dump(mode="json")) != self.inspection_hash:
+                raise ValueError("sandbox execution inspection hash does not match")
+        if (
+            self.resource_handle.execution_id != self.execution_id
+            or self.resource_handle.provider != self.provider
+            or self.cleanup_result.provider != self.provider
+            or self.cleanup_result.resource_id != self.resource_handle.native_resource_id
+            or not self.cleanup_result.complete
+        ):
+            raise ValueError("sandbox execution resource or cleanup binding does not match")
+        return self
 
 
 class ExecResult(StrictModel):
@@ -1257,6 +1920,7 @@ class ExecResult(StrictModel):
     completed_at: datetime
     timed_out: bool = False
     output_truncated: bool = False
+    execution: SandboxExecutionMetadata | None = None
 
     _started_utc = field_validator("started_at")(_require_utc)
     _completed_utc = field_validator("completed_at")(_require_utc)

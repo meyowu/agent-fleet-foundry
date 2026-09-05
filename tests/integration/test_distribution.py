@@ -60,6 +60,7 @@ def test_wheel_and_sdist_ship_runtime_resources_without_development_fixtures(
         "agent_fleet/adapters/runtime/prompts/verifier.md",
         "agent_fleet/adapters/persistence/migrations/0001.sql",
         "agent_fleet/adapters/persistence/migrations/0002.sql",
+        "agent_fleet/adapters/persistence/migrations/0003.sql",
         *(f"agent_fleet/schemas/{name}" for name in SCHEMAS),
     }
     forbidden_content = (

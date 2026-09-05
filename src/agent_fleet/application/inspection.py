@@ -6,6 +6,7 @@ from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evidence import EvidenceBundle
 from agent_fleet.domain.models import ArtifactKind, Run
+from agent_fleet.domain.security import canonical_json_hash
 from agent_fleet.ports.state_store import StateStore
 
 
@@ -44,7 +45,13 @@ class InspectionService:
             "provider_model": run.provider_model,
             "runtime_usage_artifact_ids": run.runtime_usage_artifact_ids,
             "sandbox": run.sandbox_name,
-            "security_level": "fake",
+            "security_level": (
+                run.sandbox_capabilities_snapshot.security_level.value
+                if run.sandbox_capabilities_snapshot is not None
+                else "unknown"
+            ),
+            "sandbox_configuration_sha256": run.sandbox_configuration_hash,
+            "sandbox_capabilities_sha256": run.sandbox_capabilities_hash,
         }
 
     def _evidence_summary(self, run: Run) -> dict[str, object] | None:
@@ -91,6 +98,17 @@ class InspectionService:
             or bundle.fleet_plan_artifact_id != run.fleet_plan_artifact_id
             or bundle.fleet_plan_sha256 != run.fleet_plan_hash
             or bundle.fleet_strategy.value != run.fleet_strategy
+            or bundle.sandbox_provider != run.sandbox_name
+            or (
+                run.sandbox_capabilities_snapshot is None
+                or bundle.sandbox_security_level
+                is not run.sandbox_capabilities_snapshot.security_level
+                or bundle.sandbox_capabilities != run.sandbox_capabilities_snapshot
+                or bundle.sandbox_capabilities_sha256 != run.sandbox_capabilities_hash
+                or bundle.sandbox_capabilities_sha256
+                != canonical_json_hash(bundle.sandbox_capabilities.model_dump(mode="json"))
+            )
+            or bundle.sandbox_configuration_sha256 != run.sandbox_configuration_hash
             or bundle.patch_artifact_id != run.patch_artifact_id
             or bundle.patch_sha256 != run.patch_sha256
             or [item.evidence_id for item in bundle.command_evidence]
@@ -130,6 +148,16 @@ class InspectionService:
                     "strength": item.strength.value,
                     "sandbox_provider": item.sandbox_provider,
                     "sandbox_security_level": item.sandbox_security_level.value,
+                    "sandbox_capabilities_sha256": item.sandbox_capabilities_sha256,
+                    "sandbox_configuration_sha256": item.sandbox_configuration_sha256,
+                    "command_id": item.command_id,
+                    "command_spec_sha256": item.command_spec_sha256,
+                    "workspace_kind": item.workspace_kind.value,
+                    "network_mode": item.network_mode,
+                    "execution_id": item.execution_id,
+                    "sandbox_inspection_artifact_id": item.sandbox_inspection_artifact_id,
+                    "sandbox_inspection_sha256": item.sandbox_inspection_sha256,
+                    "workspace_mutated_during_execution": (item.workspace_mutated_during_execution),
                     "candidate_patch_sha256": item.candidate_patch_sha256,
                 }
                 for item in bundle.command_evidence

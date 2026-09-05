@@ -19,6 +19,7 @@ class IdPrefix(StrEnum):
     LEASE = "lease"
     CORRELATION = "corr"
     SANDBOX = "sandbox"
+    EXECUTION = "exec"
     WORKSPACE = "ws"
     FLEET_PLAN = "plan"
     FLEET_PATCH = "fpatch"

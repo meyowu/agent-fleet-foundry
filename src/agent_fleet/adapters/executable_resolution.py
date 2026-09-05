@@ -155,3 +155,34 @@ def resolve_trusted_executable(
     ):
         return None
     return str(candidate)
+
+
+def resolve_fixed_executable(
+    candidates: tuple[Path, ...],
+    *,
+    expected_name: str,
+) -> str | None:
+    """Resolve only an audited absolute-path allowlist, never ambient ``PATH``.
+
+    This is the stricter boundary used for the Docker control-plane client.  A
+    repository can influence the process environment but cannot add a candidate
+    location to this list.
+    """
+
+    for requested in candidates:
+        if not requested.is_absolute():
+            raise ValueError("fixed executable candidates must be absolute")
+        try:
+            candidate = requested.resolve(strict=True)
+            candidate_stat = candidate.stat()
+        except OSError:
+            continue
+        if (
+            candidate.name != expected_name
+            or not stat.S_ISREG(candidate_stat.st_mode)
+            or candidate_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or not os.access(candidate, os.X_OK)
+        ):
+            continue
+        return str(candidate)
+    return None

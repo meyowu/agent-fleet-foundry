@@ -10,6 +10,33 @@ from pydantic import ValidationError
 from agent_fleet.domain.models import AgentInvocation, WorkflowStage
 
 
+def test_application_layer_does_not_import_concrete_adapters() -> None:
+    application_root = Path(__file__).parents[2] / "src" / "agent_fleet" / "application"
+    violations: list[str] = []
+    for module_path in sorted(application_root.rglob("*.py")):
+        tree = ast.parse(module_path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            imported: list[str] = []
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+                line_number = node.lineno
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                imported.append(node.module)
+                line_number = node.lineno
+            else:
+                continue
+            for imported_module in imported:
+                if imported_module == "agent_fleet.adapters" or imported_module.startswith(
+                    "agent_fleet.adapters."
+                ):
+                    violations.append(
+                        f"{module_path.relative_to(application_root)}:{line_number} "
+                        f"imports {imported_module}"
+                    )
+
+    assert violations == []
+
+
 def test_runtime_invocation_rejects_host_paths_and_sandbox_handles() -> None:
     common = {
         "run_id": "run_" + "1" * 32,

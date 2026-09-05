@@ -1,0 +1,8 @@
+ARG BASE_IMAGE=python:3.14-slim
+FROM ${BASE_IMAGE} AS python_rootfs
+
+FROM scratch
+COPY --from=python_rootfs / /
+ENV PATH=/usr/local/bin:/usr/bin:/bin \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8

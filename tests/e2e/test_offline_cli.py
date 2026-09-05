@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -11,6 +12,8 @@ import pytest
 
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.system import UuidIdGenerator
+from agent_fleet.bootstrap import build_container
+from agent_fleet.domain.models import FakeScenario, RunStatus
 
 
 def _invoke(
@@ -29,6 +32,34 @@ def _invoke(
     return cast(dict[str, object], parsed)
 
 
+def _invoke_failure(
+    executable: Path,
+    arguments: list[str],
+    environment: dict[str, str],
+) -> dict[str, object]:
+    result = subprocess.run(
+        [str(executable), *arguments, "--json"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert result.returncode == 1, result.stderr
+    parsed = json.loads(result.stdout)
+    assert isinstance(parsed, dict)
+    return cast(dict[str, object], parsed)
+
+
+def _seed_legacy_fake_project(repository: Path, state_root: Path) -> dict[str, object]:
+    """Seed an already-trusted legacy Project so offline E2E can test later commands."""
+
+    return build_container(state_root).projects._initialize_without_canary(
+        repository,
+        runtime_name="fake",
+        sandbox_name="fake",
+    )
+
+
 @pytest.mark.e2e
 def test_subprocess_offline_flow_applies_behavioral_fix(tmp_path: Path) -> None:
     repository = GitRepositoryAdapter(tmp_path, UuidIdGenerator()).create_canary_fixture(
@@ -41,18 +72,27 @@ def test_subprocess_offline_flow_applies_behavioral_fix(tmp_path: Path) -> None:
         for key, value in os.environ.items()
         if key in {"PATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"}
     }
-    environment["AGENT_FLEET_HOME"] = str(tmp_path / "e2e-state")
+    state_root = tmp_path / "e2e-state"
+    environment["AGENT_FLEET_HOME"] = str(state_root)
 
-    initialized = _invoke(
+    rejected = _invoke_failure(
         fleet_executable,
         ["init", str(repository), "--runtime", "fake", "--sandbox", "fake", "--yes"],
         environment,
     )
-    assert initialized["ok"] is True
-    initialized_data = initialized["data"]
-    assert isinstance(initialized_data, dict)
-    assert initialized_data["repository_profile"]["ecosystems"] == ["python"]
-    assert initialized_data["sandbox_capabilities"]["executes_code"] is False
+    assert rejected["ok"] is False
+    error = rejected["error"]
+    assert isinstance(error, dict)
+    assert error["code"] == "BOOTSTRAP_CANARY_FAILED"
+    assert not (repository / ".fleet").exists()
+
+    initialized_data = _seed_legacy_fake_project(repository, state_root)
+    repository_profile = initialized_data["repository_profile"]
+    sandbox_capabilities = initialized_data["sandbox_capabilities"]
+    assert isinstance(repository_profile, dict)
+    assert isinstance(sandbox_capabilities, dict)
+    assert repository_profile["ecosystems"] == ["python"]
+    assert sandbox_capabilities["executes_code"] is False
     executed = _invoke(
         fleet_executable,
         [
@@ -136,12 +176,9 @@ def test_subprocess_approval_pause_approve_resume_is_exactly_once(tmp_path: Path
         for key, value in os.environ.items()
         if key in {"PATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"}
     }
-    environment["AGENT_FLEET_HOME"] = str(tmp_path / "approval-state")
-    _invoke(
-        fleet_executable,
-        ["init", str(repository), "--runtime", "fake", "--sandbox", "fake", "--yes"],
-        environment,
-    )
+    state_root = tmp_path / "approval-state"
+    environment["AGENT_FLEET_HOME"] = str(state_root)
+    _seed_legacy_fake_project(repository, state_root)
     paused = _invoke(
         fleet_executable,
         [
@@ -190,6 +227,82 @@ def test_subprocess_approval_pause_approve_resume_is_exactly_once(tmp_path: Path
 
 
 @pytest.mark.e2e
+def test_subprocess_exact_recovery_requires_owner_confirmation_and_never_replays(
+    tmp_path: Path,
+) -> None:
+    repository = GitRepositoryAdapter(tmp_path, UuidIdGenerator()).create_canary_fixture(
+        tmp_path / "recovery-repository"
+    )
+    fleet_executable = Path(sys.executable).parent / "fleet"
+    state_root = tmp_path / "recovery-state"
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"PATH", "SYSTEMROOT", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL"}
+    }
+    environment["AGENT_FLEET_HOME"] = str(state_root)
+    _seed_legacy_fake_project(repository, state_root)
+    container = build_container(state_root)
+    paused = asyncio.run(
+        container.workflow.start(
+            project_path=repository,
+            goal="Create a recoverable interrupted run",
+            runtime_name="fake",
+            sandbox_name="fake",
+            fake_scenario=FakeScenario.APPROVAL,
+        )
+    )
+    interrupted = paused.model_copy(
+        update={
+            "status": RunStatus.RUNNING,
+            "pending_approval_id": None,
+            "updated_at": container.state.clock.now(),
+        }
+    )
+    container.state.save_run(
+        interrupted,
+        "run.resumed",
+        {"reason": "simulated process loss before CLI reconstruction"},
+    )
+    before = list(container.state.outstanding_leases(paused.run_id))
+    assert before
+
+    refused = _invoke_failure(fleet_executable, ["recover", paused.run_id], environment)
+    refused_error = refused["error"]
+    assert isinstance(refused_error, dict)
+    assert refused_error["code"] == "RECOVERY_REQUIRED"
+    assert build_container(state_root).state.outstanding_leases(paused.run_id)
+
+    recovered = _invoke(
+        fleet_executable,
+        ["recover", paused.run_id, "--confirm-owner-stopped"],
+        environment,
+    )
+    recovered_data = recovered["data"]
+    assert isinstance(recovered_data, dict)
+    assert recovered_data["run_id"] == paused.run_id
+    assert recovered_data["status"] == "failed"
+    assert recovered_data["recovered"] is True
+    assert set(recovered_data["recovered_lease_ids"]) == {item.lease_id for item in before}
+    assert recovered_data["outstanding_lease_ids"] == []
+    reconstructed = build_container(state_root)
+    assert (
+        reconstructed.state.count_executed_intents(paused.run_id, "fixture.record_side_effect") == 0
+    )
+
+    repeated = _invoke(
+        fleet_executable,
+        ["recover", paused.run_id, "--confirm-owner-stopped"],
+        environment,
+    )
+    repeated_data = repeated["data"]
+    assert isinstance(repeated_data, dict)
+    assert repeated_data["recovered"] is False
+    assert repeated_data["recovered_lease_ids"] == []
+    assert repeated_data["outstanding_lease_ids"] == []
+
+
+@pytest.mark.e2e
 def test_subprocess_preview_and_adaptive_topologies_are_observable(tmp_path: Path) -> None:
     repository = GitRepositoryAdapter(tmp_path, UuidIdGenerator()).create_canary_fixture(
         tmp_path / "adaptive-repository"
@@ -214,7 +327,14 @@ def test_subprocess_preview_and_adaptive_topologies_are_observable(tmp_path: Pat
     assert not (repository / ".fleet").exists()
     assert not state_root.exists()
 
-    _invoke(fleet_executable, ["init", str(repository), "--yes"], environment)
+    rejected = _invoke_failure(
+        fleet_executable,
+        ["init", str(repository), "--yes"],
+        environment,
+    )
+    assert rejected["ok"] is False
+    assert not (repository / ".fleet").exists()
+    _seed_legacy_fake_project(repository, state_root)
     direct = _invoke(
         fleet_executable,
         [

@@ -15,7 +15,14 @@ from agent_fleet.domain.evidence import (
     ProofGap,
 )
 from agent_fleet.domain.fleet_plan import FleetStrategy
-from agent_fleet.domain.models import SandboxSecurityLevel, Verdict
+from agent_fleet.domain.models import (
+    SandboxCapabilities,
+    SandboxRequirements,
+    SandboxSecurityLevel,
+    Verdict,
+    WorkspaceKind,
+)
+from agent_fleet.domain.security import canonical_json_hash
 
 NOW = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
 RUN_ID = "run_11111111111111111111111111111111"
@@ -27,6 +34,8 @@ PLAN_ARTIFACT_ID = "art_66666666666666666666666666666666"
 VERDICT_ARTIFACT_ID = "art_77777777777777777777777777777777"
 TRANSCRIPT_ARTIFACT_ID = "art_88888888888888888888888888888888"
 EVIDENCE_ID = "art_99999999999999999999999999999999"
+INSPECTION_ARTIFACT_ID = "art_12121212121212121212121212121212"
+CLEANUP_ARTIFACT_ID = "art_13131313131313131313131313131313"
 PATCH_ARTIFACT_ID = "art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 TASK_SPEC_ARTIFACT_ID = "art_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 CONFIG_ARTIFACT_ID = "art_cccccccccccccccccccccccccccccccc"
@@ -34,6 +43,25 @@ CONFIG_HASH = "a" * 64
 PLAN_HASH = "b" * 64
 PATCH_HASH = "c" * 64
 TASK_SPEC_HASH = "d" * 64
+COMMAND_SPEC_HASH = "e" * 64
+SANDBOX_CONFIG_HASH = "f" * 64
+INSPECTION_HASH = "1" * 64
+EXECUTION_ID = "exec_" + "2" * 32
+IMAGE_ID = "sha256:" + "3" * 64
+DAEMON_IDENTITY = "5" * 64
+ISOLATED_CAPABILITIES = SandboxCapabilities(
+    provider="docker",
+    security_level=SandboxSecurityLevel.ISOLATED,
+    isolation_enforced=True,
+    executes_code=True,
+    supported_network_modes=("none",),
+    supports_resource_limits=True,
+    supports_recovery=True,
+    supports_non_root=True,
+    supports_read_only_root=True,
+    supports_no_new_privileges=True,
+    supports_capability_drop=True,
+)
 
 
 def _command_evidence(
@@ -41,16 +69,49 @@ def _command_evidence(
     strength: EvidenceStrength = EvidenceStrength.INDEPENDENTLY_VERIFIED,
     security_level: SandboxSecurityLevel = SandboxSecurityLevel.ISOLATED,
 ) -> CommandEvidence:
+    capabilities = (
+        ISOLATED_CAPABILITIES
+        if security_level is SandboxSecurityLevel.ISOLATED
+        else SandboxCapabilities.phase1_fake()
+    )
+    requirements = (
+        SandboxRequirements(
+            isolation_required=True,
+            code_execution_required=True,
+            resource_limits_required=True,
+            non_root_required=True,
+            read_only_root_required=True,
+            no_new_privileges_required=True,
+            capability_drop_required=True,
+        )
+        if security_level is SandboxSecurityLevel.ISOLATED
+        else SandboxRequirements()
+    )
     return CommandEvidence(
         evidence_id=EVIDENCE_ID,
         run_id=RUN_ID,
         task_id=TASK_ID,
         agent_instance_id=VERIFIER_ID,
+        principal_role="verifier",
+        workflow_stage="verifying",
+        workspace_id="ws_" + "5" * 32,
+        sandbox_id="sandbox_" + "6" * 32,
+        command_id="project-test",
+        command_spec_sha256=COMMAND_SPEC_HASH,
         executable="python",
         argv=["-m", "pytest", "-q"],
         cwd=".",
         sandbox_provider="docker" if security_level is SandboxSecurityLevel.ISOLATED else "fake",
         sandbox_security_level=security_level,
+        sandbox_capabilities_sha256=canonical_json_hash(capabilities.model_dump(mode="json")),
+        sandbox_configuration_sha256=SANDBOX_CONFIG_HASH,
+        sandbox_requirements_sha256=canonical_json_hash(requirements.model_dump(mode="json")),
+        sandbox_image_identity=(
+            IMAGE_ID if security_level is SandboxSecurityLevel.ISOLATED else None
+        ),
+        sandbox_daemon_identity=(
+            DAEMON_IDENTITY if security_level is SandboxSecurityLevel.ISOLATED else None
+        ),
         strength=strength,
         exit_code=0,
         timed_out=False,
@@ -59,6 +120,14 @@ def _command_evidence(
         workspace_base_revision="base-revision",
         config_snapshot_sha256=CONFIG_HASH,
         candidate_patch_sha256=PATCH_HASH,
+        workspace_kind=WorkspaceKind.VERIFICATION,
+        execution_id=(EXECUTION_ID if security_level is SandboxSecurityLevel.ISOLATED else None),
+        sandbox_inspection_artifact_id=(
+            INSPECTION_ARTIFACT_ID if security_level is SandboxSecurityLevel.ISOLATED else None
+        ),
+        sandbox_inspection_sha256=(
+            INSPECTION_HASH if security_level is SandboxSecurityLevel.ISOLATED else None
+        ),
         started_at=NOW,
         completed_at=NOW,
     )
@@ -76,6 +145,25 @@ def _bundle(
     verifier_required_repairs: list[str] | None = None,
     verifier_regressions: list[str] | None = None,
 ) -> EvidenceBundle:
+    commands = command_evidence if command_evidence is not None else [_command_evidence()]
+    capabilities = (
+        SandboxCapabilities.phase1_fake()
+        if commands and commands[0].sandbox_security_level is SandboxSecurityLevel.FAKE
+        else ISOLATED_CAPABILITIES
+    )
+    requirements = (
+        SandboxRequirements()
+        if capabilities.security_level is SandboxSecurityLevel.FAKE
+        else SandboxRequirements(
+            isolation_required=True,
+            code_execution_required=True,
+            resource_limits_required=True,
+            non_root_required=True,
+            read_only_root_required=True,
+            no_new_privileges_required=True,
+            capability_drop_required=True,
+        )
+    )
     return EvidenceBundle(
         run_id=RUN_ID,
         project_id=PROJECT_ID,
@@ -93,12 +181,27 @@ def _bundle(
             "command_evidence",
             "independent_verifier_verdict",
         ],
+        sandbox_provider=capabilities.provider,
+        sandbox_security_level=capabilities.security_level,
+        sandbox_configuration_sha256=SANDBOX_CONFIG_HASH,
+        sandbox_requirements=requirements,
+        sandbox_requirements_sha256=canonical_json_hash(requirements.model_dump(mode="json")),
+        sandbox_image_identity=(
+            IMAGE_ID if capabilities.security_level is SandboxSecurityLevel.ISOLATED else None
+        ),
+        sandbox_daemon_identity=(
+            DAEMON_IDENTITY
+            if capabilities.security_level is SandboxSecurityLevel.ISOLATED
+            else None
+        ),
+        sandbox_capabilities=capabilities,
+        sandbox_capabilities_sha256=canonical_json_hash(capabilities.model_dump(mode="json")),
+        verification_command_hashes={"project-test": COMMAND_SPEC_HASH},
+        required_verification_command_ids=["project-test"],
         patch_artifact_id=PATCH_ARTIFACT_ID,
         patch_sha256=PATCH_HASH,
         changed_paths=["src/canary_calc/core.py"],
-        command_evidence=command_evidence
-        if command_evidence is not None
-        else [_command_evidence()],
+        command_evidence=commands,
         verifier_agent_instance_id=verifier_agent_instance_id,
         verifier_verdict_artifact_id=verifier_verdict_artifact_id,
         verifier_evidence_artifact_ids=(
@@ -110,6 +213,9 @@ def _bundle(
         reported_verdict=Verdict.PASS,
         verifier_required_repairs=verifier_required_repairs or [],
         verifier_regressions=verifier_regressions or [],
+        cleanup_receipt_artifact_id=CLEANUP_ARTIFACT_ID,
+        cleanup_receipt_sha256="4" * 64,
+        cleanup_complete=True,
         criterion_assessments=criterion_assessments
         if criterion_assessments is not None
         else [
@@ -132,11 +238,18 @@ def _authoritative_artifact_ids(bundle: EvidenceBundle) -> set[str]:
         bundle.fleet_plan_artifact_id,
         *(item.evidence_id for item in bundle.command_evidence),
         *(item.transcript_artifact_id for item in bundle.command_evidence),
+        *(
+            item.sandbox_inspection_artifact_id
+            for item in bundle.command_evidence
+            if item.sandbox_inspection_artifact_id is not None
+        ),
     }
     if bundle.verifier_verdict_artifact_id is not None:
         result.add(bundle.verifier_verdict_artifact_id)
     if bundle.patch_artifact_id is not None:
         result.add(bundle.patch_artifact_id)
+    if bundle.cleanup_receipt_artifact_id is not None:
+        result.add(bundle.cleanup_receipt_artifact_id)
     return result
 
 
@@ -226,6 +339,47 @@ def test_patch_and_configuration_evidence_must_be_fresh_and_bound() -> None:
     assert decision.verified_complete is False
     assert "CONFIG_EVIDENCE_STALE" in decision.reason_codes
     assert "PATCH_EVIDENCE_UNBOUND" in decision.reason_codes
+
+
+def test_sandbox_capability_and_command_spec_tampering_fail_closed() -> None:
+    command = _command_evidence().model_copy(update={"command_spec_sha256": "9" * 64})
+    bundle = _bundle(command_evidence=[command]).model_copy(
+        update={"sandbox_capabilities_sha256": "8" * 64}
+    )
+
+    decision = _evaluate(bundle)
+
+    assert decision.verified_complete is False
+    assert "SANDBOX_CAPABILITY_BINDING_INVALID" in decision.reason_codes
+    assert "COMMAND_SPEC_BINDING_INVALID" in decision.reason_codes
+    assert "SANDBOX_EVIDENCE_BINDING_INVALID" in decision.reason_codes
+
+
+def test_required_verifier_command_and_inspection_identity_are_mandatory() -> None:
+    command = _command_evidence().model_copy(
+        update={
+            "command_id": "optional-check",
+            "command_spec_sha256": "7" * 64,
+            "execution_id": None,
+            "sandbox_inspection_sha256": None,
+        }
+    )
+    bundle = _bundle(command_evidence=[command]).model_copy(
+        update={
+            "verification_command_hashes": {
+                "project-test": COMMAND_SPEC_HASH,
+                "optional-check": "7" * 64,
+            }
+        }
+    )
+
+    decision = _evaluate(bundle)
+
+    assert decision.verified_complete is False
+    assert "REQUIRED_COMMAND_EVIDENCE_MISSING" in decision.reason_codes
+    assert "VERIFIER_REQUIRED_COMMAND_EVIDENCE_MISSING" in decision.reason_codes
+    assert "SANDBOX_INSPECTION_EVIDENCE_MISSING" in decision.reason_codes
+    assert "EXECUTION_IDENTITY_MISSING" in decision.reason_codes
 
 
 def test_missing_and_nonpassing_criteria_block_verified_completion() -> None:

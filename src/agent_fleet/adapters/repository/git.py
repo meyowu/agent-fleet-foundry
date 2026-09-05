@@ -22,7 +22,11 @@ from agent_fleet.domain.models import (
     Workspace,
     WorkspaceKind,
 )
-from agent_fleet.domain.offline_canary import BROKEN_CANARY
+from agent_fleet.domain.offline_canary import (
+    BOOTSTRAP_HOST_SENTINEL_NAME,
+    BOOTSTRAP_SANDBOX_PROBE_MARKER,
+    BROKEN_CANARY,
+)
 from agent_fleet.domain.security import (
     MINIMUM_GIT_VERSION,
     canonical_json_hash,
@@ -406,6 +410,100 @@ class GitRepositoryAdapter:
                 "--no-status",
                 "-m",
                 "canary baseline",
+            ],
+            cwd=target,
+        )
+        return target
+
+    def create_bootstrap_canary_fixture(self, destination: Path) -> Path:
+        """Create the trusted dependency-free Phase 3 bootstrap canary."""
+
+        self.state_root.mkdir(parents=True, exist_ok=True)
+        target = resolve_logical_path(
+            self.state_root,
+            str(destination.resolve().relative_to(self.state_root)),
+            allow_missing=True,
+        )
+        if (target / ".git").exists():
+            return target
+        target.mkdir(parents=True, exist_ok=False)
+        host_sentinel = target.parent / BOOTSTRAP_HOST_SENTINEL_NAME
+        host_sentinel.write_text("Fleet-owned host sentinel\n", encoding="utf-8")
+        (target / "src/canary_calc").mkdir(parents=True)
+        (target / "tests").mkdir()
+        (target / "pyproject.toml").write_text(
+            "[project]\nname = 'agent-fleet-bootstrap-canary'\n"
+            "version = '0.0.0'\nrequires-python = '>=3.12'\n",
+            encoding="utf-8",
+        )
+        (target / "src/canary_calc/__init__.py").write_text(
+            "from .core import divide\n\n__all__ = ['divide']\n", encoding="utf-8"
+        )
+        (target / "src/canary_calc/core.py").write_text(BROKEN_CANARY, encoding="utf-8")
+        (target / "tests/test_core.py").write_text(
+            "import sys\n"
+            "import unittest\n"
+            "from pathlib import Path\n\n"
+            "sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))\n\n"
+            "from canary_calc import divide\n\n\n"
+            "class DivideTests(unittest.TestCase):\n"
+            "    def test_divide_by_zero_has_stable_error(self) -> None:\n"
+            "        with self.assertRaisesRegex(\n"
+            "            ValueError, 'division by zero is not allowed'\n"
+            "        ):\n"
+            "            divide(1, 0)\n\n\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        (target / "tests/test_sandbox_boundary.py").write_text(
+            "import os\n"
+            "import unittest\n"
+            "from pathlib import Path\n\n"
+            f"HOST_SENTINEL = Path({str(host_sentinel)!r})\n"
+            "ALLOWED_ENVIRONMENT_NAMES = {\n"
+            "    'HOME', 'HOSTNAME', 'LANG', 'LC_ALL', 'PATH'\n"
+            "}\n"
+            "SENSITIVE_NAME_PARTS = (\n"
+            "    'credential', 'key', 'password', 'secret', 'token'\n"
+            ")\n\n"
+            "class SandboxBoundaryTests(unittest.TestCase):\n"
+            "    def test_host_and_environment_boundary(self) -> None:\n"
+            "        self.assertFalse(HOST_SENTINEL.exists())\n"
+            "        self.assertLessEqual(set(os.environ), ALLOWED_ENVIRONMENT_NAMES)\n"
+            "        self.assertFalse(any(\n"
+            "            part in name.lower()\n"
+            "            for name in os.environ\n"
+            "            for part in SENSITIVE_NAME_PARTS\n"
+            "        ))\n"
+            f"        print({BOOTSTRAP_SANDBOX_PROBE_MARKER!r})\n\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        self._run(["git", "init", "--template=", "--initial-branch=main"], cwd=target)
+        self._run(
+            [
+                "git",
+                "add",
+                "--",
+                "pyproject.toml",
+                "src/canary_calc/__init__.py",
+                "src/canary_calc/core.py",
+                "tests/test_core.py",
+                "tests/test_sandbox_boundary.py",
+            ],
+            cwd=target,
+        )
+        self._run(
+            [
+                "git",
+                "commit",
+                "--no-gpg-sign",
+                "--no-verify",
+                "--no-status",
+                "-m",
+                "bootstrap canary baseline",
             ],
             cwd=target,
         )

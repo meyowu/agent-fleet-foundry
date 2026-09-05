@@ -115,7 +115,9 @@ def test_bootstrap_rejects_profile_secret_before_any_fleet_write(
     container = build_container(state_root, migrate=False)
 
     with pytest.raises(FleetError) as captured:
-        container.projects.initialize(repository, runtime_name="fake", sandbox_name="fake")
+        container.projects._initialize_without_canary(
+            repository, runtime_name="fake", sandbox_name="fake"
+        )
 
     assert captured.value.code is ErrorCode.COMMAND_DENIED
     assert sentinel not in str(captured.value)
@@ -137,9 +139,10 @@ def test_project_init_rejects_nonexact_fake_sandbox_before_state_write(
         supports_resource_limits=True,
         supports_recovery=True,
     )
+    container.projects.sandboxes = None
 
     with pytest.raises(FleetError) as captured:
-        container.projects.initialize(
+        container.projects._initialize_without_canary(
             tmp_path / "uninspected-repository",
             runtime_name="fake",
             sandbox_name="fake",
@@ -169,7 +172,9 @@ def test_bootstrap_rejects_secret_from_existing_config_diff(
         if operation == "preview":
             container.projects.preview(repository)
         else:
-            container.projects.initialize(repository, runtime_name="fake", sandbox_name="fake")
+            container.projects._initialize_without_canary(
+                repository, runtime_name="fake", sandbox_name="fake"
+            )
 
     assert captured.value.code is ErrorCode.COMMAND_DENIED
     assert sentinel not in str(captured.value)
@@ -195,7 +200,9 @@ def test_bootstrap_rejects_secret_in_canonical_repository_root_before_write(
     container = build_container(state_root, migrate=False)
 
     with pytest.raises(FleetError) as captured:
-        container.projects.initialize(safe_alias, runtime_name="fake", sandbox_name="fake")
+        container.projects._initialize_without_canary(
+            safe_alias, runtime_name="fake", sandbox_name="fake"
+        )
 
     assert captured.value.code is ErrorCode.COMMAND_DENIED
     assert sentinel not in str(captured.value)
@@ -217,7 +224,9 @@ def test_bootstrap_rejects_secret_in_raw_path_before_repository_inspection(
         if operation == "preview":
             container.projects.preview(secret_path)
         else:
-            container.projects.initialize(secret_path, runtime_name="fake", sandbox_name="fake")
+            container.projects._initialize_without_canary(
+                secret_path, runtime_name="fake", sandbox_name="fake"
+            )
 
     assert captured.value.code is ErrorCode.COMMAND_DENIED
     assert sentinel not in str(captured.value)
@@ -234,7 +243,7 @@ def test_project_init_rejects_secret_in_adapter_option_without_echo_or_write(
     container.projects.redactor = Redactor([sentinel])
 
     with pytest.raises(FleetError) as captured:
-        container.projects.initialize(
+        container.projects._initialize_without_canary(
             tmp_path,
             runtime_name=sentinel if field == "runtime" else "fake",
             sandbox_name=sentinel if field == "sandbox" else "fake",
@@ -255,7 +264,9 @@ def test_bootstrap_rejects_mismatched_profile_hash_before_write(tmp_path: Path) 
     container.projects.profiler = MismatchedProfileHashProfiler()
 
     with pytest.raises(FleetError) as captured:
-        container.projects.initialize(repository, runtime_name="fake", sandbox_name="fake")
+        container.projects._initialize_without_canary(
+            repository, runtime_name="fake", sandbox_name="fake"
+        )
 
     assert captured.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
     assert not (repository / ".fleet").exists()
@@ -316,7 +327,9 @@ async def test_runtime_scope_secret_is_rejected_before_task_persistence(
     )
     state_root = tmp_path / "fleet-state"
     container = build_container(state_root)
-    container.projects.initialize(repository, runtime_name="fake", sandbox_name="fake")
+    container.projects._initialize_without_canary(
+        repository, runtime_name="fake", sandbox_name="fake"
+    )
     container.workflow.runtimes = RuntimeRegistry({"fake": SecretScopeRuntime(sentinel)})
 
     with pytest.raises(FleetError) as captured:
@@ -349,7 +362,9 @@ async def test_gateway_rejects_secret_before_intent_or_event_persistence(
     )
     state_root = tmp_path / "fleet-state"
     container = build_container(state_root)
-    container.projects.initialize(repository, runtime_name="fake", sandbox_name="fake")
+    container.projects._initialize_without_canary(
+        repository, runtime_name="fake", sandbox_name="fake"
+    )
     run = await container.workflow.start(
         project_path=repository,
         goal="safe goal",

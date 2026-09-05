@@ -16,6 +16,10 @@ from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.resources import ResourceService
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.application.runtime_tools import GatewayRuntimeToolCatalog
+from agent_fleet.application.sandboxes import (
+    configuration_from_request,
+    requirements_for_configuration,
+)
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec
 from agent_fleet.domain.errors import (
     ApprovalDeniedError,
@@ -23,7 +27,11 @@ from agent_fleet.domain.errors import (
     ErrorCode,
     FleetError,
 )
-from agent_fleet.domain.evidence import EvidenceBundle
+from agent_fleet.domain.evidence import (
+    CleanupLeaseRecord,
+    EvidenceBundle,
+    ResourceCleanupReceipt,
+)
 from agent_fleet.domain.fleet_plan import FleetStrategy
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
@@ -33,16 +41,19 @@ from agent_fleet.domain.models import (
     AgentRole,
     AgentStatus,
     ArtifactKind,
+    CommandSpec,
     FakeScenario,
     FleetEvent,
     ImplementationReport,
+    LeaseKind,
+    LeaseStatus,
     Run,
     RunStatus,
     RuntimeCapability,
     RuntimeConfiguration,
     RuntimeCredentialCheck,
     RuntimeToolExecutionRecord,
-    SandboxCapabilities,
+    SandboxSecurityLevel,
     SandboxSpec,
     ScopeDecision,
     TaskSpec,
@@ -110,10 +121,11 @@ class WorkflowEngine:
         project_path: Path,
         goal: str,
         runtime_name: str | None,
-        sandbox_name: str,
+        sandbox_name: str | None,
         fake_scenario: FakeScenario | None,
         provider_model: str | None = None,
         credential_ref: str | None = None,
+        allow_unsafe_local: bool = False,
     ) -> Run:
         self._reject_untrusted_secrets(
             {
@@ -123,12 +135,6 @@ class WorkflowEngine:
                 "provider_model": provider_model,
             }
         )
-        if sandbox_name != "fake" or self.sandbox.capabilities != SandboxCapabilities.phase1_fake():
-            raise FleetError(
-                ErrorCode.SANDBOX_UNAVAILABLE,
-                "Only the non-isolating fake sandbox is available in Phase 2.",
-                "Use `--sandbox fake`; Docker execution begins in Phase 3.",
-            )
         info = self.repository.inspect(project_path)
         self._reject_untrusted_secrets(info.model_dump(mode="json"))
         project = self.state.get_project_by_root(info.root)
@@ -144,6 +150,40 @@ class WorkflowEngine:
                 ErrorCode.PROJECT_NOT_GIT,
                 "The repository identity no longer matches its registration.",
                 "Use the original repository or a fresh Fleet state directory.",
+            )
+        selected_sandbox_name = project.sandbox_name if sandbox_name is None else sandbox_name
+        if selected_sandbox_name != project.sandbox_name:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "Run-time sandbox differs from the reviewed project registration.",
+                "Use the registered sandbox or explicitly reinitialize the project.",
+                details={
+                    "requested_sandbox": selected_sandbox_name,
+                    "registered_sandbox": project.sandbox_name,
+                },
+            )
+        if project.sandbox_name == "local-unsafe" and not allow_unsafe_local:
+            raise FleetError(
+                ErrorCode.UNSAFE_LOCAL_CONFIRMATION_REQUIRED,
+                "This run would execute reviewed commands directly on the host.",
+                "Pass --allow-unsafe-local explicitly for this run; --yes is not sufficient.",
+            )
+        if project.sandbox_configuration is None:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "Project sandbox configuration is missing.",
+                "Reinitialize the project with an explicit sandbox selection.",
+            )
+        sandbox_requirements = requirements_for_configuration(project.sandbox_configuration)
+        sandbox_provider = self.resources.sandboxes.require(
+            project.sandbox_configuration,
+            sandbox_requirements,
+        )
+        if sandbox_name == "fake" and self.sandbox.capabilities != sandbox_provider.capabilities:
+            raise FleetError(
+                ErrorCode.SANDBOX_UNAVAILABLE,
+                "The selected fake sandbox reported an unexpected capability descriptor.",
+                "Use the built-in non-executing FakeSandbox for compatibility runs.",
             )
         if info.dirty_paths and not (
             all(path == ".fleet" or path.startswith(".fleet/") for path in info.dirty_paths)
@@ -196,6 +236,7 @@ class WorkflowEngine:
         if (
             spec.spec.runtime.adapter != selected_runtime
             or spec.spec.runtime.provider_model != selected_provider_model
+            or configuration_from_request(spec.spec.sandbox) != project.sandbox_configuration
         ):
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
@@ -208,6 +249,20 @@ class WorkflowEngine:
             required_capabilities=spec.spec.runtime.required_capabilities,
             credential_check=RuntimeCredentialCheck.NONE,
         )
+        sandbox_preflight = await self.resources.sandboxes.preflight(
+            project.sandbox_configuration,
+            sandbox_requirements,
+        )
+        if (
+            sandbox_preflight.image_identity != project.sandbox_image_identity
+            or sandbox_preflight.daemon_identity != project.sandbox_daemon_identity
+        ):
+            raise FleetError(
+                ErrorCode.SANDBOX_IMAGE_UNAVAILABLE,
+                "The configured Docker image or daemon no longer matches the reviewed project.",
+                "Restore the reviewed local Docker boundary or run a fresh verified bootstrap.",
+                details={"sandbox": project.sandbox_name},
+            )
         if selected_runtime != "fake" and fake_scenario is not None:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
@@ -227,6 +282,13 @@ class WorkflowEngine:
             runtime_name=runtime_configuration.runtime_name,
             provider_model=runtime_configuration.provider_model,
             credential_ref=runtime_configuration.credential_ref,
+            sandbox_name=project.sandbox_name,
+            sandbox_configuration=project.sandbox_configuration,
+            sandbox_requirements=sandbox_requirements,
+            sandbox_capabilities_snapshot=sandbox_preflight.capabilities,
+            sandbox_image_identity=sandbox_preflight.image_identity,
+            sandbox_daemon_identity=sandbox_preflight.daemon_identity,
+            unsafe_local_confirmed=allow_unsafe_local,
             fake_scenario=selected_fake_scenario,
             max_repair_iterations=spec.spec.workflows["code-change"].max_repair_iterations,
             created_at=now,
@@ -434,6 +496,18 @@ class WorkflowEngine:
             ),
         )
         decision = cast(ScopeDecision, result.output)
+        verification_profile = self.config.verification_profile(fleet_spec, config_snapshot)
+        verification_commands = [
+            CommandSpec(
+                command_id=command_id,
+                executable=command.executable,
+                argv=tuple(command.argv),
+                logical_cwd=command.cwd,
+                timeout_seconds=command.timeout_seconds,
+                network_requirement="required" if command.network_required else "none",
+            )
+            for command_id, command in sorted(verification_profile.commands.items())
+        ]
         task = TaskSpec(
             task_id=task_id,
             run_id=run.run_id,
@@ -448,6 +522,12 @@ class WorkflowEngine:
             required_evidence=decision.required_evidence,
             max_repair_iterations=run.max_repair_iterations,
             config_snapshot_hash=config_hash,
+            verification_commands=verification_commands,
+            required_verification_command_ids=(
+                verification_profile.required_for_code_change
+                if decision.change_kind == "code_change"
+                else []
+            ),
             created_at=self.clock.now(),
         )
         strategy = FleetStrategy(decision.fleet_strategy)
@@ -535,11 +615,21 @@ class WorkflowEngine:
             WorkspaceKind.CANDIDATE,
         )
         self.resources.lease_workspace(candidate)
-        handle = await self.sandbox.create(
+        if run.sandbox_configuration is None or run.sandbox_requirements is None:
+            raise RuntimeError("Run sandbox binding was not materialized")
+        await self.resources.create_sandbox(
             run.run_id,
-            SandboxSpec(workspace_host_path=candidate.path, environment={}),
+            SandboxSpec(
+                workspace_host_path=candidate.path,
+                project_id=run.project_id,
+                configuration=run.sandbox_configuration,
+                requirements=run.sandbox_requirements,
+                environment={},
+                unsafe_local_confirmed=run.unsafe_local_confirmed,
+                image_identity=run.sandbox_image_identity,
+                daemon_identity=run.sandbox_daemon_identity,
+            ),
         )
-        self.resources.lease_sandbox(handle)
 
     async def _continue(self, run: Run) -> Run:
         while True:
@@ -591,6 +681,14 @@ class WorkflowEngine:
                 run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
                 continue
             if run.stage is WorkflowStage.PRESENTING:
+                await self.resources.cleanup_run(run)
+                if self.state.outstanding_leases(run.run_id):
+                    raise FleetError(
+                        ErrorCode.SANDBOX_CLEANUP_FAILED,
+                        "Run resources remain after final cleanup.",
+                        "Run Fleet recovery before trusting or publishing this result.",
+                    )
+                run = self._persist_cleanup_receipt(run)
                 run, bundle = self._persist_evidence(run)
                 if bundle.completion_decision is None:
                     raise RuntimeError("EvidenceBundle has no completion decision")
@@ -600,6 +698,20 @@ class WorkflowEngine:
                     if run.fleet_strategy == FleetStrategy.DIRECT.value
                     else RunStatus.READY_FOR_REVIEW
                 )
+                sandbox_capabilities = run.sandbox_capabilities_snapshot
+                sandbox_security_level = (
+                    sandbox_capabilities.security_level.value
+                    if sandbox_capabilities is not None
+                    else "unknown"
+                )
+                sandbox_notes = ""
+                if sandbox_capabilities is None or not sandbox_capabilities.executes_code:
+                    sandbox_notes += "proof_gap=Configured sandbox did not execute project code.\n"
+                if (
+                    sandbox_capabilities is not None
+                    and sandbox_capabilities.security_level is SandboxSecurityLevel.UNSAFE_HOST
+                ):
+                    sandbox_notes += "remaining_risk=Execution occurred on the unsafe host.\n"
                 self.artifacts.create_text(
                     kind=ArtifactKind.RUN_SUMMARY,
                     project_id=run.project_id,
@@ -615,11 +727,11 @@ class WorkflowEngine:
                         f"verified_complete={str(run.verified_complete).lower()}\n"
                         f"runtime={run.runtime_name}\n"
                         f"provider_model={run.provider_model or 'none'}\n"
-                        "sandbox=fake\nsecurity_level=fake\n"
-                        "proof_gap=FakeSandbox did not execute project code.\n"
+                        f"sandbox={run.sandbox_name}\n"
+                        f"security_level={sandbox_security_level}\n"
+                        f"{sandbox_notes}"
                     ),
                 )
-                await self.resources.cleanup_run(run)
                 ready = run.model_copy(
                     update={"status": operational_status, "updated_at": self.clock.now()}
                 )
@@ -779,10 +891,26 @@ class WorkflowEngine:
         workspace_lease = self.resources.lease_workspace(workspace)
         self.repository.apply_patch_to_workspace(workspace, patch)
         before = self.repository.workspace_status_fingerprint(workspace)
-        handle = await self.sandbox.create(
-            run.run_id, SandboxSpec(workspace_host_path=workspace.path, environment={})
+        if run.sandbox_configuration is None or run.sandbox_requirements is None:
+            raise RuntimeError("Run sandbox binding was not materialized")
+        handle = await self.resources.create_sandbox(
+            run.run_id,
+            SandboxSpec(
+                workspace_host_path=workspace.path,
+                project_id=run.project_id,
+                configuration=run.sandbox_configuration,
+                requirements=run.sandbox_requirements,
+                environment={},
+                unsafe_local_confirmed=run.unsafe_local_confirmed,
+                image_identity=run.sandbox_image_identity,
+                daemon_identity=run.sandbox_daemon_identity,
+            ),
         )
-        sandbox_lease = self.resources.lease_sandbox(handle)
+        sandbox_lease = next(
+            lease
+            for lease in self.state.active_leases(run.run_id)
+            if lease.kind is LeaseKind.SANDBOX and lease.resource_id == handle.sandbox_id
+        )
         agent = AgentInstance(
             agent_instance_id=self.ids.new(IdPrefix.AGENT),
             run_id=run.run_id,
@@ -868,6 +996,11 @@ class WorkflowEngine:
             content=bound_verdict.model_dump_json(indent=2),
             mime_type="application/json",
         )
+        # An independently verified result is not authoritative until both fresh
+        # verifier resources have been proved absent.  Keep the artifacts unbound
+        # if cleanup fails so the completion gate cannot claim success.
+        await self.resources.cleanup_lease(run, sandbox_lease)
+        await self.resources.cleanup_lease(run, workspace_lease)
         latest = self.state.get_run(run.run_id)
         updated = latest.model_copy(
             update={
@@ -887,11 +1020,13 @@ class WorkflowEngine:
                 "verdict": bound_verdict.verdict.value,
                 "verdict_artifact_id": verdict_artifact.artifact_id,
                 "verification_workspace_mutated": mutated,
-                "security_level": self.sandbox.capabilities.security_level.value,
+                "security_level": (
+                    run.sandbox_capabilities_snapshot.security_level.value
+                    if run.sandbox_capabilities_snapshot is not None
+                    else "unknown"
+                ),
             },
         )
-        await self.resources.cleanup_lease(updated, sandbox_lease)
-        await self.resources.cleanup_lease(updated, workspace_lease)
         return bound_verdict
 
     async def _invoke_runtime_agent(
@@ -961,9 +1096,16 @@ class WorkflowEngine:
 
     @staticmethod
     def _runtime_input(run: Run, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        capabilities = run.sandbox_capabilities_snapshot
+        enriched: dict[str, JsonValue] = {
+            **value,
+            "sandbox_capabilities": (
+                capabilities.model_dump(mode="json") if capabilities is not None else None
+            ),
+        }
         if run.runtime_name == "fake":
-            return {**value, "fake_scenario": run.fake_scenario.value}
-        return value
+            enriched["fake_scenario"] = run.fake_scenario.value
+        return enriched
 
     @staticmethod
     def _runtime_configuration(run: Run) -> RuntimeConfiguration:
@@ -1179,6 +1321,61 @@ class WorkflowEngine:
             },
         )
         return updated, bundle
+
+    def _persist_cleanup_receipt(self, run: Run) -> Run:
+        current = self.state.get_run(run.run_id)
+        if current.cleanup_receipt_artifact_id is not None:
+            return current
+        if current.task_id is None:
+            raise RuntimeError("cleanup receipt run has no task")
+        leases = list(self.state.list_leases(current.run_id))
+        if any(
+            lease.status not in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED} for lease in leases
+        ):
+            raise FleetError(
+                ErrorCode.SANDBOX_CLEANUP_FAILED,
+                "A run lease is not terminal after cleanup.",
+                "Run Fleet recovery before trusting or publishing this result.",
+            )
+        receipt = ResourceCleanupReceipt(
+            run_id=current.run_id,
+            leases=[
+                CleanupLeaseRecord(
+                    lease_id=lease.lease_id,
+                    kind=lease.kind,
+                    resource_id=lease.resource_id,
+                    status=lease.status,
+                )
+                for lease in leases
+            ],
+            complete=True,
+            completed_at=self.clock.now(),
+        )
+        artifact = self.artifacts.create_text(
+            kind=ArtifactKind.RESOURCE_CLEANUP,
+            project_id=current.project_id,
+            run_id=current.run_id,
+            task_id=current.task_id,
+            producer="resource-service",
+            content=receipt.model_dump_json(indent=2),
+            mime_type="application/json",
+        )
+        updated = current.model_copy(
+            update={
+                "cleanup_receipt_artifact_id": artifact.artifact_id,
+                "cleanup_receipt_sha256": artifact.sha256,
+                "updated_at": self.clock.now(),
+            }
+        )
+        self.state.save_run(
+            updated,
+            "resources.cleanup_recorded",
+            {
+                "cleanup_receipt_artifact_id": artifact.artifact_id,
+                "lease_count": len(leases),
+            },
+        )
+        return updated
 
     def _persist_failure_evidence(self, run: Run, error: FleetError) -> Run:
         if (

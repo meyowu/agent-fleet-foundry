@@ -77,7 +77,13 @@ async def test_offline_pydantic_ai_roles_cross_gateway_and_preserve_fake_proof_g
         if output_name == "submit_implementation_report":
             if request_number == 1:
                 assert {tool.name for tool in info.function_tools} == {
+                    "repo_list_files",
+                    "repo_read_file",
+                    "repo_search_text",
+                    "workspace_get_diff",
                     "workspace_write_file",
+                    "workspace_apply_edit",
+                    "workspace_delete_file",
                     "run_verification",
                 }
                 return ModelResponse(
@@ -93,7 +99,10 @@ async def test_offline_pydantic_ai_roles_cross_gateway_and_preserve_fake_proof_g
                         ),
                         ToolCallPart(
                             "run_verification",
-                            {"reason": "Record the declared verification evidence."},
+                            {
+                                "command_id": "python-test",
+                                "reason": "Record the declared verification evidence.",
+                            },
                             tool_call_id="engineer-check",
                         ),
                     ]
@@ -120,12 +129,21 @@ async def test_offline_pydantic_ai_roles_cross_gateway_and_preserve_fake_proof_g
 
         assert output_name == "submit_verifier_verdict"
         if request_number == 1:
-            assert [tool.name for tool in info.function_tools] == ["run_verification"]
+            assert [tool.name for tool in info.function_tools] == [
+                "repo_list_files",
+                "repo_read_file",
+                "repo_search_text",
+                "workspace_get_diff",
+                "run_verification",
+            ]
             return ModelResponse(
                 parts=[
                     ToolCallPart(
                         "run_verification",
-                        {"reason": "Record independent simulated verifier evidence."},
+                        {
+                            "command_id": "python-test",
+                            "reason": "Record independent simulated verifier evidence.",
+                        },
                         tool_call_id="verifier-check",
                     )
                 ]
@@ -157,7 +175,7 @@ async def test_offline_pydantic_ai_roles_cross_gateway_and_preserve_fake_proof_g
     container.projects.runtime_registry = registry
     container.workflow.runtimes = registry
     container.doctor.runtime_registry = registry
-    container.projects.initialize(
+    container.projects._initialize_without_canary(
         repository,
         runtime_name="pydantic-ai",
         provider_model="openai:offline-test",

@@ -1,0 +1,87 @@
+{
+  "$defs": {
+    "WorkflowStage": {
+      "enum": [
+        "intake",
+        "scoping",
+        "workspace_preparation",
+        "implementing",
+        "verifying",
+        "repairing",
+        "presenting",
+        "applying",
+        "cleanup"
+      ],
+      "title": "WorkflowStage",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "agent_instance_id": {
+      "pattern": "^agent_[0-9a-f]{32}$",
+      "title": "Agent Instance Id",
+      "type": "string"
+    },
+    "creation_dispatched": {
+      "title": "Creation Dispatched",
+      "type": "boolean"
+    },
+    "execution_id": {
+      "pattern": "^exec_[0-9a-f]{32}$",
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "intent_id": {
+      "pattern": "^intent_[0-9a-f]{32}$",
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "provider": {
+      "enum": [
+        "fake",
+        "docker",
+        "local-unsafe"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "sandbox_id": {
+      "pattern": "^sandbox_[0-9a-f]{32}$",
+      "title": "Sandbox Id",
+      "type": "string"
+    },
+    "stage": {
+      "$ref": "#/$defs/WorkflowStage"
+    },
+    "task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Task Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "execution_id",
+    "sandbox_id",
+    "run_id",
+    "project_id",
+    "provider",
+    "intent_id",
+    "task_id",
+    "agent_instance_id",
+    "stage",
+    "creation_dispatched"
+  ],
+  "title": "SandboxExecutionRecoveryRequest",
+  "type": "object"
+}

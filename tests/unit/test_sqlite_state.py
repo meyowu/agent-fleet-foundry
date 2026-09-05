@@ -12,8 +12,19 @@ from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION, Sq
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
-from agent_fleet.domain.models import Project, Run, RunStatus, WorkflowStage
-from agent_fleet.domain.security import Redactor, status_fingerprint
+from agent_fleet.domain.models import (
+    LeaseKind,
+    LeaseStatus,
+    Project,
+    ResourceLease,
+    Run,
+    RunStatus,
+    SandboxCapabilities,
+    SandboxHandle,
+    SandboxSecurityLevel,
+    WorkflowStage,
+)
+from agent_fleet.domain.security import Redactor, canonical_json_hash, status_fingerprint
 
 
 def test_empty_migration_is_idempotent_and_reopens(tmp_path: Path) -> None:
@@ -26,7 +37,7 @@ def test_empty_migration_is_idempotent_and_reopens(tmp_path: Path) -> None:
         assert connection.execute("PRAGMA user_version").fetchone() == (0,)
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,)]
+        ).fetchall() == [(1,), (2,), (3,)]
 
 
 def test_v1_migration_preserves_agents_and_allows_only_unbound_cos(tmp_path: Path) -> None:
@@ -163,3 +174,165 @@ def test_foreign_keys_are_enabled(harness: FleetHarness) -> None:
             "INSERT INTO runs(run_id, project_id, status, stage, data_json) VALUES (?, ?, ?, ?, ?)",
             ("run_00000000000000000000000000000099", "missing", "created", None, "{}"),
         )
+
+
+def test_terminal_lease_finalization_is_exactly_idempotent_and_hash_audited(
+    harness: FleetHarness,
+) -> None:
+    project = harness.container.state.get_project_by_root(str(harness.repository_root.resolve()))
+    assert project is not None
+    now = datetime.now(UTC)
+    run = Run(
+        run_id=harness.container.state.ids.new(IdPrefix.RUN),
+        project_id=project.project_id,
+        correlation_id=harness.container.state.ids.new(IdPrefix.CORRELATION),
+        goal="terminal lease transaction",
+        base_revision=harness.git("rev-parse", "HEAD").strip(),
+        target_status_fingerprint=status_fingerprint(""),
+        created_at=now,
+        updated_at=now,
+    )
+    harness.container.state.create_run(run)
+    lease = ResourceLease(
+        lease_id=harness.container.state.ids.new(IdPrefix.LEASE),
+        run_id=run.run_id,
+        kind=LeaseKind.EXECUTION,
+        resource_id=harness.container.state.ids.new(IdPrefix.EXECUTION),
+        status=LeaseStatus.ACTIVE,
+        created_at=now,
+        updated_at=now,
+        metadata={"phase": "active"},
+    )
+    harness.container.state.save_lease(lease)
+    terminal_metadata = {
+        "schema_version": 3,
+        "terminal_result": {"exit_code": 0, "timed_out": False},
+    }
+
+    finalized = harness.container.state.finalize_lease(
+        lease.lease_id,
+        LeaseStatus.RELEASED.value,
+        terminal_metadata,
+    )
+    event_count = len(harness.container.state.list_events(run.run_id))
+    repeated = harness.container.state.finalize_lease(
+        lease.lease_id,
+        LeaseStatus.RELEASED.value,
+        terminal_metadata,
+    )
+
+    assert finalized == repeated
+    assert repeated.status is LeaseStatus.RELEASED
+    assert repeated.metadata == terminal_metadata
+    assert len(harness.container.state.list_events(run.run_id)) == event_count
+    assert repeated not in harness.container.state.outstanding_leases(run.run_id)
+    terminal_events = [
+        event
+        for event in harness.container.state.list_events(run.run_id)
+        if event.event_type == "sandbox.exec_finished"
+    ]
+    assert len(terminal_events) == 1
+    assert terminal_events[0].payload["terminal_metadata_sha256"] == canonical_json_hash(
+        terminal_metadata
+    )
+
+    with pytest.raises(FleetError) as captured:
+        harness.container.state.finalize_lease(
+            lease.lease_id,
+            LeaseStatus.RELEASED.value,
+            {**terminal_metadata, "terminal_result": {"exit_code": 1, "timed_out": False}},
+        )
+
+    assert captured.value.code is ErrorCode.RECOVERY_REQUIRED
+    assert harness.container.state.get_lease(lease.lease_id) == finalized
+
+
+def test_execution_dispatch_checkpoint_is_atomic_one_way_and_identity_bound(
+    harness: FleetHarness,
+) -> None:
+    state = harness.container.state
+    project = state.get_project_by_root(str(harness.repository_root.resolve()))
+    assert project is not None
+    now = datetime.now(UTC)
+    run = Run(
+        run_id=state.ids.new(IdPrefix.RUN),
+        project_id=project.project_id,
+        correlation_id=state.ids.new(IdPrefix.CORRELATION),
+        goal="dispatch checkpoint",
+        base_revision=harness.git("rev-parse", "HEAD").strip(),
+        target_status_fingerprint=status_fingerprint(""),
+        created_at=now,
+        updated_at=now,
+    )
+    state.create_run(run)
+    capabilities = SandboxCapabilities(
+        provider="docker",
+        security_level=SandboxSecurityLevel.ISOLATED,
+        isolation_enforced=True,
+        executes_code=True,
+        supported_network_modes=("none",),
+        supports_resource_limits=True,
+        supports_recovery=True,
+        supports_non_root=True,
+        supports_read_only_root=True,
+        supports_no_new_privileges=True,
+        supports_capability_drop=True,
+    )
+    sandbox = SandboxHandle(
+        sandbox_id=state.ids.new(IdPrefix.SANDBOX),
+        run_id=run.run_id,
+        project_id=project.project_id,
+        workspace_host_path=str(harness.repository_root),
+        provider="docker",
+        capabilities=capabilities,
+        configuration_hash="a" * 64,
+        image_identity="sha256:" + "b" * 64,
+        daemon_identity="c" * 64,
+        recovery_scope_id="d" * 32,
+    )
+    lease = ResourceLease(
+        lease_id=state.ids.new(IdPrefix.LEASE),
+        run_id=run.run_id,
+        kind=LeaseKind.EXECUTION,
+        resource_id=state.ids.new(IdPrefix.EXECUTION),
+        status=LeaseStatus.CREATING,
+        created_at=now,
+        updated_at=now,
+        metadata={
+            "schema_version": 2,
+            "provider": "docker",
+            "intent_id": state.ids.new(IdPrefix.INTENT),
+            "project_id": project.project_id,
+            "task_id": state.ids.new(IdPrefix.TASK),
+            "agent_instance_id": state.ids.new(IdPrefix.AGENT),
+            "stage": WorkflowStage.VERIFYING.value,
+            "creation_dispatched": False,
+            "sandbox_handle": sandbox.model_dump(mode="json"),
+        },
+    )
+    state.save_lease(lease)
+
+    dispatched = state.mark_execution_creation_dispatched(lease.lease_id)
+
+    assert dispatched.status is LeaseStatus.CREATING
+    assert dispatched.metadata["creation_dispatched"] is True
+    assert state.get_lease(lease.lease_id) == dispatched
+    dispatch_events = [
+        event
+        for event in state.list_events(run.run_id)
+        if event.event_type == "sandbox.exec_dispatch_recorded"
+    ]
+    assert len(dispatch_events) == 1
+    with pytest.raises(FleetError) as captured:
+        state.mark_execution_creation_dispatched(lease.lease_id)
+    assert captured.value.code is ErrorCode.RECOVERY_REQUIRED
+    assert (
+        len(
+            [
+                event
+                for event in state.list_events(run.run_id)
+                if event.event_type == "sandbox.exec_dispatch_recorded"
+            ]
+        )
+        == 1
+    )

@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cpu_limit": {
+      "default": 1.0,
+      "maximum": 16,
+      "minimum": 0.001,
+      "multipleOf": 0.001,
+      "title": "Cpu Limit",
+      "type": "number"
+    },
+    "image": {
+      "anyOf": [
+        {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image"
+    },
+    "memory_mb": {
+      "default": 512,
+      "maximum": 32768,
+      "minimum": 64,
+      "title": "Memory Mb",
+      "type": "integer"
+    },
+    "network_mode": {
+      "default": "none",
+      "enum": [
+        "none",
+        "approved-unrestricted"
+      ],
+      "title": "Network Mode",
+      "type": "string"
+    },
+    "pids_limit": {
+      "default": 128,
+      "maximum": 4096,
+      "minimum": 16,
+      "title": "Pids Limit",
+      "type": "integer"
+    },
+    "provider": {
+      "default": "fake",
+      "enum": [
+        "fake",
+        "docker",
+        "local-unsafe"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "shm_mb": {
+      "default": 64,
+      "maximum": 1024,
+      "minimum": 16,
+      "title": "Shm Mb",
+      "type": "integer"
+    },
+    "tmpfs_mb": {
+      "default": 128,
+      "maximum": 4096,
+      "minimum": 16,
+      "title": "Tmpfs Mb",
+      "type": "integer"
+    }
+  },
+  "title": "SandboxConfiguration",
+  "type": "object"
+}

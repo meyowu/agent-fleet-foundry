@@ -185,7 +185,8 @@ def test_bootstrap_rejects_registered_secret_with_stable_error(
     service.redactor.register_secret(secret_path)
 
     with pytest.raises(FleetError) as captured:
-        getattr(service, operation)(repository_root)
+        method = service.preview if operation == "preview" else service._initialize_without_canary
+        method(repository_root)
 
     assert captured.value.code is ErrorCode.COMMAND_DENIED
     assert secret_path not in str(captured.value)
@@ -205,7 +206,7 @@ def test_initialize_preflight_failure_precedes_all_repository_and_state_access(
     service = _preflight_only_service(tmp_path, registry)
 
     with pytest.raises(FleetError) as captured:
-        service.initialize(
+        service._initialize_without_canary(
             tmp_path / "does-not-exist",
             runtime_name="pydantic-ai",
             provider_model="openai:gpt-5-mini",
@@ -231,7 +232,7 @@ def test_initialize_persists_selection_only_on_project_and_omits_reference_elsew
     registry = RecordingRuntimeRegistry()
     service, state, repository_root = _real_service(tmp_path, registry)
 
-    result = service.initialize(
+    result = service._initialize_without_canary(
         repository_root,
         runtime_name="pydantic-ai",
         provider_model="openai:gpt-5-mini",
@@ -285,13 +286,13 @@ def test_fake_to_provider_reinitialization_fails_before_state_or_artifact_mutati
 ) -> None:
     registry = RecordingRuntimeRegistry()
     service, state, repository_root = _real_service(tmp_path, registry)
-    service.initialize(repository_root)
+    service._initialize_without_canary(repository_root)
     before_project = state.get_project_by_root(str(repository_root.resolve()))
     before_files = _fleet_contents(repository_root)
     before_counts = _state_counts(service.state_root)
 
     with pytest.raises(FleetError) as captured:
-        service.initialize(
+        service._initialize_without_canary(
             repository_root,
             runtime_name="pydantic-ai",
             provider_model="openai:gpt-5-mini",
@@ -308,7 +309,7 @@ def test_fake_to_provider_reinitialization_fails_before_state_or_artifact_mutati
 def test_provider_model_reinitialization_fails_without_split_brain(tmp_path: Path) -> None:
     registry = RecordingRuntimeRegistry()
     service, state, repository_root = _real_service(tmp_path, registry)
-    service.initialize(
+    service._initialize_without_canary(
         repository_root,
         runtime_name="pydantic-ai",
         provider_model="openai:model-a",
@@ -319,7 +320,7 @@ def test_provider_model_reinitialization_fails_without_split_brain(tmp_path: Pat
     before_counts = _state_counts(service.state_root)
 
     with pytest.raises(FleetError) as captured:
-        service.initialize(
+        service._initialize_without_canary(
             repository_root,
             runtime_name="pydantic-ai",
             provider_model="openai:model-b",
@@ -337,7 +338,7 @@ def test_preview_rejects_symlink_swapped_in_at_open_without_reading_outside(
 ) -> None:
     registry = RecordingRuntimeRegistry()
     service, _state, repository_root = _real_service(tmp_path, registry)
-    service.initialize(repository_root)
+    service._initialize_without_canary(repository_root)
     destination = repository_root / ".fleet" / "README.md"
     outside_sentinel = "outside-preview-sentinel-must-not-be-read"
     outside = tmp_path / "outside-preview.md"
@@ -376,7 +377,7 @@ def test_preview_rejects_baseline_that_grows_beyond_limit_after_fstat(
 ) -> None:
     registry = RecordingRuntimeRegistry()
     service, _state, repository_root = _real_service(tmp_path, registry)
-    service.initialize(repository_root)
+    service._initialize_without_canary(repository_root)
     destination = repository_root / ".fleet" / "README.md"
     destination_stat = destination.stat()
     destination_identity = (destination_stat.st_dev, destination_stat.st_ino)
@@ -417,7 +418,7 @@ def test_preview_rejects_fifo_with_nonblocking_open(
 ) -> None:
     registry = RecordingRuntimeRegistry()
     service, _state, repository_root = _real_service(tmp_path, registry)
-    service.initialize(repository_root)
+    service._initialize_without_canary(repository_root)
     destination = repository_root / ".fleet" / "README.md"
     destination.unlink()
     os.mkfifo(destination)
@@ -454,7 +455,7 @@ def test_conflicting_fleet_tree_is_rejected_before_state_creation(tmp_path: Path
     custom.write_text("user-owned configuration\n", encoding="utf-8")
 
     with pytest.raises(FleetError) as captured:
-        service.initialize(repository_root)
+        service._initialize_without_canary(repository_root)
 
     assert captured.value.code is ErrorCode.CONFIG_INVALID
     assert custom.read_text(encoding="utf-8") == "user-owned configuration\n"
@@ -485,7 +486,7 @@ def test_preapply_bootstrap_failure_does_not_register_project_or_apply_fleet_tre
         monkeypatch.setattr(service.repository, "create_canary_fixture", fail)
 
     with pytest.raises(FleetError) as captured:
-        service.initialize(repository_root)
+        service._initialize_without_canary(repository_root)
 
     assert captured.value.code is ErrorCode.CONFIG_INVALID
     assert state.get_project_by_root(str(repository_root.resolve())) is None
@@ -508,7 +509,7 @@ def test_apply_failure_does_not_register_project_or_apply_fleet_tree(tmp_path: P
     monkeypatch.setattr(service.config, "apply", fail_apply)
     try:
         with pytest.raises(FleetError) as captured:
-            service.initialize(
+            service._initialize_without_canary(
                 repository_root,
                 runtime_name="pydantic-ai",
                 provider_model="openai:gpt-5-mini",
@@ -540,7 +541,7 @@ def test_post_apply_tampering_is_rejected_before_project_or_artifact_persistence
     monkeypatch.setattr(service.config, "apply", tampering_apply)
 
     with pytest.raises(FleetError) as captured:
-        service.initialize(repository_root)
+        service._initialize_without_canary(repository_root)
 
     assert captured.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
     assert state.get_project_by_root(str(repository_root.resolve())) is None
@@ -569,7 +570,7 @@ def test_post_apply_repository_failure_does_not_persist_a_false_project(
     monkeypatch.setattr(service.repository, "inspect", fail_second_inspection)
 
     with pytest.raises(FleetError) as captured:
-        service.initialize(repository_root)
+        service._initialize_without_canary(repository_root)
 
     assert captured.value.code is ErrorCode.PROJECT_NOT_GIT
     assert state.get_project_by_root(str(repository_root.resolve())) is None

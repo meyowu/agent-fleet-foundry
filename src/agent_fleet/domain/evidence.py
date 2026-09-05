@@ -6,23 +6,38 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from agent_fleet.domain.fleet_plan import FleetStrategy
 from agent_fleet.domain.models import (
+    ActionId,
     AgentInstanceId,
     ArtifactId,
     CriterionId,
     EvidenceRequirementId,
+    ImageIdentity,
+    LeaseId,
+    LeaseKind,
+    LeaseStatus,
     ProjectId,
+    RoleId,
     RunId,
+    SandboxCapabilities,
+    SandboxId,
+    SandboxNetworkMode,
+    SandboxProviderId,
+    SandboxRequirements,
     SandboxSecurityLevel,
     Sha256,
     StrictModel,
     TaskId,
     Verdict,
+    WorkflowStage,
+    WorkspaceId,
+    WorkspaceKind,
     _require_utc,
 )
+from agent_fleet.domain.security import canonical_json_hash
 
 
 class EvidenceStrength(StrEnum):
@@ -36,11 +51,22 @@ class CommandEvidence(StrictModel):
     run_id: RunId
     task_id: TaskId
     agent_instance_id: AgentInstanceId
+    principal_role: RoleId | None = None
+    workflow_stage: WorkflowStage | None = None
+    workspace_id: WorkspaceId | None = None
+    sandbox_id: SandboxId | None = None
+    command_id: ActionId = "legacy-verification"
+    command_spec_sha256: Sha256 | None = None
     executable: str
     argv: list[str]
     cwd: str
     sandbox_provider: str
     sandbox_security_level: SandboxSecurityLevel
+    sandbox_capabilities_sha256: Sha256 | None = None
+    sandbox_configuration_sha256: Sha256 | None = None
+    sandbox_requirements_sha256: Sha256 | None = None
+    sandbox_image_identity: ImageIdentity | None = None
+    sandbox_daemon_identity: Sha256 | None = None
     strength: EvidenceStrength
     exit_code: int
     timed_out: bool
@@ -49,6 +75,12 @@ class CommandEvidence(StrictModel):
     workspace_base_revision: str
     config_snapshot_sha256: Sha256
     candidate_patch_sha256: Sha256 | None = None
+    workspace_kind: WorkspaceKind = WorkspaceKind.CANDIDATE
+    network_mode: SandboxNetworkMode = "none"
+    workspace_mutated_during_execution: bool = False
+    execution_id: str | None = None
+    sandbox_inspection_artifact_id: ArtifactId | None = None
+    sandbox_inspection_sha256: Sha256 | None = None
     started_at: datetime
     completed_at: datetime
 
@@ -80,6 +112,36 @@ class CompletionDecision(StrictModel):
     reason_codes: list[str]
 
 
+class CleanupLeaseRecord(StrictModel):
+    lease_id: LeaseId
+    kind: LeaseKind
+    resource_id: str
+    status: LeaseStatus
+
+
+class ResourceCleanupReceipt(StrictModel):
+    api_version: Literal["agentfleet.dev/v1alpha1"] = "agentfleet.dev/v1alpha1"
+    kind: Literal["ResourceCleanupReceipt"] = "ResourceCleanupReceipt"
+    run_id: RunId
+    leases: list[CleanupLeaseRecord] = Field(max_length=1024)
+    complete: bool
+    completed_at: datetime
+
+    _completed_utc = field_validator("completed_at")(_require_utc)
+
+    @model_validator(mode="after")
+    def validate_terminal_snapshot(self) -> ResourceCleanupReceipt:
+        identifiers = [item.lease_id for item in self.leases]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("cleanup receipt lease identities must be unique")
+        all_terminal = all(
+            item.status in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED} for item in self.leases
+        )
+        if self.complete != all_terminal:
+            raise ValueError("cleanup receipt completeness does not match lease states")
+        return self
+
+
 class EvidenceBundle(StrictModel):
     api_version: Literal["agentfleet.dev/v1alpha1"] = "agentfleet.dev/v1alpha1"
     kind: Literal["EvidenceBundle"] = "EvidenceBundle"
@@ -95,6 +157,25 @@ class EvidenceBundle(StrictModel):
     fleet_plan_sha256: Sha256
     fleet_strategy: FleetStrategy
     required_evidence: list[EvidenceRequirementId] = Field(min_length=1, max_length=32)
+    sandbox_provider: SandboxProviderId = "fake"
+    sandbox_security_level: SandboxSecurityLevel = SandboxSecurityLevel.FAKE
+    sandbox_configuration_sha256: Sha256 | None = None
+    sandbox_requirements: SandboxRequirements | None = None
+    sandbox_requirements_sha256: Sha256 | None = None
+    sandbox_image_identity: ImageIdentity | None = None
+    sandbox_daemon_identity: Sha256 | None = None
+    sandbox_capabilities: SandboxCapabilities = Field(
+        default_factory=SandboxCapabilities.phase1_fake
+    )
+    sandbox_capabilities_sha256: Sha256 | None = None
+    verification_command_hashes: dict[ActionId, Sha256] = Field(
+        default_factory=dict,
+        max_length=32,
+    )
+    required_verification_command_ids: list[ActionId] = Field(
+        default_factory=list,
+        max_length=32,
+    )
     patch_artifact_id: ArtifactId | None = None
     patch_sha256: Sha256 | None = None
     changed_paths: list[str] = Field(default_factory=list)
@@ -106,6 +187,9 @@ class EvidenceBundle(StrictModel):
     reported_verdict: Verdict | None = None
     verifier_required_repairs: list[str] = Field(default_factory=list)
     verifier_regressions: list[str] = Field(default_factory=list)
+    cleanup_receipt_artifact_id: ArtifactId | None = None
+    cleanup_receipt_sha256: Sha256 | None = None
+    cleanup_complete: bool = False
     criterion_assessments: list[CriterionAssessment] = Field(min_length=1, max_length=128)
     remaining_risks: list[RemainingRisk] = Field(default_factory=list)
     proof_gaps: list[ProofGap] = Field(default_factory=list)
@@ -121,6 +205,29 @@ class EvidenceBundle(StrictModel):
     ) -> list[EvidenceRequirementId]:
         if len(values) != len(set(values)):
             raise ValueError("EvidenceBundle evidence requirements must be unique")
+        return values
+
+    @model_validator(mode="after")
+    def validate_cleanup_binding(self) -> EvidenceBundle:
+        if (self.cleanup_receipt_artifact_id is None) != (self.cleanup_receipt_sha256 is None):
+            raise ValueError("EvidenceBundle cleanup receipt ID and hash must be paired")
+        if self.cleanup_complete and self.cleanup_receipt_artifact_id is None:
+            raise ValueError("complete cleanup requires a receipt artifact")
+        if (self.sandbox_requirements is None) != (self.sandbox_requirements_sha256 is None):
+            raise ValueError("EvidenceBundle sandbox requirements and hash must be paired")
+        if (
+            self.sandbox_requirements is not None
+            and canonical_json_hash(self.sandbox_requirements.model_dump(mode="json"))
+            != self.sandbox_requirements_sha256
+        ):
+            raise ValueError("EvidenceBundle sandbox requirements hash does not match")
+        return self
+
+    @field_validator("required_verification_command_ids")
+    @classmethod
+    def validate_required_command_ids(cls, values: list[ActionId]) -> list[ActionId]:
+        if len(values) != len(set(values)):
+            raise ValueError("EvidenceBundle required verification command IDs must be unique")
         return values
 
     @field_validator("criterion_assessments")
@@ -145,6 +252,13 @@ class CompletionGate:
         authoritative_artifact_ids: set[str],
     ) -> CompletionDecision:
         reasons: list[str] = []
+        if (
+            not bundle.cleanup_complete
+            or bundle.cleanup_receipt_artifact_id is None
+            or bundle.cleanup_receipt_sha256 is None
+            or bundle.cleanup_receipt_artifact_id not in authoritative_artifact_ids
+        ):
+            reasons.append("RESOURCE_CLEANUP_UNPROVEN")
         if not expected_criteria:
             reasons.append("CRITERIA_NOT_DEFINED")
         assessments = {item.criterion_id: item for item in bundle.criterion_assessments}
@@ -155,6 +269,45 @@ class CompletionGate:
             if item.agent_instance_id == bundle.verifier_agent_instance_id
         ]
         verifier_command_artifact_ids = {item.evidence_id for item in verifier_commands}
+        computed_capabilities_hash = canonical_json_hash(
+            bundle.sandbox_capabilities.model_dump(mode="json")
+        )
+        if bundle.sandbox_requirements is None or bundle.sandbox_requirements_sha256 is None:
+            reasons.append("SANDBOX_REQUIREMENTS_BINDING_MISSING")
+        if (
+            bundle.sandbox_capabilities.provider != bundle.sandbox_provider
+            or bundle.sandbox_capabilities.security_level is not bundle.sandbox_security_level
+        ):
+            reasons.append("SANDBOX_CAPABILITY_IDENTITY_MISMATCH")
+        if (
+            bundle.sandbox_capabilities_sha256 is None
+            or bundle.sandbox_capabilities_sha256 != computed_capabilities_hash
+        ):
+            reasons.append("SANDBOX_CAPABILITY_BINDING_INVALID")
+        if (
+            bundle.sandbox_security_level is SandboxSecurityLevel.ISOLATED
+            and bundle.sandbox_configuration_sha256 is None
+        ):
+            reasons.append("SANDBOX_CONFIGURATION_BINDING_MISSING")
+        if (
+            bundle.sandbox_security_level is SandboxSecurityLevel.ISOLATED
+            and bundle.sandbox_image_identity is None
+        ):
+            reasons.append("SANDBOX_IMAGE_BINDING_MISSING")
+        if (
+            bundle.sandbox_security_level is SandboxSecurityLevel.ISOLATED
+            and bundle.sandbox_daemon_identity is None
+        ):
+            reasons.append("SANDBOX_DAEMON_BINDING_MISSING")
+        reviewed_command_ids = set(bundle.verification_command_hashes)
+        required_command_ids = set(bundle.required_verification_command_ids)
+        if not required_command_ids.issubset(reviewed_command_ids):
+            reasons.append("REQUIRED_COMMAND_PROFILE_INVALID")
+        if (
+            bundle.sandbox_security_level is SandboxSecurityLevel.ISOLATED
+            and not reviewed_command_ids
+        ):
+            reasons.append("REVIEWED_COMMAND_PROFILE_MISSING")
         if len(command_artifact_ids) != len(set(command_artifact_ids)):
             reasons.append("COMMAND_EVIDENCE_DUPLICATE")
         declared_artifact_ids = {
@@ -163,6 +316,11 @@ class CompletionGate:
             bundle.fleet_plan_artifact_id,
             *(item.evidence_id for item in bundle.command_evidence),
             *(item.transcript_artifact_id for item in bundle.command_evidence),
+            *(
+                item.sandbox_inspection_artifact_id
+                for item in bundle.command_evidence
+                if item.sandbox_inspection_artifact_id is not None
+            ),
         }
         criterion_evidence_ids = set(command_artifact_ids)
         if bundle.patch_artifact_id is not None:
@@ -263,6 +421,55 @@ class CompletionGate:
             for item in bundle.command_evidence
         ):
             reasons.append("COMMAND_EVIDENCE_IDENTITY_MISMATCH")
+        if bundle.verification_command_hashes and any(
+            (
+                item.command_id not in bundle.verification_command_hashes
+                or item.command_spec_sha256
+                != bundle.verification_command_hashes.get(item.command_id)
+            )
+            and not _is_auxiliary_approval_evidence(bundle, item)
+            for item in bundle.command_evidence
+        ):
+            reasons.append("COMMAND_SPEC_BINDING_INVALID")
+        observed_command_ids = {item.command_id for item in bundle.command_evidence}
+        if not required_command_ids.issubset(observed_command_ids):
+            reasons.append("REQUIRED_COMMAND_EVIDENCE_MISSING")
+        if requires_independent_verifier and not required_command_ids.issubset(
+            {item.command_id for item in verifier_commands}
+        ):
+            reasons.append("VERIFIER_REQUIRED_COMMAND_EVIDENCE_MISSING")
+        if any(
+            item.sandbox_provider != bundle.sandbox_provider
+            or item.sandbox_security_level is not bundle.sandbox_security_level
+            or item.sandbox_capabilities_sha256 != bundle.sandbox_capabilities_sha256
+            or item.sandbox_configuration_sha256 != bundle.sandbox_configuration_sha256
+            or item.sandbox_requirements_sha256 != bundle.sandbox_requirements_sha256
+            or item.sandbox_image_identity != bundle.sandbox_image_identity
+            or item.sandbox_daemon_identity != bundle.sandbox_daemon_identity
+            for item in bundle.command_evidence
+        ):
+            reasons.append("SANDBOX_EVIDENCE_BINDING_INVALID")
+        if any(
+            item.sandbox_security_level is SandboxSecurityLevel.ISOLATED
+            and (
+                item.sandbox_inspection_artifact_id is None
+                or item.sandbox_inspection_sha256 is None
+            )
+            for item in bundle.command_evidence
+        ):
+            reasons.append("SANDBOX_INSPECTION_EVIDENCE_MISSING")
+        if any(
+            item.sandbox_security_level is SandboxSecurityLevel.ISOLATED
+            and item.execution_id is None
+            for item in bundle.command_evidence
+        ):
+            reasons.append("EXECUTION_IDENTITY_MISSING")
+        if any(
+            item.network_mode not in bundle.sandbox_capabilities.supported_network_modes
+            or item.network_mode != "none"
+            for item in bundle.command_evidence
+        ):
+            reasons.append("COMMAND_NETWORK_EVIDENCE_INVALID")
         if any(item.exit_code != 0 or item.timed_out for item in bundle.command_evidence):
             reasons.append("COMMAND_EXECUTION_FAILED")
         if any(item.completed_at < item.started_at for item in bundle.command_evidence):
@@ -283,10 +490,37 @@ class CompletionGate:
             reasons.append("EVIDENCE_STRENGTH_INVALID")
         if any(
             item.strength is EvidenceStrength.INDEPENDENTLY_VERIFIED
-            and item.agent_instance_id != bundle.verifier_agent_instance_id
+            and (
+                item.agent_instance_id != bundle.verifier_agent_instance_id
+                or item.principal_role != "verifier"
+                or item.workflow_stage is not WorkflowStage.VERIFYING
+                or item.workspace_id is None
+                or item.sandbox_id is None
+                or item.sandbox_security_level is not SandboxSecurityLevel.ISOLATED
+                or item.workspace_kind is not WorkspaceKind.VERIFICATION
+                or item.workspace_mutated_during_execution
+            )
             for item in bundle.command_evidence
         ):
             reasons.append("EVIDENCE_STRENGTH_INVALID")
+        if any(item.workspace_mutated_during_execution for item in verifier_commands):
+            reasons.append("VERIFIER_COMMAND_MUTATED_WORKSPACE")
+        if any(
+            item.principal_role != "verifier"
+            or item.workflow_stage is not WorkflowStage.VERIFYING
+            or item.workspace_id is None
+            or item.sandbox_id is None
+            for item in verifier_commands
+        ):
+            reasons.append("VERIFIER_PROVENANCE_INVALID")
+        if requires_independent_verifier and any(
+            item.strength is not EvidenceStrength.INDEPENDENTLY_VERIFIED
+            or item.sandbox_security_level is not SandboxSecurityLevel.ISOLATED
+            or item.workspace_kind is not WorkspaceKind.VERIFICATION
+            or item.workspace_mutated_during_execution
+            for item in verifier_commands
+        ):
+            reasons.append("VERIFIER_EVIDENCE_STRENGTH_INSUFFICIENT")
         if any(
             item.config_snapshot_sha256 != bundle.config_snapshot_sha256
             for item in bundle.command_evidence
@@ -326,3 +560,14 @@ class CompletionGate:
             effective_verdict=effective,
             reason_codes=sorted(set(reasons)),
         )
+
+
+def _is_auxiliary_approval_evidence(
+    bundle: EvidenceBundle,
+    item: CommandEvidence,
+) -> bool:
+    return (
+        bundle.sandbox_provider == "fake"
+        and item.command_id == "approval-proof"
+        and item.strength is EvidenceStrength.SIMULATED
+    )

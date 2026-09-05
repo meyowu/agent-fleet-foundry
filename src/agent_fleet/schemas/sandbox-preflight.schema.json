@@ -1,0 +1,259 @@
+{
+  "$defs": {
+    "SandboxCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "executes_code": {
+          "title": "Executes Code",
+          "type": "boolean"
+        },
+        "isolation_enforced": {
+          "title": "Isolation Enforced",
+          "type": "boolean"
+        },
+        "provider": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "security_level": {
+          "$ref": "#/$defs/SandboxSecurityLevel"
+        },
+        "supported_network_modes": {
+          "items": {
+            "enum": [
+              "none",
+              "approved-unrestricted"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Supported Network Modes",
+          "type": "array"
+        },
+        "supports_capability_drop": {
+          "default": false,
+          "title": "Supports Capability Drop",
+          "type": "boolean"
+        },
+        "supports_no_new_privileges": {
+          "default": false,
+          "title": "Supports No New Privileges",
+          "type": "boolean"
+        },
+        "supports_non_root": {
+          "default": false,
+          "title": "Supports Non Root",
+          "type": "boolean"
+        },
+        "supports_read_only_root": {
+          "default": false,
+          "title": "Supports Read Only Root",
+          "type": "boolean"
+        },
+        "supports_recovery": {
+          "title": "Supports Recovery",
+          "type": "boolean"
+        },
+        "supports_resource_limits": {
+          "title": "Supports Resource Limits",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider",
+        "security_level",
+        "isolation_enforced",
+        "executes_code",
+        "supported_network_modes",
+        "supports_resource_limits",
+        "supports_recovery"
+      ],
+      "title": "SandboxCapabilities",
+      "type": "object"
+    },
+    "SandboxSecurityLevel": {
+      "enum": [
+        "fake",
+        "isolated",
+        "unsafe_host"
+      ],
+      "title": "SandboxSecurityLevel",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "capabilities": {
+      "$ref": "#/$defs/SandboxCapabilities"
+    },
+    "checked_at": {
+      "format": "date-time",
+      "title": "Checked At",
+      "type": "string"
+    },
+    "cli_version": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cli Version"
+    },
+    "configuration_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Configuration Hash",
+      "type": "string"
+    },
+    "daemon_architecture": {
+      "anyOf": [
+        {
+          "enum": [
+            "amd64",
+            "arm64"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Daemon Architecture"
+    },
+    "daemon_identity": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Daemon Identity"
+    },
+    "daemon_os": {
+      "anyOf": [
+        {
+          "const": "linux",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Daemon Os"
+    },
+    "daemon_server_version": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Daemon Server Version"
+    },
+    "diagnostic": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Diagnostic",
+      "type": "string"
+    },
+    "endpoint_kind": {
+      "enum": [
+        "none",
+        "local-unix",
+        "host"
+      ],
+      "title": "Endpoint Kind",
+      "type": "string"
+    },
+    "executable_path": {
+      "anyOf": [
+        {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Executable Path"
+    },
+    "image_identity": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image Identity"
+    },
+    "provider": {
+      "enum": [
+        "fake",
+        "docker",
+        "local-unsafe"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "ready": {
+      "title": "Ready",
+      "type": "boolean"
+    },
+    "recovery_scope_id": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Recovery Scope Id"
+    },
+    "requirements_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Requirements Hash",
+      "type": "string"
+    }
+  },
+  "required": [
+    "provider",
+    "ready",
+    "capabilities",
+    "configuration_hash",
+    "requirements_hash",
+    "endpoint_kind",
+    "diagnostic",
+    "checked_at"
+  ],
+  "title": "SandboxPreflight",
+  "type": "object"
+}

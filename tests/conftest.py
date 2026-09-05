@@ -19,6 +19,8 @@ from agent_fleet.domain.models import FakeScenario, Run
 _LIVE_PROVIDER_FLAG = "AGENT_FLEET_ENABLE_LIVE_PROVIDER_TESTS"
 _LIVE_PROVIDER_MODEL = "AGENT_FLEET_LIVE_PROVIDER_MODEL"
 _LIVE_PROVIDER_CREDENTIAL_REF = "AGENT_FLEET_LIVE_PROVIDER_CREDENTIAL_REF"
+_DOCKER_TEST_FLAG = "AGENT_FLEET_ENABLE_DOCKER_TESTS"
+_DOCKER_TEST_IMAGE = "AGENT_FLEET_DOCKER_TEST_IMAGE"
 _ENV_CREDENTIAL_REF = re.compile(r"env:([A-Za-z_][A-Za-z0-9_]*)\Z")
 
 
@@ -35,6 +37,21 @@ def _live_provider_inputs_are_ready() -> bool:
     return credential_match is not None and bool(os.environ.get(credential_match.group(1)))
 
 
+@pytest.fixture
+def real_docker_image(request: pytest.FixtureRequest) -> str:
+    if request.node.get_closest_marker("docker_integration") is None:
+        raise AssertionError("real_docker_image is only valid for docker_integration tests")
+    image = os.environ.get(_DOCKER_TEST_IMAGE, "")
+    if os.environ.get(_DOCKER_TEST_FLAG) != "1":
+        pytest.skip(
+            "real Docker tests require AGENT_FLEET_ENABLE_DOCKER_TESTS=1 and "
+            "AGENT_FLEET_DOCKER_TEST_IMAGE"
+        )
+    if not image:
+        pytest.fail("AGENT_FLEET_ENABLE_DOCKER_TESTS=1 requires AGENT_FLEET_DOCKER_TEST_IMAGE")
+    return image
+
+
 @pytest.fixture(autouse=True)
 def enforce_external_request_boundary(
     request: pytest.FixtureRequest,
@@ -43,6 +60,9 @@ def enforce_external_request_boundary(
     """Deny ordinary network/model requests; open only the explicit live canary."""
 
     is_live_provider_test = request.node.get_closest_marker("live_provider") is not None
+    is_docker_test = request.node.get_closest_marker("docker_integration") is not None
+    if not is_docker_test:
+        monkeypatch.setattr("agent_fleet.bootstrap._FIXED_DOCKER_EXECUTABLES", ())
     if is_live_provider_test:
         if not _live_provider_inputs_are_ready():
             pytest.skip(
@@ -117,7 +137,7 @@ def harness(tmp_path: Path) -> FleetHarness:
     )
     state_root = tmp_path / "fleet-state"
     container = build_container(state_root)
-    container.projects.initialize(
+    container.projects._initialize_without_canary(
         repository_root,
         runtime_name="fake",
         sandbox_name="fake",

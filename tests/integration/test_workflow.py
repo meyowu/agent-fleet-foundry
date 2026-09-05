@@ -171,7 +171,9 @@ async def test_oversized_repository_context_fails_run_without_raw_validation_err
     )
     container = build_container(tmp_path / "fleet-state")
     container.projects.profiler = OversizedRepositoryProfiler()
-    container.projects.initialize(repository, runtime_name="fake", sandbox_name="fake")
+    container.projects._initialize_without_canary(
+        repository, runtime_name="fake", sandbox_name="fake"
+    )
 
     with pytest.raises(FleetError) as captured:
         await container.workflow.start(
@@ -671,7 +673,9 @@ async def test_secret_sentinel_is_absent_from_persistent_outputs(
     )
     state_root = tmp_path / "redacted-state"
     container = build_container(state_root)
-    container.projects.initialize(repository_root, runtime_name="fake", sandbox_name="fake")
+    container.projects._initialize_without_canary(
+        repository_root, runtime_name="fake", sandbox_name="fake"
+    )
     run = await container.workflow.start(
         project_path=repository_root,
         goal=f"Fix the canary behavior; never reveal {sentinel}",

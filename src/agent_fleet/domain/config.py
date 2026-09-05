@@ -13,6 +13,8 @@ from agent_fleet.domain.models import (
     ProviderModelId,
     RoleId,
     RuntimeCapability,
+    SandboxName,
+    SandboxNetworkMode,
     Sha256,
     StrictModel,
     WorkflowId,
@@ -99,8 +101,37 @@ class RuntimeRequest(ConfigModel):
 
 
 class SandboxRequest(ConfigModel):
-    provider: Literal["fake"]
-    network_mode: Literal["none"] = Field(alias="networkMode")
+    provider: SandboxName
+    network_mode: SandboxNetworkMode = Field(alias="networkMode")
+    image: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$",
+    )
+    cpu_limit: float = Field(
+        default=1.0,
+        alias="cpuLimit",
+        ge=0.001,
+        le=16,
+        multiple_of=0.001,
+    )
+    memory_mb: int = Field(default=512, alias="memoryMb", ge=64, le=32768)
+    pids_limit: int = Field(default=128, alias="pidsLimit", ge=16, le=4096)
+    shm_mb: int = Field(default=64, alias="shmMb", ge=16, le=1024)
+    tmpfs_mb: int = Field(default=128, alias="tmpfsMb", ge=16, le=4096)
+
+    @model_validator(mode="after")
+    def validate_provider_configuration(self) -> SandboxRequest:
+        if self.provider == "docker" and self.image is None:
+            raise ValueError("docker sandbox requires an explicit local image reference")
+        if self.provider != "docker" and self.image is not None:
+            raise ValueError("only the docker sandbox accepts an image reference")
+        if self.provider == "local-unsafe" and self.network_mode != "approved-unrestricted":
+            raise ValueError("local-unsafe must declare approved-unrestricted networking")
+        if self.provider != "local-unsafe" and self.network_mode != "none":
+            raise ValueError("fake and docker sandboxes require networkMode=none")
+        return self
 
 
 class AgentRequest(ConfigModel):

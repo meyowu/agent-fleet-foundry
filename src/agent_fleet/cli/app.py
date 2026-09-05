@@ -19,14 +19,14 @@ from agent_fleet import __version__
 from agent_fleet.bootstrap import build_container
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix, new_id
-from agent_fleet.domain.models import FakeScenario, JsonEnvelope, JsonError, jsonable
+from agent_fleet.domain.models import FakeScenario, JsonEnvelope, JsonError, RunStatus, jsonable
 from agent_fleet.domain.security import Redactor
 
 app = typer.Typer(
     name="fleet",
     help=(
-        "Local-first Agent Fleet control plane (Phase 2: fake or explicit BYOK "
-        "PydanticAI runtime; FakeSandbox only)."
+        "Local-first Agent Fleet control plane with exact fake, Docker, or explicit "
+        "local-unsafe execution boundaries."
     ),
     no_args_is_help=True,
 )
@@ -47,10 +47,11 @@ def version(json_output: JsonFlag = False) -> None:
         json_output,
         lambda: {
             "version": __version__,
-            "phase": "2",
+            "phase": "3",
             "runtime": "fake",
             "runtimes": ["fake", "pydantic-ai"],
             "sandbox": "fake",
+            "sandboxes": ["docker", "fake", "local-unsafe"],
         },
     )
 
@@ -61,13 +62,30 @@ def doctor(
     path: Annotated[
         Path, typer.Option("--path", help="Path to inspect for optional Git context.")
     ] = Path("."),
+    sandbox: Annotated[
+        str | None,
+        typer.Option(
+            "--sandbox",
+            help="Sandbox to inspect; omitted uses registered project state or fake.",
+        ),
+    ] = None,
+    docker_image: Annotated[
+        str | None,
+        typer.Option("--docker-image", help="Preloaded local image for Docker preflight."),
+    ] = None,
 ) -> None:
     """Diagnose required local foundations and future optional capabilities."""
 
     redactor = _environment_redactor()
 
     def operation() -> tuple[JsonValue, list[str]]:
-        report = build_container(redactor=redactor).doctor.inspect(path)
+        report = asyncio.run(
+            build_container(redactor=redactor).doctor.inspect(
+                path,
+                sandbox_name=sandbox,
+                docker_image=docker_image,
+            )
+        )
         return report.model_dump(mode="json"), report.warnings
 
     _present_with_warnings("fleet doctor", json_output, operation, redactor=redactor)
@@ -94,7 +112,21 @@ def init_command(
             help="Explicit env:NAME credential reference; never a raw secret.",
         ),
     ] = None,
-    sandbox: Annotated[str, typer.Option("--sandbox")] = "fake",
+    sandbox: Annotated[
+        str,
+        typer.Option("--sandbox", help="Sandbox provider: fake, docker, or local-unsafe."),
+    ] = "fake",
+    docker_image: Annotated[
+        str | None,
+        typer.Option("--docker-image", help="Existing local image required by Docker."),
+    ] = None,
+    allow_unsafe_local: Annotated[
+        bool,
+        typer.Option(
+            "--allow-unsafe-local",
+            help="Separately confirm direct host execution for local-unsafe.",
+        ),
+    ] = False,
     yes: Annotated[
         bool,
         typer.Option(
@@ -128,6 +160,7 @@ def init_command(
             provider_model=provider_model,
             credential_ref=credential_ref,
             sandbox_name=sandbox,
+            docker_image=docker_image,
         )
         if preview:
             return _initialization_result(preview_data)
@@ -159,7 +192,7 @@ def init_command(
                         if credential_ref is not None
                         else "Credential reference: none"
                     ),
-                    f"Sandbox: {sandbox} (security_level=fake)",
+                    (f"Sandbox: {sandbox} (security_level={preview_data['security_level']})"),
                     access_summary,
                     security_warning,
                 ]
@@ -175,13 +208,17 @@ def init_command(
         proposal_hash = preview_data.get("proposal_sha256")
         if not isinstance(proposal_hash, str):
             raise RuntimeError("invalid project proposal identity")
-        initialized = container.projects.initialize(
-            path,
-            runtime_name=runtime,
-            provider_model=provider_model,
-            credential_ref=credential_ref,
-            sandbox_name=sandbox,
-            expected_proposal_hash=proposal_hash,
+        initialized = asyncio.run(
+            container.bootstrap.initialize(
+                path,
+                runtime_name=runtime,
+                provider_model=provider_model,
+                credential_ref=credential_ref,
+                sandbox_name=sandbox,
+                docker_image=docker_image,
+                allow_unsafe_local=allow_unsafe_local,
+                expected_proposal_hash=proposal_hash,
+            )
         )
         return _initialization_result(initialized)
 
@@ -213,7 +250,20 @@ def run(
             help="Must match the env:NAME reference reviewed during fleet init.",
         ),
     ] = None,
-    sandbox: Annotated[str, typer.Option("--sandbox")] = "fake",
+    sandbox: Annotated[
+        str | None,
+        typer.Option(
+            "--sandbox",
+            help="Optional exact match for the sandbox reviewed during fleet init.",
+        ),
+    ] = None,
+    allow_unsafe_local: Annotated[
+        bool,
+        typer.Option(
+            "--allow-unsafe-local",
+            help="Separately confirm direct host execution for this local-unsafe run.",
+        ),
+    ] = False,
     fake_scenario: Annotated[
         FakeScenario | None,
         typer.Option(
@@ -226,7 +276,7 @@ def run(
     ] = None,
     json_output: JsonFlag = False,
 ) -> None:
-    """Run the reviewed project runtime through FakeSandbox evidence boundaries."""
+    """Run the reviewed project through its exact registered sandbox boundary."""
 
     redactor = _environment_redactor()
 
@@ -241,6 +291,7 @@ def run(
                 credential_ref=credential_ref,
                 sandbox_name=sandbox,
                 fake_scenario=fake_scenario,
+                allow_unsafe_local=allow_unsafe_local,
             )
         )
         data = container.inspection.status(result.run_id)
@@ -400,6 +451,51 @@ def cancel(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = Fal
     _present("fleet cancel", json_output, operation, redactor=redactor)
 
 
+@app.command()
+def recover(
+    run_id: Annotated[str, typer.Argument(help="Exact persisted run to recover")],
+    confirm_owner_stopped: Annotated[
+        bool,
+        typer.Option(
+            "--confirm-owner-stopped",
+            help="Confirm no other Fleet process still owns this exact run.",
+        ),
+    ] = False,
+    json_output: JsonFlag = False,
+) -> None:
+    """Fail an interrupted run and reconcile only its persisted resource leases."""
+
+    redactor = _environment_redactor()
+
+    def operation() -> JsonValue:
+        if not confirm_owner_stopped:
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "Exact-run recovery requires confirmation that its prior owner stopped.",
+                "Retry with --confirm-owner-stopped only after checking no Fleet process "
+                "still owns this run.",
+                details={"run_id": run_id},
+            )
+        container = build_container(redactor=redactor)
+        before = [lease.lease_id for lease in container.state.outstanding_leases(run_id)]
+        original_status = container.state.get_run(run_id).status
+        result = asyncio.run(container.recovery.recover_run(run_id))
+        after = [lease.lease_id for lease in container.state.outstanding_leases(run_id)]
+        after_set = set(after)
+        return jsonable(
+            {
+                "run_id": result.run_id,
+                "status": result.status.value,
+                "recovered": bool(set(before) - after_set)
+                or original_status in {RunStatus.RUNNING, RunStatus.APPLYING},
+                "recovered_lease_ids": [item for item in before if item not in after_set],
+                "outstanding_lease_ids": after,
+            }
+        )
+
+    _present("fleet recover", json_output, operation, redactor=redactor)
+
+
 def _present(
     command: str,
     json_output: bool,
@@ -414,20 +510,23 @@ def _present(
     except FleetError as error:
         _present_error(command, error, json_output, active_redactor)
         raise typer.Exit(code=_exit_code(error.code)) from error
+    serialized = jsonable(data)
+    if not json_output and raw_key and isinstance(serialized, dict):
+        safe_raw_value, _ = active_redactor.redact_data(serialized[raw_key])
+        console.print(safe_raw_value, markup=False, highlight=False)
+        return
+    safe_data, _ = active_redactor.redact_data(serialized)
     if json_output:
         _print_json(
             JsonEnvelope(
                 ok=True,
                 command=command,
                 correlation_id=new_id(IdPrefix.CORRELATION),
-                data=jsonable(data),
+                data=jsonable(safe_data),
             )
         )
         return
-    if raw_key and isinstance(data, dict):
-        console.print(data[raw_key], markup=False, highlight=False)
-        return
-    _print_human(data)
+    _print_human(safe_data)
 
 
 def _present_with_warnings(
@@ -443,19 +542,21 @@ def _present_with_warnings(
     except FleetError as error:
         _present_error(command, error, json_output, active_redactor)
         raise typer.Exit(code=_exit_code(error.code)) from error
+    safe_data, _ = active_redactor.redact_data(data)
+    safe_warnings, _ = active_redactor.redact_data(warnings)
     if json_output:
         _print_json(
             JsonEnvelope(
                 ok=True,
                 command=command,
                 correlation_id=new_id(IdPrefix.CORRELATION),
-                data=data,
-                warnings=warnings,
+                data=jsonable(safe_data),
+                warnings=[str(item) for item in safe_warnings],
             )
         )
         return
-    _print_human(data)
-    for warning in warnings:
+    _print_human(safe_data)
+    for warning in safe_warnings:
         console.print(f"[yellow]Warning:[/yellow] {warning}")
 
 
@@ -500,12 +601,24 @@ def _environment_redactor() -> Redactor:
 
 
 def _runtime_warnings(status: dict[str, object]) -> list[str]:
-    if status.get("runtime") == "pydantic-ai":
-        return [
-            "The configured model provider was contacted from the control plane; "
-            "FakeSandbox did not execute project code or provide OS isolation."
-        ]
-    return ["Fake runtime/sandbox: no model call, project execution, or OS isolation occurred."]
+    runtime_clause = (
+        "The configured model provider was contacted from the control plane;"
+        if status.get("runtime") == "pydantic-ai"
+        else "The fake runtime made no model-provider call;"
+    )
+    sandbox = status.get("sandbox") or status.get("sandbox_name") or "fake"
+    if sandbox == "docker":
+        sandbox_clause = (
+            "project commands used the isolated Docker sandbox and remain subject to the "
+            "reported evidence and proof gaps."
+        )
+    elif sandbox == "local-unsafe":
+        sandbox_clause = (
+            "local-unsafe executed project commands directly on the host without isolation."
+        )
+    else:
+        sandbox_clause = "FakeSandbox did not execute project code or provide OS isolation."
+    return [f"{runtime_clause} {sandbox_clause}"]
 
 
 def _initialization_result(data: dict[str, object]) -> tuple[JsonValue, list[str]]:

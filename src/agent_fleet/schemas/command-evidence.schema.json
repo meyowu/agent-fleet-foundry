@@ -17,6 +17,29 @@
       ],
       "title": "SandboxSecurityLevel",
       "type": "string"
+    },
+    "WorkflowStage": {
+      "enum": [
+        "intake",
+        "scoping",
+        "workspace_preparation",
+        "implementing",
+        "verifying",
+        "repairing",
+        "presenting",
+        "applying",
+        "cleanup"
+      ],
+      "title": "WorkflowStage",
+      "type": "string"
+    },
+    "WorkspaceKind": {
+      "enum": [
+        "candidate",
+        "verification"
+      ],
+      "title": "WorkspaceKind",
+      "type": "string"
     }
   },
   "additionalProperties": false,
@@ -46,6 +69,27 @@
       "default": null,
       "title": "Candidate Patch Sha256"
     },
+    "command_id": {
+      "default": "legacy-verification",
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_.-]*$",
+      "title": "Command Id",
+      "type": "string"
+    },
+    "command_spec_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Command Spec Sha256"
+    },
     "completed_at": {
       "format": "date-time",
       "title": "Completed At",
@@ -69,22 +113,162 @@
       "title": "Executable",
       "type": "string"
     },
+    "execution_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Execution Id"
+    },
     "exit_code": {
       "title": "Exit Code",
       "type": "integer"
     },
+    "network_mode": {
+      "default": "none",
+      "enum": [
+        "none",
+        "approved-unrestricted"
+      ],
+      "title": "Network Mode",
+      "type": "string"
+    },
     "output_truncated": {
       "title": "Output Truncated",
       "type": "boolean"
+    },
+    "principal_role": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Principal Role"
     },
     "run_id": {
       "pattern": "^run_[0-9a-f]{32}$",
       "title": "Run Id",
       "type": "string"
     },
+    "sandbox_capabilities_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sandbox Capabilities Sha256"
+    },
+    "sandbox_configuration_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sandbox Configuration Sha256"
+    },
+    "sandbox_daemon_identity": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sandbox Daemon Identity"
+    },
+    "sandbox_id": {
+      "anyOf": [
+        {
+          "pattern": "^sandbox_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sandbox Id"
+    },
+    "sandbox_image_identity": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sandbox Image Identity"
+    },
+    "sandbox_inspection_artifact_id": {
+      "anyOf": [
+        {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sandbox Inspection Artifact Id"
+    },
+    "sandbox_inspection_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sandbox Inspection Sha256"
+    },
     "sandbox_provider": {
       "title": "Sandbox Provider",
       "type": "string"
+    },
+    "sandbox_requirements_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sandbox Requirements Sha256"
     },
     "sandbox_security_level": {
       "$ref": "#/$defs/SandboxSecurityLevel"
@@ -111,9 +295,42 @@
       "title": "Transcript Artifact Id",
       "type": "string"
     },
+    "workflow_stage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowStage"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "workspace_base_revision": {
       "title": "Workspace Base Revision",
       "type": "string"
+    },
+    "workspace_id": {
+      "anyOf": [
+        {
+          "pattern": "^ws_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Workspace Id"
+    },
+    "workspace_kind": {
+      "$ref": "#/$defs/WorkspaceKind",
+      "default": "candidate"
+    },
+    "workspace_mutated_during_execution": {
+      "default": false,
+      "title": "Workspace Mutated During Execution",
+      "type": "boolean"
     }
   },
   "required": [

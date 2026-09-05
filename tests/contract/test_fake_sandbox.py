@@ -13,7 +13,23 @@ from agent_fleet.domain.models import (
     SandboxCapabilities,
     SandboxSecurityLevel,
     SandboxSpec,
+    WorkflowStage,
 )
+
+
+def _request(ids: UuidIdGenerator, *, max_output_bytes: int = 64_000) -> ExecRequest:
+    return ExecRequest(
+        execution_id=ids.new(IdPrefix.EXECUTION),
+        intent_id=ids.new(IdPrefix.INTENT),
+        task_id=ids.new(IdPrefix.TASK),
+        agent_instance_id=ids.new(IdPrefix.AGENT),
+        stage=WorkflowStage.VERIFYING,
+        executable="python",
+        argv=["-m", "pytest", "-q"],
+        cwd=".",
+        max_output_bytes=max_output_bytes,
+        command_spec_hash="1" * 64,
+    )
 
 
 def test_fake_sandbox_capabilities_are_explicit_and_exact() -> None:
@@ -89,13 +105,14 @@ async def test_fake_sandbox_records_canonical_exec_and_failure(tmp_path: Path) -
     )
     run_id = ids.new(IdPrefix.RUN)
     handle = await sandbox.create(run_id, SandboxSpec(workspace_host_path=str(tmp_path)))
-    request = ExecRequest(executable="python", argv=["-m", "pytest", "-q"], cwd=".")
+    request = _request(ids)
     result = await sandbox.exec(handle, request)
     assert sandbox.security_level is SandboxSecurityLevel.FAKE
     assert sandbox.requests == [request]
     assert result.exit_code == 124
     assert result.timed_out is True
-    failure = await sandbox.exec(handle, request)
+    failure_request = _request(ids)
+    failure = await sandbox.exec(handle, failure_request)
     assert failure.exit_code == 2
     assert failure.timed_out is False
     await sandbox.terminate(handle)
@@ -114,17 +131,12 @@ async def test_fake_sandbox_reports_output_truncation(tmp_path: Path) -> None:
         ids.new(IdPrefix.RUN),
         SandboxSpec(workspace_host_path=str(tmp_path)),
     )
-    request = ExecRequest(
-        executable="python",
-        argv=["-m", "pytest", "-q"],
-        cwd=".",
-        max_output_bytes=4,
-    )
+    request = _request(ids, max_output_bytes=4)
 
     result = await sandbox.exec(handle, request)
 
     assert result.stdout == "abcd"
-    assert result.stderr == "1234"
+    assert result.stderr == ""
     assert result.output_truncated is True
 
 
@@ -140,17 +152,14 @@ async def test_fake_sandbox_truncates_output_by_utf8_bytes(tmp_path: Path) -> No
         ids.new(IdPrefix.RUN),
         SandboxSpec(workspace_host_path=str(tmp_path)),
     )
-    request = ExecRequest(
-        executable="python",
-        argv=["-m", "pytest", "-q"],
-        cwd=".",
-        max_output_bytes=5,
-    )
+    request = _request(ids, max_output_bytes=5)
 
     result = await sandbox.exec(handle, request)
 
     assert result.stdout == "💥"
-    assert result.stderr == "a💥"
-    assert len(result.stdout.encode("utf-8")) <= request.max_output_bytes
-    assert len(result.stderr.encode("utf-8")) <= request.max_output_bytes
+    assert result.stderr == "a"
+    assert (
+        len(result.stdout.encode("utf-8")) + len(result.stderr.encode("utf-8"))
+        <= request.max_output_bytes
+    )
     assert result.output_truncated is True
