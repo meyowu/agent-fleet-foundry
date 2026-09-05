@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -96,10 +95,19 @@ async def test_real_directory_apply_and_exact_inverse_survive_reopen(
     container, repository, run, _, before = await deliver_proposal(tmp_path, retain_extras=True)
     proposal = container.organization.store.list_proposals(run.project_id)[0]
     if tracked:
-        for argv in (("add", ".fleet"), ("commit", "-m", "Track reviewed organization")):
-            await asyncio.to_thread(
-                subprocess.run, ["git", *argv], cwd=repository, check=True, capture_output=True
-            )
+        for argv in (
+            ["git", "add", "--", ".fleet"],
+            [
+                "git",
+                "commit",
+                "--no-gpg-sign",
+                "--no-verify",
+                "--no-status",
+                "-m",
+                "Track reviewed organization",
+            ],
+        ):
+            await asyncio.to_thread(container.repository._run, argv, cwd=repository)
     original_boundary = container.repository.inspect_organization_boundary(repository)
     grants = container.state.list_project_grants(run.project_id)
     applied = container.organization.apply(proposal.patch.fleet_patch_id)

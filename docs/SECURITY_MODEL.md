@@ -442,6 +442,8 @@ The Phase 3 Docker adapter creates one worker per reviewed command with:
 
 The implementation invokes a fixed Docker CLI with structured argv and no shell. It accepts only a pinned local Unix endpoint and Linux daemon, requires an already-local image and resolves its immutable ID, constructs an empty controlled environment, inspects the effective container configuration before start, and compares full IDs plus an installation-scoped label set before cleanup. A durable pre-dispatch checkpoint and exact-label reconciliation prevent blind replay after create ambiguity. Every daemon operation is bounded by timeout/output limits; daemon identity is revalidated around discovery and destructive lifecycle operations.
 
+For the prepared sandbox's lifetime, a non-inheritable read-only descriptor pins the private empty `0400` `.git` shadow inode. Both pre-dispatch checks revalidate ownership, type, link count and permissions, and compare device/inode plus modification/change timestamps. The pin prevents an unlinked inode number being reused; timestamps additionally detect same-inode metadata drift but are not collision-free generation identifiers. Failed preparation and successful logical termination close the pin; ambiguous cleanup retains it until reconciliation, and dropped file objects have standard descriptor finalization. Workspace identity remains device/inode so legitimate candidate writes do not invalidate it. Docker still resolves mount pathnames after the final check: this is not an atomic path handoff or protection against a hostile same-user process or kernel.
+
 ### Network modes
 
 For MVP, support only technically honest modes:

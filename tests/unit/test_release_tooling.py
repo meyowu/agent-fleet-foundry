@@ -69,6 +69,7 @@ def test_ci_uses_read_only_pinned_actions_and_no_live_provider() -> None:
     source = (_ROOT / ".github/workflows/ci.yml").read_text()
     assert "secrets." not in source and "pull_request_target" not in source
     assert "uv python install" in source and "--frozen" in source and "--offline" in source
+    assert "python scripts/verify_adversarial.py" in source
 
 
 @pytest.mark.parametrize(

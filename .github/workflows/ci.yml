@@ -60,7 +60,7 @@ jobs:
           git diff --exit-code
       - name: Offline platform, native publication and fresh-process E2E
         run: >-
-          uv run --offline pytest -q
+          uv run --offline pytest -q -ra
           tests/unit tests/contract tests/e2e
           tests/integration/test_release_upgrades.py
           tests/integration/test_state_scale.py
@@ -89,7 +89,11 @@ jobs:
         env:
           UV_PYTHON_DOWNLOADS: automatic
       - run: uv sync --all-extras --frozen
-      - run: uv run --offline pytest -q --durations=15
+      - run: uv run --offline pytest -q -ra --durations=15
+      - name: Linux standalone offline adversarial evidence
+        run: >-
+          uv run --offline python scripts/verify_adversarial.py
+          --output "${RUNNER_TEMP}/fleet-security-evidence"
 
   installed:
     runs-on: macos-14

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from io import FileIO
 from pathlib import Path
 from typing import cast
 
@@ -295,7 +297,7 @@ class RecordingDockerRunner:
             )
         inspection: dict[str, object] = {
             "Id": _CONTAINER_ID,
-            "Name": "/agent-fleet-exec_" + "3" * 32,
+            "Name": "/" + argv[argv.index("--name") + 1],
             "Image": _IMAGE_ID,
             "Config": {
                 "User": "1000:1000",
@@ -1781,7 +1783,170 @@ async def test_docker_prepared_spec_is_a_deep_snapshot(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("target", ["workspace", "git-shadow"])
+async def test_docker_shadow_pin_survives_candidate_writes_and_repeated_exec(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    provider = _provider(tmp_path, runner)
+    handle = await provider.create("run_" + "1" * 32, _docker_spec(workspace))
+    prepared = provider._prepared[handle.sandbox_id]
+    shadow_file = prepared.git_shadow_file
+    descriptor = shadow_file.fileno()
+    assert shadow_file.readable() and not shadow_file.writable()
+    assert os.get_inheritable(descriptor) is False
+    for index in range(2):
+        (workspace / f"ordinary-change-{index}.txt").write_text("candidate changes are allowed\n")
+        request = _verification_request().model_copy(
+            update={"execution_id": "exec_" + str(index + 1) * 32}
+        )
+        result = await provider.exec(handle, request)
+        assert result.exit_code == 0
+        assert shadow_file.closed is False
+        current = os.fstat(descriptor)
+        assert (current.st_dev, current.st_ino, current.st_mtime_ns, current.st_ctime_ns) == (
+            prepared.git_shadow_identity
+        )
+    assert sum(call[0][1:3] == ("container", "create") for call in runner.calls) == 2
+    assert (await provider.terminate(handle)).complete is True
+    assert shadow_file.closed is True and handle.sandbox_id not in provider._prepared
+    with pytest.raises(OSError):
+        os.fstat(descriptor)
+    assert (await provider.terminate(handle)).complete is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_docker_failed_preparation_closes_shadow_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancelled: bool
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    provider = _provider(tmp_path, runner)
+    opened: list[FileIO] = []
+    original_open = provider._open_git_shadow
+
+    def track_open() -> FileIO:
+        result = original_open()
+        opened.append(result)
+        return result
+
+    def fail_validation(prepared: object) -> None:
+        if cancelled:
+            raise asyncio.CancelledError("injected preparation failure")
+        raise FleetError(
+            ErrorCode.SANDBOX_CREATION_FAILED, "injected preparation failure", "Retry preparation."
+        )
+
+    monkeypatch.setattr(provider, "_open_git_shadow", track_open)
+    monkeypatch.setattr(provider, "_revalidate_prepared_paths", fail_validation)
+    with pytest.raises(
+        asyncio.CancelledError if cancelled else FleetError, match="injected preparation failure"
+    ):
+        await provider.create("run_" + "1" * 32, _docker_spec(workspace))
+    assert len(opened) == 1 and opened[0].closed is True
+    assert provider._prepared == {}
+
+
+@pytest.mark.asyncio
+async def test_docker_preflight_closes_its_temporary_shadow_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    provider = _provider(tmp_path, runner)
+    opened: list[FileIO] = []
+    original_open = provider._open_git_shadow
+
+    def track_open() -> FileIO:
+        result = original_open()
+        opened.append(result)
+        return result
+
+    monkeypatch.setattr(provider, "_open_git_shadow", track_open)
+    spec = _docker_spec(workspace)
+    assert (await provider.preflight(spec.configuration, spec.requirements)).ready is True
+    assert len(opened) == 1 and opened[0].closed is True
+    assert provider._prepared == {}
+
+
+@pytest.mark.asyncio
+async def test_docker_failed_termination_retains_shadow_pin_until_exact_cleanup(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    provider = _provider(tmp_path, runner)
+    handle = await provider.create("run_" + "1" * 32, _docker_spec(workspace))
+    shadow_file = provider._prepared[handle.sandbox_id].git_shadow_file
+    runner.listed_ids = [_CONTAINER_ID]
+    with pytest.raises(FleetError) as captured:
+        await provider.terminate(handle)
+    assert captured.value.code is ErrorCode.SANDBOX_CLEANUP_FAILED
+    assert shadow_file.closed is False
+    assert not any(call[0][1:3] == ("container", "rm") for call in runner.calls)
+    runner.listed_ids = []
+    assert (await provider.terminate(handle)).complete is True
+    assert shadow_file.closed is True
+
+
+@pytest.mark.asyncio
+async def test_docker_duplicate_preparation_cannot_replace_live_shadow_pin(tmp_path: Path) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    provider = _provider(tmp_path, runner)
+    handle = await provider.create("run_" + "1" * 32, _docker_spec(workspace))
+    original = provider._prepared[handle.sandbox_id]
+    with pytest.raises(FleetError) as captured:
+        await provider.create(handle.run_id, _docker_spec(workspace), sandbox_id=handle.sandbox_id)
+    assert captured.value.code is ErrorCode.SANDBOX_CREATION_FAILED
+    assert provider._prepared[handle.sandbox_id] is original
+    assert original.git_shadow_file.closed is False
+    assert (await provider.terminate(handle)).complete is True
+    assert original.git_shadow_file.closed is True
+
+
+@pytest.mark.parametrize("unsafe", ["nonempty", "permissions", "hardlink"])
+def test_docker_invalid_shadow_closes_acquired_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsafe: str
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    shadow = tmp_path / "state" / "git-shadow"
+    runner = RecordingDockerRunner(workspace, shadow)
+    provider = _provider(tmp_path, runner)
+    provider._open_git_shadow().close()
+    if unsafe == "hardlink":
+        os.link(shadow, shadow.parent / "second-name")
+    else:
+        shadow.chmod(0o600)
+        if unsafe == "nonempty":
+            shadow.write_bytes(b"not empty")
+            shadow.chmod(0o400)
+    descriptors: list[int] = []
+    original_open = os.open
+
+    def track_open(path: str | bytes | os.PathLike[str] | os.PathLike[bytes], flags: int) -> int:
+        descriptor = original_open(path, flags)
+        descriptors.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(os, "open", track_open)
+    with pytest.raises(FleetError) as captured:
+        provider._open_git_shadow()
+    assert captured.value.code is ErrorCode.SANDBOX_UNAVAILABLE
+    assert len(descriptors) == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["workspace", "git-shadow", "git-shadow-same-inode"])
 async def test_docker_revalidates_bind_path_identity_before_create(
     tmp_path: Path,
     target: str,
@@ -1799,24 +1964,32 @@ async def test_docker_revalidates_bind_path_identity_before_create(
     if target == "workspace":
         workspace.rename(tmp_path / "old-candidate")
         workspace.mkdir()
-    else:
+    elif target == "git-shadow":
         shadow.unlink()
         shadow.write_bytes(b"")
         shadow.chmod(0o400)
+    else:
+        original = shadow.stat()
+        os.utime(shadow, ns=(original.st_atime_ns, original.st_mtime_ns + 2_000_000_000))
+        assert shadow.stat().st_ino == original.st_ino
     runner.calls.clear()
+    dispatched: list[bool] = []
 
     with pytest.raises(FleetError) as captured:
-        await provider.exec(handle, _verification_request())
+        await provider.exec(
+            handle, _verification_request(), on_creation_dispatched=lambda: dispatched.append(True)
+        )
 
     assert captured.value.code is ErrorCode.SANDBOX_CREATION_FAILED
     cleanup = captured.value.__dict__["_agent_fleet_cleanup_result"]
     assert cleanup["complete"] is True
     assert cleanup["resources_found"] == 0
     assert runner.calls == []
+    assert dispatched == []
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("target", ["workspace", "git-shadow"])
+@pytest.mark.parametrize("target", ["workspace", "git-shadow", "git-shadow-same-inode"])
 async def test_docker_revalidates_bind_identity_after_final_daemon_round_trip(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1856,21 +2029,29 @@ async def test_docker_revalidates_bind_identity_after_final_daemon_round_trip(
             if target == "workspace":
                 workspace.rename(tmp_path / "old-candidate")
                 workspace.mkdir()
-            else:
+            elif target == "git-shadow":
                 shadow.unlink()
                 shadow.write_bytes(b"")
                 shadow.chmod(0o400)
+            else:
+                original = shadow.stat()
+                os.utime(shadow, ns=(original.st_atime_ns, original.st_mtime_ns + 2_000_000_000))
+                assert shadow.stat().st_ino == original.st_ino
         return result
 
     monkeypatch.setattr(runner, "run", replace_after_info)
     runner.calls.clear()
+    dispatched: list[bool] = []
 
     with pytest.raises(FleetError) as captured:
-        await provider.exec(handle, _verification_request())
+        await provider.exec(
+            handle, _verification_request(), on_creation_dispatched=lambda: dispatched.append(True)
+        )
 
     assert captured.value.code is ErrorCode.SANDBOX_CREATION_FAILED
     assert replaced is True
     assert not any(call[0][1:3] == ("container", "create") for call in runner.calls)
+    assert dispatched == []
 
 
 @pytest.mark.asyncio

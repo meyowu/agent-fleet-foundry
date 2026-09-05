@@ -10,6 +10,8 @@
   approvals, explain/revoke/reset and durable non-replayable dispatch claims.
 - Exact fake/Docker/explicit-local-unsafe selection; hardened local Docker command
   inspection, bounded execution, cancellation and exact owned-resource recovery.
+- Docker shadow-file lifetime pinning and pre-dispatch metadata revalidation,
+  including inode-reuse rejection and bounded descriptor cleanup.
 - Immutable content-addressed evidence, independent verification and explicit
   code-patch apply; simulated/unsafe/incomplete evidence cannot verify completion.
 - Bounded explicit BYOK PydanticAI adapter and cumulative budgets; no actual live

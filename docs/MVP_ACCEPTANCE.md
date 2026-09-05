@@ -150,7 +150,7 @@ The governing [release-candidate ExecPlan](../.agent/plans/2026-09-05-release-ca
 
 ## Phase 4 deliverables
 
-All rows concern the roadmap's three-state permission lifecycle. Grants never expand a protected or effective task ceiling. **Accepted on 2026-09-05 under E4.** The observations below remain regression obligations; E5.1/E5.2/E5.3 preserve them through budgets, graph execution and chat. Phase 6/7 remain open.
+All rows concern the roadmap's three-state permission lifecycle. Grants never expand a protected or effective task ceiling. **Accepted on 2026-09-05 under E4.** The observations below remain regression obligations; E5.1/E5.2/E5.3/E6 preserve them through budgets, graphs, chat and reviewed evolution. Final Phase7 release gates remain separate.
 
 | ID | Deliverable | Starting evidence / missing work | Required proving observation |
 | --- | --- | --- | --- |
@@ -326,6 +326,18 @@ Numbers below match `SECURITY_MODEL.md` section 20. Listed files are starting te
 
 The product's eight security-review demonstrations are covered respectively by cases 1/8/9, 3/4/32/38, 5/14, 10/20/49, 8, 26/39/43, 16/23/28 and 15/17 plus F7-03. These mappings preserve the product acceptance wording without treating a narrow unit test as proof of the entire user journey.
 
+The table above preserves the initial audit's starting targets and regression obligations, not a claim that accepted Phase4–6 code still has those baseline bugs. Current routing for the added boundaries is:
+
+| Security cases / later boundary | Current proving surface |
+| --- | --- |
+|1–9,13–15,34–35: effective ceilings, exact grants, revocation and one-winner dispatch | `tests/unit/test_permission_policy_security.py`, `tests/unit/test_dispatch_claims.py`, `tests/integration/test_persistent_permissions.py`, `tests/integration/test_gateway_concurrency.py` and the exact-approval Docker cases. E4 accepts these behaviors; subsequent full gates must retain them. |
+|2,18,22–25,28–31,36–37,47–49,51–53: graph/chat/runtime context and authoritative evidence | Existing runtime/gateway/evidence tests plus `tests/integration/test_conversation_safety.py`, the graph/evidence suites and public graph/chat Docker journeys. E5.1–E5.3 accept bounded ownership, usage and actual independent verification, not arbitrary external exactly-once effects. |
+|19,26,30–31,38–39,43–44,50: typed workflow/skill and complete organization publication | `tests/unit/test_verification_skills.py`, `tests/unit/test_fleet_patch.py`, `tests/contract/test_organization_publication.py`, `tests/contract/test_organization_journal.py`, joint recovery/interfaces and fresh-process evolution E2E/Docker. E6 closes the initial opaque-workflow/ancestry/init-replacement findings with persisted, native and negative evidence. |
+|10–12,16–17,20–21,27,32–33,40–42: actual worker/bootstrap/Git boundary | Existing bootstrap/path/Git/process contracts plus complete `tests/docker`, including independent verifier, sentinel, cancellation and exact owned-resource recovery. Real execution and final residue inspection remain mandatory; mocked calls alone cannot close these cases. |
+|45–49,51: release setup and credential boundary | Existing provider/doctor/runtime tests plus `tests/unit/test_release_prerequisites.py`, `tests/unit/test_release_tooling.py` and fresh installed CLI tests. Provider requests remain disabled; actual live-provider quality/compatibility is the separate unperformed L2/M3 gate. |
+
+The539-case standalone offline replay is a named subset, not all53 requirements proved by one aggregate count. Final security acceptance combines these mapped full-default tests, separately enabled real Docker, platform-specific native tests and exact artifact/resource read-back. Darwin-only metadata cases require actual macOS execution and are not counted as Linux passes.
+
 ## Known integration gaps discovered in the initial audits
 
 | Gap | Concrete baseline path | Acceptance consequence |
@@ -343,7 +355,7 @@ The product's eight security-review demonstrations are covered respectively by c
 | Baseline workflow/skill/ancestry validation gaps addressed in Phase6 candidate. | Strict WorkflowDefinition/VerificationSkill closure and case-folded ancestry validation now reject the initial in-memory probe failures. | Preserve permanent pure/config/proposal/apply/rollback negatives and execute E6 final gates. |
 | Unsupported implicit registration remains intentionally denied. | Protected FleetSpec role/workflow registry remains immutable; existing workflow references activate only typed supported skills with known commands. | E6 proves required backend command evidence changes. Arbitrary new roles, executable skills and protected authority are not implicitly registered. |
 | Baseline init replacement gap addressed by separate Phase6 publisher. | Native full-directory exchange, durable prepared journal, monotonic admission and explicit recovery implement replace/remove without reusing init. | Headed init cannot rebind even identical bytes/credential reference. Unknown source/tree/index changes are preserved and remain fenced. |
-| Opt-in live smoke is stale after Phase 3 bootstrap gating. | `tests/live/test_provider_smoke.py` publicly initializes pydantic-ai with fake sandbox and expects success; offline E2E asserts that fake init fails. | Repair fixture/setup and add real-provider+Docker journey before the authorized live gate. Existing fake-evidence assertions cannot prove isolated MVP behavior. |
+| Historical live-smoke setup mismatch repaired in Phase7. | The test now requires public PydanticAI+Docker initialization, actual independent evidence, separately gated provider/Docker inputs and credential redaction. | Offline prerequisite negatives pass; the actual live canary is still unrun, so this setup repair does not close L2/M3. |
 | Distributed quickstart lacks its runner recipe. | `pyproject.toml` sdist excludes tests; README points to `tests/docker/Dockerfile.runner`; recipe uses a mutable base. | Package or publish supported runner assets and prove installation without source-checkout-only files. Archive presence is not installed-user success. |
 | Release/platform infrastructure absent. | Empty `.github/workflows/`; no standalone scale/adversarial scripts, changelog/release process or owner license. | F7 obligations stay missing/unproven until artifacts and their actual execution evidence exist. |
 

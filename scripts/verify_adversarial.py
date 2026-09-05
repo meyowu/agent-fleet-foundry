@@ -22,6 +22,7 @@ _OFFLINE = (
     "tests/unit/test_fleet_patch.py",
     "tests/unit/test_organization_tree.py",
     "tests/contract/test_trust_store.py",
+    "tests/contract/test_docker_sandbox.py",
     "tests/contract/test_pydantic_ai_runtime.py",
     "tests/contract/test_organization_publication.py",
     "tests/contract/test_organization_journal.py",
