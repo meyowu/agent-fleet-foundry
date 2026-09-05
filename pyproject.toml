@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -21,6 +21,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "hatchling==1.32.0",
+  "pip==26.2.1",
   "mypy>=1.11,<2",
   "pytest>=8.3,<10",
   "pytest-asyncio>=0.24,<2",
@@ -35,11 +37,15 @@ fleet = "agent_fleet.cli.app:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_fleet"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"docs/USER_GUIDE.md" = "agent_fleet/assets/USER_GUIDE.md"
+
 [tool.hatch.build.targets.sdist]
 include = [
   "/src/agent_fleet",
   "/README.md",
   "/pyproject.toml",
+  "/docs/USER_GUIDE.md",
 ]
 
 [tool.ruff]
@@ -59,6 +65,7 @@ strict = true
 pretty = true
 show_error_codes = true
 files = ["src", "tests"]
+exclude = ["^src/agent_fleet/assets/"]
 plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
@@ -70,6 +77,7 @@ markers = [
   "e2e: subprocess-level end-to-end tests",
   "docker_integration: explicit opt-in tests against a real local Docker daemon",
   "live_provider: explicit opt-in test that contacts a configured model provider",
+  "installed_distribution: explicit opt-in fresh installation using a prepared wheelhouse",
 ]
 
 [tool.coverage.run]

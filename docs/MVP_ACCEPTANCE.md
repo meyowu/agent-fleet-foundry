@@ -4,7 +4,7 @@ This is a living review ledger, not a release declaration or a user guide. It ma
 
 ## Evidence boundary and update rules
 
-The initial audit on 2026-09-05 inspected the Phase 3 baseline at commit `c700de1fc357844113426d3352cf29b6ffeae0f1`, tree `eb778abcc5c073d4c58f54e6a55c7a04d6333ea4`. **Phase 4 and the complete Phase 5 are accepted by E4/E5.1/E5.2/E5.3 below.** Development checkpoints are committed/pushed through complete chat `a46b68800fb9725274db869f8c360b97a70c24ef`, tree `d99b632814b55d2a95b13e706b87d2017578c827`; remote main remains the initial baseline, rechecked at 15:34 UTC. The Phase 6 working-tree candidate has focused native/CLI/real-Docker evidence below, while final frozen gates are running. Whole-phase metadata remains 5. No complete MVP release or final GitHub merge is claimed. Exact results and failed attempts are retained in ExecPlans; older entries remain historical unless explicitly superseded.
+The initial audit on 2026-09-05 inspected the Phase 3 baseline at commit `c700de1fc357844113426d3352cf29b6ffeae0f1`, tree `eb778abcc5c073d4c58f54e6a55c7a04d6333ea4`. **Phases4–6 are locally accepted by E4/E5.1/E5.2/E5.3/E6 below.** Development checkpoints are committed/pushed through organization evolution `b42cdf9ccf5325acc99bf7fb43581329045c0490`, tree `bb5e669f9ce77ae45778b56c2286b4661b353a97`; remote main remains the initial baseline, rechecked at17:25 UTC. Phase7 is an implemented release candidate with focused E7 evidence and outstanding full/platform gates. Whole-phase metadata remains6. No complete public MVP release or final GitHub merge is claimed. Exact results and failed attempts are retained in ExecPlans; older entries remain historical unless explicitly superseded.
 
 - **Baseline:** relevant code and tests exist; this ledger's initial audit did not rerun those suites.
 - **Partial:** a working subset exists but does not meet the complete requirement.
@@ -12,6 +12,7 @@ The initial audit on 2026-09-05 inspected the Phase 3 baseline at commit `c700de
 - **Unproven:** implementation or historical evidence may exist, but the required current acceptance evidence has not been recorded.
 - **Accepted Phase 4 (E4):** the bounded Phase 4 behavior passed its final regression, full-suite, static, archive and real-Docker gates. Phase 5–7 and live-provider/license prerequisites remain open.
 - **Accepted Phase 5 (E5.1/E5.2/E5.3):** durable budgets/evidence, adaptive graph execution and persistent chat passed the frozen full behavioral/static gates and are committed/pushed through `a46b688`. Phase 6/7 and external release prerequisites are not accepted by these results.
+- **Accepted Phase 6 (E6):** reviewed organization evolution passed the frozen local default/Docker/static gates and is committed/pushed as b42cdf9. Linux execution, final installed-user/platform release evidence and external gates are not implied by local acceptance.
 - **Optional/deferred:** explicitly optional or outside this MVP; this is not a label for unfinished mandatory work.
 
 Each acceptance record must state exact commands, exit status, counts/skips, platform and evidence type; link available commit/tree identities and state/events/artifact hashes, explicitly identifying missing identity or raw-log records rather than inventing them. Record whether evidence came from fake runtime, offline PydanticAI TestModel/FunctionModel, a live provider, simulated sandbox, real Docker, or local-unsafe. Preserve failures and superseded evidence. Working-tree acceptance is separate from immutable release/publication evidence.
@@ -120,6 +121,22 @@ Implementation: bounded CoS FleetPatch output and pure content hashing, immutabl
 
 Local platform: macOS arm64/Colima; image `sha256:15245c81b1efb7a68bad269f03737955eb5e6a2b7fc79aa98faa49c93a899851`. The same final resource read-back passed again after the repaired freeze's Docker suite. No actual provider key, live-provider call, Linux native-publication acceptance, fresh-dependency installation or final merge is claimed by these tests. The living evolution plan retains failed fixture assumptions, the public error repair and their successful repeats, plus later checkpoint identities.
 
+### E7 — implemented release candidate, acceptance in progress
+
+The governing [release-candidate ExecPlan](../.agent/plans/2026-09-05-release-candidate.md) retains exact attempts, inputs and boundaries. The current local runner built from packaged digest/hash-pinned resources is `agent-fleet-runner:0.1.0-py314-v1`, image `sha256:2afebd51ae66f07096063b53fc14b6a45b18dd63b01d7f31ed0cb640c51da241`, on macOS arm64/Colima. Prepared dependencies bind Python3.14.6, lock55 and52 applicable wheels; preparation is explicitly network-enabled, but installation/execution is offline with provider requests denied.
+
+| Candidate gate | Observed result and boundary |
+| --- | --- |
+| Fresh wheel/sdist and installed public Docker journey | `3 passed in60.92s`. Each installs into a new environment outside the checkout with an empty cache, no system packages, frozen runtime/build constraints and lock-verified wheel hashes. Wheel/sdist prove packaged bytes,82 schemas/eight migrations, stable JSON, preview/fake-init refusal and an explicitly test-seeded fake flow. The separate installed wheel Docker journey uses public init, exact approvals, two independent five-test receipts and explicit code apply; no private init shortcut or real model key. |
+| Upgrade/readiness/tooling/assets focus | `18 passed in12.76s`; later configuration/audit/archive focus `11 passed in2.31s`. Realistic schema7 projection preserves paused approvals, active ownership/graph/chat/budgets/events/artifacts during migration8; prior-version refusal leaves it unchanged. This is a real database fixture, not execution of a historical binary. |
+| Scale/readiness focus | `9 passed,1 skipped in3.36s`; only actual live-provider case skipped.1000 explicit events+256 artifact events and256 artifacts/1MiB; append1.609682s, writes0.536526s, pagination0.064872s, read-back0.210839s, status0.004753s, DB+WAL5,844,544bytes, traced peak972,057bytes. One host's bounded smoke, not an SLA. |
+| Static and bounded independent audit | Ruff267/mypy219/schema82/whitespace passed. Independent read-only audit PASS with18 passes/1 deselected in0.66s covered environment isolation, resource packaging, CI permissions and prerequisite enforcement; it did not execute full installed/Docker/CI gates. |
+| Retained failures | Initial scale event-type assumption:1 failed/2 passed. Hardened installed Git fixture still supplied forbidden `-c`:3 failed, corrected without changing the production guard. A subsequent command used the wrong image variable:2 passed/1 setup error in35.24s, superseded by the correctly gated three-case pass above. |
+| Expanded installed guide replay | `3 passed in92.32s`: installed doctor healthy/required checks, exact Safe/src init, chat with cross-process approval/resume/duplicate submission, status/artifacts/logs, exact project trust creation/revoke, code apply and no-op confirmed recovery. A separate public registration uses only offline FunctionModel response substitution (installed Fleet imports exclusively) for CoS proposal/diff/whole-tree apply/inverse rollback and historical chat read-back. Each CLI process retains argv/exit/stdout/stderr in test-owned evidence; no environment/key values are captured. |
+| Expanded replay's retained setup failure | `1 failed,2 passed in80.80s`: model-substitution fixture updated projects/workflow registries but omitted bootstrap's registry, so actual credential preflight correctly refused before a provider call. Bound the same offline test adapter consistently; no production change, real credential or private init bypass. |
+| Standalone security replays | Offline539 passed in175.37s, zero skips/errors/failures; separate real Docker14 passed/4 deselected in133.52s, zero skips/errors/failures. These predate only the expanded installed-test fixture delta, not runtime changes; final frozen read-back remains required. |
+| Still required | Final frozen default/unit/contract/integration/offline E2E/security/Docker/archive gates, independent final guide review, actual six-platform CI, exact residue read-back and final GitHub merge. Authored CI is not execution evidence. License/publication and actual live-provider gates remain unperformed. |
+
 ## Six product differentiators
 
 | ID | Required observable property | Starting evidence | Remaining proof |
@@ -185,7 +202,7 @@ The Phase 5 proving suite must cover role tool isolation, CoS direct-write denia
 
 ## Phase 6 deliverables
 
-All nine deliverables now have an implemented candidate and focused E6 evidence. They are not yet whole-phase accepted. The last column remains a regression obligation through final freeze and subsequent release work.
+All nine deliverables are accepted locally under E6 and checkpoint b42cdf9. The candidate descriptions below identify the implementation that passed those gates; the last column remains a regression obligation through Phase7 release work. Local acceptance is not Linux/native, fresh-user, live-provider or public-release acceptance.
 
 | ID | Deliverable | Starting evidence / missing work | Required proving observation |
 | --- | --- | --- | --- |
@@ -205,27 +222,27 @@ Phase 6 must prove every roadmap negative case: invalid schema, traversal/symlin
 
 | ID | Deliverable | Starting evidence / missing work | Required proving evidence |
 | --- | --- | --- | --- |
-| F7-01 | Linux/macOS E2E matrix; Windows limitations and available tests. | Missing CI: `.github/workflows/` is empty; historical local macOS/Docker evidence only. | Recorded Linux/macOS jobs for supported Python versions where feasible, actual platform/tool versions and failures; document POSIX no-follow/process/local-Unix Docker constraints rather than claiming Windows support. Q1–Q6, M1. |
-| F7-02 | SQLite migration upgrades. | Baseline migrations 0001–0003 and v1/reopen/newer-schema tests. | Upgrade realistic previous-version rows including paused approvals, active leases, chat/plan/FleetPatch state; preserve events/artifacts and fail closed in older binaries. Q3, P4–P6. |
+| F7-01 | Linux/macOS E2E matrix; Windows limitations and available tests. | Candidate `.github/workflows/ci.yml`: six OS/Python jobs plus complete-default/installed/Docker jobs, read-only permissions and pinned actions; not yet run. | Actual jobs, versions, Linux native exchange and failures; Windows/remote filesystems explicitly unsupported. Q1–Q6, M1. |
+| F7-02 | SQLite migration upgrades. | Eight migrations; E7 realistic schema7 projection with paused approvals/active claims/leases/graphs/chat/budgets plus real organization-head reopen. | Preserve exact old rows/events/artifacts and current-head idempotency; older-version refusal without mutation. Q3, P4–P7. |
 | F7-03 | Orphan Docker/worktree recovery. | Baseline exact-run recovery and repeated-cancellation cleanup. | Preserve existing real Docker recovery matrix; extend node/parallel/apply crash cases; reconcile only exact owned resources and record zero outstanding leases/container residue. Q4, Q6, P5, P6. |
 | F7-04 | Stable CLI errors and JSON schemas. | Baseline versioned envelope/error enums/schema generation. | All new modes/slash operations/data/error surfaces have consistent persisted schemas and stable errors; compare generated schema files and package copies. Q1, Q3, Q5, P4–P6. |
-| F7-05 | Reproducible versioned runner image. | Mutable default `python:3.14-slim`; README mutable `phase3` image tag; test recipe excluded from distribution. | Reviewed immutable base/digest/platform policy, version strategy and install-accessible recipe/instructions; built image inspection and packaged-quickstart proof. Q5, Q6, M1. |
-| F7-06 | Security checklist and adversarial test script. | Baseline normative security list and many tests; no standalone release checklist/script. | All 53 cases below and new phase boundaries mapped to current results; reproducible manual adversarial bootstrap with sentinel/no-residue evidence. Q2, Q6, M2. |
-| F7-07 | Complete README quickstart and architecture diagrams. | README/architecture exist but reflect Phase 3. | Update after behavior exists; fresh user can install, initialize, chat, approve, inspect/apply, evolve/rollback and recover using actual commands. Detailed `USER_GUIDE.md` is still pending, not supplied by this ledger. M1. |
-| F7-08 | Contribution guide and useful issue templates. | Minimal CONTRIBUTING exists; no issue templates. | Contributor clean setup/checks and boundary expectations match CI. Decide whether issue templates add value; absence alone is not a mandatory blocker. Q1, review. |
-| F7-09 | Changelog and release process. | Missing changelog/release procedure. | Record compatibility/migration/platform/security changes; explicit build/test/freeze/review/version/license/live-gate/publish procedure and rollback policy. Package publication is not implied by implementation. Review, Q5. |
-| F7-10 | Generated configuration schemas. | Baseline 28-schema generation/distribution path. | Generate every changed/new public/persistent contract; no drift; package includes schemas and migrations required for installed behavior. Q1, Q5. |
-| F7-11 | Event/artifact scale smoke. | Missing scale test. | Bounded representative event/artifact volume; measured append/list/read/status latency, database size and memory constraints; no quadratic unbounded history or lost ordering. P7. |
-| F7-12 | Optional local OpenTelemetry-compatible instrumentation. | No implementation found. | Optional: either record deliberate deferral or test bounded/redacted local instrumentation; no mandatory external exporter/service. This row alone does not block MVP. Review/P7 if selected. |
-| F7-13 | Dependency review and lock policy. | `uv.lock`, declared dependency ranges and manual lock checks exist. | Reviewed dependency/image versions and update policy; reproducible frozen CI environment; documented supported runtime range and upgrade behavior. Q1, Q5, review. |
-| F7-14 | Explicit data handling/provider disclosure. | README documents control-plane HTTPS, selected context disclosure and token/logging limitations. | Extend to durable conversations, trust files/backups, proposals, artifacts, retention/export/deletion and actual logging defaults. No raw provider credentials in retained data. Q2, review. |
+| F7-05 | Reproducible versioned runner image. | E7 packaged canonical runner: pinned multi-platform OCI index and five required wheel hashes, exact installed bytes and actual local image build. | Preserve installed quickstart/inspection; input identity is not identical cross-builder layers or vulnerability attestation. Q5, Q6, M1. |
+| F7-06 | Security checklist and adversarial test script. | Candidate `SECURITY.md` and `scripts/verify_adversarial.py`, explicit offline/Docker inputs and structured JUnit/hash/skip/verdict records. | Run named53-case mapping and new boundary regressions, sentinel/no-residue Docker proof; script existence is not a pass. Q2, Q6, M2. |
+| F7-07 | Complete README quickstart and architecture diagrams. | Candidate16-chapter `docs/USER_GUIDE.md`, bundled canonical bytes, installed resource quickstart, architecture/boundaries/examples and release links. | Independent guide/readiness review and fresh-user flows; distinguish installed public flow from source-only comprehensive chat/evolution tests. M1. |
+| F7-08 | Contribution guide and useful issue templates. | Expanded CONTRIBUTING with frozen setup, safety boundaries, all test layers and release procedures. Issue templates deliberately omitted as unnecessary for this minimal candidate. | Commands match actual CI; no mandatory missing-template gate. Q1, review. |
+| F7-09 | Changelog and release process. | Candidate `CHANGELOG.md` and `docs/RELEASE.md`: migration/platform/security compatibility, freeze/review/merge and external release gates. | Verify exact evidence and final delivery; package publication is not implied. Review, Q5. |
+| F7-10 | Generated configuration schemas. |82 generated schemas/eight migrations, source drift check and fresh installed wheel/sdist read-back passed. | Repeat after final metadata/docs freeze. Q1, Q5. |
+| F7-11 | Event/artifact scale smoke. | E7 `tests/integration/test_state_scale.py` measures1000 events/256 artifacts, exact pagination/read-back/reopen and bounded storage/memory/latency. | Preserve full-suite regression; one fixed workload is not an asymptotic proof or production SLA. P7. |
+| F7-12 | Optional local OpenTelemetry-compatible instrumentation. | Deliberately deferred: existing local structured events/artifacts support this MVP; no measured need for another telemetry path. | No mandatory exporter/service and no instrumentation claim. Optional, not a blocker. |
+| F7-13 | Dependency review and lock policy. | `docs/DEPENDENCIES.md`, exact Hatchling/pip dev pins, lock55, hash-verified platform wheelhouse and no-config/no-index fresh installation. | Actual CI and final lock checks; no CVE scan or signed attestation claimed. Q1, Q5, review. |
+| F7-14 | Explicit data handling/provider disclosure. | `docs/DATA_HANDLING.md` covers retained state/chat/trust/proposals/artifacts/provider context, coherent backup and no automatic TTL/deletion. | Current redaction/boundary regression and guide review; no claim that BYOK inference keeps all context local. Q2, review. |
 | F7-15 | Owner license decision before public release. | Unproven: no LICENSE or explicit license selection in the active plan. | Record the owner's exact authorization and selected license, then validate metadata/package inclusion. Do not choose or imply a license from repository visibility. External gate L1. |
 
 | Release gate | Starting status | Closing evidence |
 | --- | --- | --- |
-| R1 Default suite passes offline after dependencies are installed. | E5.3: 1472 passed, 14 explicitly gated skips on the unchanged behavioral source/test checksum; separate metadata refresh passed. | Repeat Q1–Q5 on the eventual full-MVP release tree; current success does not pre-accept later code or the eventual full-MVP release. |
-| R2 Optional Docker integration suite passes. | E5.2: twelve real-Docker cases passed; zero managed containers and zero active leases in 22 test databases. | Repeat Q6 for the eventual full-MVP release, retaining exact resource/inspection and candidate evidence. |
-| R3 Manual live-provider canary recorded. | Unproven; stale smoke must be repaired; no explicitly supplied disposable credential. | L2 and M3. Fake runtime or TestModel/FunctionModel is insufficient. |
+| R1 Default suite passes offline after dependencies are installed. | E6:1973 passed,15 explicitly gated skips; Phase7 full frozen repeat pending. | Repeat Q1–Q5 on the final release-candidate tree; current success does not pre-accept later code or public release. |
+| R2 Optional Docker integration suite passes. | E6:fourteen actual Docker cases passed with exact residue read-back; E7 rebuilt runner's separate14-case replay also passed. | Repeat Q6 for final freeze and inspect exact resource/inspection/candidate evidence. |
+| R3 Manual live-provider canary recorded. | Setup repaired to require real Docker and independent live inputs; readiness negatives pass offline. Actual gate remains unrun: no supplied disposable credential. | L2 and M3. Fake runtime or TestModel/FunctionModel is insufficient. |
 | R4 Every product MVP user-success criterion demonstrated. | U1–U12 below remain partial/unproven. | Current automatic/manual evidence for each individual row. |
 | R5 Security release gates met or explicitly documented as blocking gaps. | Baseline security foundation; final candidate unproven. | S01–S11 and mapped cases below; documenting a mandatory gap does not count as passing it. |
 | R6 README distinguishes enforcement/guidance and isolated/unsafe modes. | Baseline distinction exists. | Current guide/CLI review and M1; preserve honest fake/unsafe/loopback/host trust limitations. |
@@ -236,7 +253,7 @@ Phase 6 must prove every roadmap negative case: invalid schema, traversal/symlin
 
 | ID | Product criterion | Starting evidence / gap | Required closure |
 | --- | --- | --- | --- |
-| U1 | Install package and run doctor. | Package/CLI/distribution tests exist; no fresh wheel/sdist installation proof. Doctor exit zero means report completed, not `healthy=true`. | Q5/M1: install each distribution in a clean environment, invoke installed `fleet version` and `fleet doctor --json`, check required diagnostics. |
+| U1 | Install package and run doctor. | E7 fresh wheel/sdist installs and version/resources/schema checks; expanded installed public-Docker doctor explicitly asserts healthy=true and every required check. | Preserve Q5/M1 after final content freeze; doctor exit zero alone is insufficient. |
 | U2 | Initialize Git repository and inspect profile, commands, ProjectKnowledge and proposal. | Baseline preview/profile/security/bootstrap paths. | Q2/Q4/M1: exact provenance/artifacts/diff and no preview writes; malicious repo content never executes. |
 | U3 | Initialize explicit provider/model plus Docker; complete disposable canary. | Public Docker bootstrap exists; manual live-provider path unproven. | Q6/M3: explicit selected provider/credential reference, immutable Docker boundary and successful report with clean publication/cleanup. |
 | U4 | Enter chat and request small change. | Accepted E5.3: `tests/integration/test_conversations.py`, `tests/e2e/test_persistent_chat_cli.py` and the public initialization/approval/verification/apply journey in `tests/docker/test_conversation_journey.py`, retained in the full Phase 5 gates. | Complete eventual fresh installed-user/live-provider gates; offline FunctionModel/Docker evidence does not establish those separate outcomes. |
@@ -245,7 +262,7 @@ Phase 6 must prove every roadmap negative case: invalid schema, traversal/symlin
 | U7 | Receive patch, tests, verdict, events and hashes. | E5.1/E5.2 accept typed criterion and joined-patch/cleanup bindings plus independent Docker verification. | Q2/Q4/P5/M3: preserve actual byte read-back and risks/proof gaps through chat and explicitly authorized live-provider acceptance. |
 | U8 | Restart CLI and inspect/resume. | E4/E5.1/E5.2 accept exact role/graph approval restoration, accounting and exclusive ownership. Accepted E5.3 chat restart has `tests/contract/test_conversation_store.py`, `tests/integration/test_conversations.py`, `tests/integration/test_conversation_safety.py`, `tests/e2e/test_persistent_chat_cli.py` and `tests/docker/test_conversation_journey.py`. | Preserve accepted P5 restart behavior; P6 configuration-operation recovery remains separate. No generic replay safety or SDK history restoration follows from exact supported checkpoints. |
 | U9 | Apply candidate only after explicit approval. | Baseline `patch apply` explicit command and dirty/diverged guards. | Q4/M1: no silent target writes, explicit reviewed apply changes expected bytes; verifier changes excluded; drift/config changes refuse safely. |
-| U10 | Request fleet change, inspect and apply or reject. | Schema only. | P6/M1: proposal leaves active files unchanged; apply changes subsequent behavior, reject leaves it unchanged, rollback records a new operation. |
+| U10 | Request fleet change, inspect and apply or reject. | E6 accepts actual CoS proposal, immutable diffs, native apply/new inverse rollback and required backend verification changes through public source CLI/Docker journeys. | Preserve P6 and release/platform evidence; ignoring a proposal leaves it unapplied. No model self-application or permission expansion. |
 | U11 | Revoke persistent permission. | Accepted at the E4 supported scope: revoke/reset survives reopen and invalidates exact grants/rules. | Retain P4 through later phases and demonstrate in M1. Revocation does not remove underlying Balanced defaults; Safe mode exposes the next required approval. |
 | U12 | Default suite needs no real model/network/Docker. | E5.2: 1344 ordinary tests passed; twelve Docker and one live-provider case skipped with opt-ins explicitly disabled. | Repeat Q4 on the full-MVP tree; retain offline adapter coverage and exact skip reasons. |
 
@@ -263,7 +280,7 @@ Cross-cutting product acceptance: `COMPLETED` is lifecycle state; `verified_comp
 | S06 | Invocation contains no host path, sandbox handle, credential, grant or executor. | Baseline strict runtime request/context tests; extend node/dependency/repair/chat context and prove denied injection. Q2/P5. |
 | S07 | Profiling cannot execute code; detected commands are unauthorized requests. | Baseline profiling/Git defenses; Phase 4 command trust must not equate detection with self-grant. Q2/P4. |
 | S08 | CompletionGate uses authoritative evidence; simulated PASS cannot verify. | Baseline evidence gate; test graph joins and criterion mapping without trusting model claims. Q2/P5/Q6. |
-| S09 | Dependencies/images reviewed and pinned under policy. | Lock exists; mutable runner recipe and documented update policy still need work. Q1/Q5/F7-05/F7-13. |
+| S09 | Dependencies/images reviewed and pinned under policy. | E7 packaged digest/hash-pinned runner, actual local build and installed byte checks; explicit lock/dependency/update policy. No CVE/signed attestation claim. Q1/Q5/F7-05/F7-13. |
 | S10 | Manual adversarial bootstrap recorded. | Historical Phase 3 report exists; final changed candidate needs M2 with exact artifacts, sentinels and residual-resource checks. |
 | S11 | Permission allowlists are never equated with OS isolation. | Baseline documentation is honest; review all new help, guide and completion summaries. Trust mode cannot upgrade fake/local-unsafe capabilities. |
 
@@ -332,7 +349,7 @@ The product's eight security-review demonstrations are covered respectively by c
 
 ## Proving commands and manual protocols
 
-Commands below identify the proving surface. P4/P5 and P6 name present tests; E5.3 records accepted Phase 5 evidence and E6 records candidate results. **P7 proposed files remain future requirements.** No command has been run merely by being listed.
+Commands below identify the proving surface. P4–P7 name present tests; E5.3/E6 record accepted local phases and E7 records release-candidate proof with outstanding final gates. No command has been run merely by being listed.
 
 ### Existing offline commands
 
@@ -419,7 +436,8 @@ uv run pytest -q tests/integration/test_fleet_patch_proposals.py tests/integrati
 P7 — fresh installed distributions and measured scale:
 
 ```bash
-uv run pytest -q tests/e2e/test_installed_distribution.py tests/integration/test_state_scale.py
+uv run --offline pytest -q tests/integration/test_state_scale.py tests/integration/test_release_upgrades.py
+AGENT_FLEET_ENABLE_INSTALL_TESTS=1 AGENT_FLEET_TEST_WHEELHOUSE=/absolute/prepared/wheelhouse uv run --offline pytest -q -m 'installed_distribution and not docker_integration' tests/release
 ```
 
 P4–P7 must run offline with generated fixture repositories and temporary Fleet state unless explicitly marked real Docker. Installed-distribution acceptance must exercise both wheel and sdist with declared dependencies in a fresh environment, outside the source checkout, using the installed `fleet` executable. Verify packaged schemas/migrations/prompts/runner/user assets through their installed access path and demonstrate representative JSON errors and a complete offline supported flow.

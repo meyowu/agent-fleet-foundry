@@ -1,0 +1,152 @@
+name: release-candidate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [codex/mvp-completion]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AGENT_FLEET_ENABLE_LIVE_PROVIDER_TESTS: "0"
+  AGENT_FLEET_ENABLE_DOCKER_TESTS: "0"
+  AGENT_FLEET_ENABLE_INSTALL_TESTS: "0"
+  UV_PYTHON_DOWNLOADS: never
+
+jobs:
+  platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+        python: ["3.12", "3.13", "3.14"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+          python-version: ${{ matrix.python }}
+          enable-cache: false
+        env:
+          UV_PYTHON_DOWNLOADS: automatic
+      - name: Explicit interpreter preparation
+        run: uv python install
+        env:
+          UV_PYTHON_DOWNLOADS: automatic
+      - name: Explicit dependency setup and versions
+        run: |
+          uv sync --all-extras --frozen
+          uv lock --check
+          uv run python --version
+          git --version
+          uv --version
+      - name: Static contracts
+        run: |
+          uv run --offline ruff format --check .
+          uv run --offline ruff check .
+          uv run --offline mypy src tests
+          uv run --offline python -m agent_fleet.schemas.generate --check
+          git diff --exit-code
+      - name: Offline platform, native publication and fresh-process E2E
+        run: >-
+          uv run --offline pytest -q
+          tests/unit tests/contract tests/e2e
+          tests/integration/test_release_upgrades.py
+          tests/integration/test_state_scale.py
+          tests/integration/test_fleet_patch_proposals.py
+          tests/integration/test_fleet_patch_interfaces.py
+          tests/integration/test_fleet_patch_recovery.py
+          tests/integration/test_verification_skill_workflow.py
+          tests/integration/test_distribution.py
+
+  default:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+          python-version: "3.14"
+          enable-cache: false
+        env:
+          UV_PYTHON_DOWNLOADS: automatic
+      - name: Explicit interpreter preparation
+        run: uv python install
+        env:
+          UV_PYTHON_DOWNLOADS: automatic
+      - run: uv sync --all-extras --frozen
+      - run: uv run --offline pytest -q --durations=15
+
+  installed:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+          python-version: "3.14"
+          enable-cache: false
+        env:
+          UV_PYTHON_DOWNLOADS: automatic
+      - name: Explicit interpreter preparation
+        run: uv python install
+        env:
+          UV_PYTHON_DOWNLOADS: automatic
+      - name: Explicit dependency preparation
+        run: |
+          uv sync --all-extras --frozen
+          uv run python scripts/prepare_release_dependencies.py --destination "${RUNNER_TEMP}/fleet-wheelhouse"
+      - name: Fresh wheel and sdist, offline
+        env:
+          AGENT_FLEET_ENABLE_INSTALL_TESTS: "1"
+          AGENT_FLEET_TEST_WHEELHOUSE: ${{ runner.temp }}/fleet-wheelhouse
+        run: uv run --offline pytest -q -m 'installed_distribution and not docker_integration' tests/release
+
+  docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.9"
+          python-version: "3.14"
+          enable-cache: false
+        env:
+          UV_PYTHON_DOWNLOADS: automatic
+      - name: Explicit interpreter preparation
+        run: uv python install
+        env:
+          UV_PYTHON_DOWNLOADS: automatic
+      - name: Explicit runner and dependency preparation
+        run: |
+          uv sync --all-extras --frozen
+          docker build --pull -t agent-fleet-runner:0.1.0-py314-v1 src/agent_fleet/assets/runner
+          docker image inspect agent-fleet-runner:0.1.0-py314-v1 --format '{{.Id}}'
+          uv run python scripts/prepare_release_dependencies.py --destination "${RUNNER_TEMP}/fleet-wheelhouse"
+      - name: Native Docker boundary and fresh installed public journey
+        env:
+          AGENT_FLEET_ENABLE_DOCKER_TESTS: "1"
+          AGENT_FLEET_DOCKER_TEST_IMAGE: agent-fleet-runner:0.1.0-py314-v1
+          AGENT_FLEET_ENABLE_INSTALL_TESTS: "1"
+          AGENT_FLEET_TEST_WHEELHOUSE: ${{ runner.temp }}/fleet-wheelhouse
+        run: uv run --offline pytest -q -m docker_integration tests/docker tests/release

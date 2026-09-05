@@ -469,6 +469,8 @@ A natural-language organizational request produces a reviewable FleetPatch; noth
 
 ## Phase 7 — Hardening, packaging, documentation, and release candidate
 
+Status on2026-09-05: implemented candidate under `.agent/plans/2026-09-05-release-candidate.md`, following accepted Phase6 checkpoint b42cdf9. Packaged assets/guide, fresh-install/upgrade/scale tests, security tooling and pinned CI now exist; focused installed wheel/sdist/public-Docker proof passed. Final frozen full/platform gates and GitHub merge remain pending. The owner-license and live-provider requirements below remain separate unperformed public-release gates, not waived acceptance.
+
 ### Goal
 
 Turn the working MVP into an auditable OSS release candidate.

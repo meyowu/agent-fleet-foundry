@@ -2,7 +2,7 @@
 
 本指南用中文解释产品，保留命令、字段和架构名的 English 原名。目标是让你理解每一步会做什么、授权什么，以及什么证据才算完成。
 
-文档状态：根据当前 Phase 6 实现编写；发布候选版的全新安装、打包 runner 和跨平台演练尚在收尾。确切已验收范围见 [MVP acceptance ledger](MVP_ACCEPTANCE.md)，不要把这里的操作示例当成已经执行过的验收记录。当前版本没有已获授权的开源许可证，也没有真实模型供应商调用的验收结论。
+文档状态：Phase6 已通过本地验收并推送为 `b42cdf9`。Phase7 已完成首轮全新 wheel/sdist 安装和安装后公开 Docker 练习验证；最终冻结检查与跨平台 CI 仍单独记录。确切范围见 [MVP acceptance ledger](MVP_ACCEPTANCE.md)，不要把示例命令当成执行记录。当前没有已获授权的开源许可证，也没有真实模型供应商调用的验收结论。安装包附带本指南全文；跨文档相对链接请在同版本源码仓库中浏览。
 
 ## 目录
 
@@ -83,7 +83,9 @@ uv run fleet --help
 
 ```bash
 uv build
-uv tool install /absolute/path/to/agent_fleet-0.1.0-py3-none-any.whl
+uv venv /absolute/path/to/fleet-cli --python 3.14
+source /absolute/path/to/fleet-cli/bin/activate
+uv pip install /absolute/path/to/agent_fleet-0.1.0-py3-none-any.whl
 fleet version --json
 ```
 
@@ -105,14 +107,42 @@ export AGENT_FLEET_HOME=/absolute/path/to/fleet-learning-state
 
 Fleet 只执行已经存在于本地的镜像，**不会自动 pull、build 或安装项目依赖**。初次准备是操作者的独立操作。
 
-当前源码中的 `tests/docker/Dockerfile.runner` 提供最小 Python/std-lib runner。它清除基础镜像继承的环境配置；Docker adapter 在每次命令时设置非 root、网络关闭、资源上限、挂载和其他隔离参数。当前该 recipe 不包含 pytest，且还不是已完成的安装包 runner 分发接口。
+runner v1 随 wheel/sdist 分发：固定 Python3.14 基础镜像的 OCI digest 和五个真实 pytest wheel 的版本/哈希。先激活刚安装 Fleet 的环境，再获取资源目录；不要用另一个全局 Python 查找安装资源。
 
 ```bash
-docker build --pull -t agent-fleet-runner:local \
-  -f tests/docker/Dockerfile.runner .
+python -c "from importlib.resources import files; print(files('agent_fleet').joinpath('assets/runner'))"
+docker build --pull -t agent-fleet-runner:local /printed/runner/directory
 ```
 
-这是源码目录中的显式联网准备示例，不是产品运行期间的自动行为。对于使用 pytest 或其他工具的真实项目，必须事先提供包含这些真实工具与依赖、且满足 sandbox 环境检查的 runner。发布候选版的固定基础镜像、安装包资源和详细构建说明正在单独验收；不要把本地测试使用过的镜像标签当成公开可下载的镜像。
+把最后一个路径替换为上一步打印的真实目录。源码用户也可从 `src/agent_fleet/assets/runner` 构建。构建可能联网下载基础镜像和 hash-checked 依赖；运行时 Fleet 只接受已经存在的本地镜像，并绑定实际 image ID。它清除继承的镜像环境配置，由 Docker adapter 逐命令设置非 root、关闭网络、资源上限和挂载。其他项目工具必须事先经你审查后装入独立 runner；不会自动补装。固定输入不保证不同平台/构建器的镜像逐字节相同，也不是没有漏洞的证明。
+
+### 公开学习项目：无需模型 key
+
+安装包带有一个故意保留除零错误的小项目。只复制到**不存在的新目录**：
+
+```bash
+python -c "from importlib.resources import files; import shutil,sys; shutil.copytree(str(files('agent_fleet').joinpath('assets/canary')), sys.argv[1], ignore=shutil.ignore_patterns('__pycache__','*.pyc'))" /absolute/path/to/new-fleet-learning
+git -C /absolute/path/to/new-fleet-learning init --initial-branch=main
+git -C /absolute/path/to/new-fleet-learning add .
+git -C /absolute/path/to/new-fleet-learning commit -m "Learning baseline"
+export AGENT_FLEET_HOME=/absolute/path/to/separate-fleet-learning-state
+fleet init /absolute/path/to/new-fleet-learning --runtime fake --sandbox docker \
+  --docker-image agent-fleet-runner:local --trust-mode safe --allow-path src --yes
+fleet run "Fix the canary behavior" --project /absolute/path/to/new-fleet-learning --json
+```
+
+Git commit 使用你自己的身份；如尚未配置，按 Git 提示设置该练习仓库的身份。遇到 `paused_for_approval`，用返回的 `pending_approval_id` 查看请求并明确批准，再恢复同一 Run：
+
+```text
+fleet permissions explain <request-id> --json
+fleet approve <request-id> --once --json
+fleet resume <run-id> --json
+fleet status <run-id> --json
+fleet patch show <run-id> --json
+fleet patch apply <run-id> --json
+```
+
+Engineer 与 Verifier 的请求分别审阅，不能把前一个角色的授权当成后一个角色的授权。最终应看到 `ready_for_review`、`verified_complete=true`、两个独立角色的 `python-test` 命令记录和空的 proof gaps；显式 apply 之前，目标源码保持原样。此项目原有5个测试，修复前1个失败，修复后5个通过。它证明真实隔离验证与交付流程，不证明通用模型推理；真实模型要在另一个明确配置的 BYOK 项目中使用。
 
 ## 3. 首次初始化
 
@@ -591,7 +621,18 @@ uv run pytest -q
 
 真实 Docker 测试需事先准备本地镜像，设置 Docker opt-in 和镜像变量。完整 suite 包含真实 pytest 的项目命令，stdlib-only runner 不足以通过全部场景。具体命令与准确结果见 README/验收账本，不把历史数字当成最新结果。
 
-真实供应商 smoke 是另一项明确授权、可能计费的验收。其历史 setup 的发布候选修复尚未完成；不要为了运行它发现或复用任意环境 key。没有明确 opt-in、受支持模型与指定引用时必须跳过；跳过不是通过。
+真实供应商 smoke 是另一项明确授权、可能计费的验收。setup 已改为真实 Docker，并同时要求 live 与 Docker opt-in、本地 runner、受支持模型和明确 credential reference。未启用 live 时跳过；明确启用但缺少任一前置输入时 setup 失败。实际 live canary 尚未执行，不要发现或复用任意环境 key；跳过不是通过。
+
+发布检查把联网准备与离线安装分开。下面的准备命令只接受不存在的新目录，并记录当前 lock 与 wheel 的哈希；明确使用当前已激活环境的 Python。准备结束后再打开安装测试：
+
+```bash
+uv run python scripts/prepare_release_dependencies.py --destination /absolute/path/to/new-wheelhouse
+AGENT_FLEET_ENABLE_INSTALL_TESTS=1 \
+AGENT_FLEET_TEST_WHEELHOUSE=/absolute/path/to/new-wheelhouse \
+uv run --offline pytest -q -m 'installed_distribution and not docker_integration' tests/release
+```
+
+普通默认测试不会下载依赖，也不会自动运行这些安装案例。显式安装 opt-in 缺少 wheelhouse、哈希不匹配或依赖缺失时失败，不会借用开发环境中的包。安装后的公开 Docker 练习另需 Docker opt-in。安全回放、CI 矩阵与发布限制见 [发布流程](RELEASE.md)；数据去向见 [数据处理说明](DATA_HANDLING.md)。公开学习项目是打包数据而非运行库，单独执行真实 pytest 检验，不纳入 Fleet 运行库的 mypy 模块发现。
 
 修改跨模块、安全、持久化或公开契约前读 [AGENTS](../AGENTS.md) 与 [ExecPlan 规则](../.agent/PLANS.md)，维护 living plan。分层是 `cli → application → domain/ports`，adapter 实现项目自有接口。模型资源操作必须通过 Gateway/Broker，新 sandbox 不能成为隐式 fallback。
 

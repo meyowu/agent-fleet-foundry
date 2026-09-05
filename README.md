@@ -8,9 +8,11 @@ This repository implements **Phase 0 through Phase 6**: deterministic repository
 
 **Phase 6 behavioral acceptance passed on 2026-09-05:** the frozen default suite passed 1,973 tests with 15 explicit skips, and the separately enabled real-Docker suite passed fourteen. Phase 7 remains open; this is not a completed MVP release. The [completion plan](.agent/plans/2026-09-05-mvp-completion.md) and [acceptance ledger](docs/MVP_ACCEPTANCE.md) distinguish accepted behavior from remaining requirements, including the unrun live-provider gate and owner license decision.
 
-The development branch contains three accepted [Phase 5 milestones](.agent/plans/2026-09-05-adaptive-workflow-chat.md): budgets/evidence (`ab28aaa`), [adaptive graphs](.agent/plans/2026-09-05-adaptive-graph.md) (`7a70b1a`), and [persistent chat](.agent/plans/2026-09-05-persistent-chat.md) (`a46b688`). The complete chat checkpoint is committed and pushed to `codex/mvp-completion`, with exact remote read-back. `main` remains `c700de1`. Phase 6's full frozen behavioral gates have passed; metadata/package refresh and its checkpoint are recorded separately in the living plan. Local acceptance is not a main-branch merge or completed MVP release.
+The development branch contains three accepted [Phase 5 milestones](.agent/plans/2026-09-05-adaptive-workflow-chat.md): budgets/evidence (`ab28aaa`), [adaptive graphs](.agent/plans/2026-09-05-adaptive-graph.md) (`7a70b1a`), and [persistent chat](.agent/plans/2026-09-05-persistent-chat.md) (`a46b688`), followed by accepted organization evolution (`b42cdf9`). All are committed and pushed to `codex/mvp-completion`, with exact remote read-back. `main` remains `c700de1`. Local acceptance is not a main-branch merge or completed public MVP release.
 
-The [detailed user guide (简体中文)](docs/USER_GUIDE.md) explains initialization, BYOK, chat, adaptive teams, exact permissions, evidence/code review, organization evolution and both recovery procedures. Its installed-runner/platform sections remain explicitly provisional until the release-candidate checks finish.
+**Phase7 candidate proof:** fresh wheel/sdist and installed public-Docker checks passed **3 tests in92.32s**, covering installed resources/schemas/migrations, doctor, Safe/src initialization, chat with cross-process approval/retry, independent five-test command evidence, explicit code apply, persistent-rule revocation and no-op exact recovery. A separate public registration substitutes only offline FunctionModel responses to prove installed CoS proposal/diff/apply/rollback; this is not a stock fake capability or live-provider pass. Standalone offline security replay passed539 tests in175.37s; separate Docker replay passed14 in133.52s. The [release plan](.agent/plans/2026-09-05-release-candidate.md) retains failures and evidence boundaries. Final frozen full/platform CI, independent final review and GitHub merge are still pending.
+
+The [detailed user guide (简体中文)](docs/USER_GUIDE.md) explains installation, initialization, BYOK, chat, adaptive teams, exact permissions, evidence/code review, organization evolution and both recovery procedures. It is also bundled in the distribution. Phase7's first fresh wheel/sdist and installed public-Docker journeys passed locally; final frozen/platform/release evidence remains separate.
 
 Three sandbox providers are registered. `DockerSandboxProvider` is the isolated path and creates one inspected, resource-bounded, network-disabled container per reviewed command from an already-local immutable image. `FakeSandboxProvider` records commands without executing them. `LocalUnsafeSandboxProvider` executes directly on the host only after a separate `--allow-unsafe-local` confirmation and can never count as isolated evidence. Provider selection is exact and immutable for a project/run; Docker failure never falls back to host execution.
 
@@ -64,6 +66,22 @@ Final behavioral freeze: `e1d946ceeeb2b5ec7f3a47d7c6353ce6b6a0b5f35b740f81804018
 
 Post-acceptance metadata refresh changed only the phase5→6 marker and its two assertions: source/test checksum `6450c9c4d85bf1f9cf091de152389abcf0740dd0f2140f882c574c00478cb244`. CLI/archive/schema checks passed **36 tests in 30.70s**; Ruff249/lint, mypy213,82-schema drift and whitespace checks passed. The archives are checked against existing locked dependencies; fresh dependency installation remains Phase7 work.
 
+## Installed quickstart
+
+No PyPI publication or public runner registry is assumed. Build the reviewed checkout with `uv build`, or obtain the exact reviewed local wheel. Install it into a new environment outside your target project:
+
+```bash
+uv venv /absolute/path/to/fleet-cli --python 3.14
+source /absolute/path/to/fleet-cli/bin/activate
+uv pip install /absolute/path/to/agent_fleet-0.1.0-py3-none-any.whl
+fleet version --json
+python -c "from importlib.resources import files; print(files('agent_fleet').joinpath('assets/runner'))"
+```
+
+The last command prints the installed build context. Build explicitly with `docker build --pull -t agent-fleet-runner:0.1.0-py314-v1 /printed/runner/directory`; dependency/image preparation may use the network, but Fleet never performs it automatically. The runner pins the Python base by OCI digest and five pytest wheels by version/hash. [Runner policy](src/agent_fleet/assets/runner/README.md) states the actual reproducibility limits.
+
+For a first exercise, use the [packaged learning project and step-by-step guide](docs/USER_GUIDE.md#公开学习项目无需模型-key). Copy into a new directory, create its initial Git commit, select a disjoint state directory, and use fake runtime plus real Docker. Review exact approvals, inspect `verified_complete` and command evidence, then apply the code explicitly. This is genuine isolated testing with a deterministic model, not live model reasoning.
+
 ## Development setup
 
 Python 3.12–3.14 and Git 2.45 or newer are required. The Git floor is needed for the hardened `--no-lazy-fetch` execution ceiling. `uv` is the preferred contributor tool.
@@ -82,26 +100,26 @@ Docker mode requires a local Linux Docker daemon reachable through a local Unix 
 
 ```bash
 docker build --pull \
-  -t agent-fleet-runner:phase3 \
-  -f tests/docker/Dockerfile.runner .
+  -t agent-fleet-runner:0.1.0-py314-v1 \
+  src/agent_fleet/assets/runner
 
 export AGENT_FLEET_HOME=/path/to/a/disposable/state-directory
 uv run fleet doctor \
   --path /path/to/repo \
   --sandbox docker \
-  --docker-image agent-fleet-runner:phase3 \
+  --docker-image agent-fleet-runner:0.1.0-py314-v1 \
   --json
 
 uv run fleet init /path/to/repo \
   --runtime fake \
   --sandbox docker \
-  --docker-image agent-fleet-runner:phase3 \
+  --docker-image agent-fleet-runner:0.1.0-py314-v1 \
   --preview --json
 
 uv run fleet init /path/to/repo \
   --runtime fake \
   --sandbox docker \
-  --docker-image agent-fleet-runner:phase3 \
+  --docker-image agent-fleet-runner:0.1.0-py314-v1 \
   --yes
 ```
 
@@ -115,7 +133,7 @@ AGENT_FLEET_DOCKER_TEST_IMAGE='<preloaded-local-runner-with-python-and-pytest>' 
 uv run pytest -q -m docker_integration tests/docker
 ```
 
-The full Docker suite now includes public profiler-detected pytest execution. Supply an explicitly prepared local image containing Python and genuine pytest dependencies; the former stdlib-only runner is insufficient for this new journey. Fleet does not pull images or install these dependencies. The local acceptance used an offline-built `agent-fleet-runner:phase5-chat`; that tag is a local artifact, not a published image.
+The full Docker suite includes public profiler-detected pytest execution. Runner v1 now includes the genuine required pytest dependencies. The historical Phase5/6 acceptance image `agent-fleet-runner:phase5-chat` and the new runner v1 are local builds, not published images. An unrelated project may require additional reviewed tools; Fleet never installs them during a run.
 
 On macOS with Colima, pytest's temporary root must be under a host path shared into the VM; pass `--basetemp="${HOME}/.cache/agent-fleet-docker-tests"` when the system temp directory resolves beneath `/private/var`.
 
@@ -138,7 +156,7 @@ uv run fleet init /path/to/repo \
   --provider-model openai:gpt-5-mini \
   --credential-ref env:OPENAI_API_KEY \
   --sandbox docker \
-  --docker-image agent-fleet-runner:phase3 \
+  --docker-image agent-fleet-runner:0.1.0-py314-v1 \
   --preview --json
 
 uv run fleet init /path/to/repo \
@@ -146,7 +164,7 @@ uv run fleet init /path/to/repo \
   --provider-model openai:gpt-5-mini \
   --credential-ref env:OPENAI_API_KEY \
   --sandbox docker \
-  --docker-image agent-fleet-runner:phase3 \
+  --docker-image agent-fleet-runner:0.1.0-py314-v1 \
   --yes
 
 uv run fleet doctor --path /path/to/repo --json
@@ -161,12 +179,14 @@ The live smoke test is deliberately opt-in and destructive only to its generated
 
 ```bash
 export AGENT_FLEET_ENABLE_LIVE_PROVIDER_TESTS=1
+export AGENT_FLEET_ENABLE_DOCKER_TESTS=1
+export AGENT_FLEET_DOCKER_TEST_IMAGE='agent-fleet-runner:0.1.0-py314-v1'
 export AGENT_FLEET_LIVE_PROVIDER_MODEL='openai:gpt-5-mini'
 export AGENT_FLEET_LIVE_PROVIDER_CREDENTIAL_REF='env:OPENAI_API_KEY'
 uv run pytest -q -m live_provider tests/live/test_provider_smoke.py
 ```
 
-Without all explicit opt-in inputs, pytest skips the live case. The Phase 2 acceptance recorded here did **not** run it because no explicit test credential was supplied.
+Without the live opt-in, pytest skips this case. Explicit live opt-in with missing provider or Docker inputs fails setup; readiness checking alone cannot enable requests. The canary now requires genuine isolated command/verifier evidence, approves only observed exact disposable-run requests, and checks credential redaction. It is unrun: no explicit test credential was supplied. Offline FunctionModel or bootstrap tests do not substitute for this release gate.
 
 ## Offline preview and fake test mode
 
@@ -336,10 +356,10 @@ Patch application updates the original working tree only. It does not stage, com
 - Phase 3: completed local Docker sandbox, bounded file/command tools, deterministic recovery, and evidence-gated bootstrap.
 - Phase 4: accepted three-state policy, exact once/run/project trust, audited revocation and safe approval resume.
 - Phase 5: accepted cumulative budgets, all five adaptive strategies and persistent bounded CoS chat.
-- Phase 6: operational FleetPatch candidate; full frozen acceptance pending.
-- Phase 7: release hardening, cross-platform evidence, and owner license decision.
+- Phase 6: accepted reviewed FleetPatch publication, required verification rules and audited rollback/recovery.
+- Phase 7: implemented release candidate; final full/platform gates and GitHub delivery pending. Owner license and live-provider proof remain separate public-release gates.
 
-Phase 0–5 establishes local execution, exact permissions, evidence, durable budgets, adaptive execution and persistent chat. Operational FleetPatch, release hardening/guide and the remaining live-provider/license gates are still required for the complete MVP.
+Phase0–6 establishes local execution, exact permissions, evidence, durable budgets, adaptive execution, persistent chat and reviewed FleetPatch evolution. Phase7 release hardening/platform proof and live-provider/license gates remain distinct. See [release procedure](docs/RELEASE.md), [data disclosure](docs/DATA_HANDLING.md), [dependency policy](docs/DEPENDENCIES.md) and [security checklist](SECURITY.md).
 
 ## Quality gates
 

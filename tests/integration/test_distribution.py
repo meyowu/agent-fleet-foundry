@@ -31,6 +31,8 @@ def _archive_files(path: Path) -> dict[str, bytes]:
 
 def _runtime_resource_name(name: str) -> str:
     marker = "/src/agent_fleet/"
+    if name.endswith("/docs/USER_GUIDE.md"):
+        return "agent_fleet/assets/USER_GUIDE.md"
     if name.startswith("agent_fleet/"):
         return name
     if marker in name:
@@ -132,6 +134,9 @@ def test_wheel_and_sdist_ship_runtime_resources_without_development_fixtures(
         *(f"agent_fleet/schemas/{name}" for name in SCHEMAS),
     }
     source_files = _package_files(repository_root / "src" / "agent_fleet")
+    source_files["agent_fleet/assets/USER_GUIDE.md"] = (
+        repository_root / "docs/USER_GUIDE.md"
+    ).read_bytes()
     readme = (repository_root / "README.md").read_bytes()
     forbidden_content = (
         b"/users/",
@@ -156,10 +161,16 @@ def test_wheel_and_sdist_ship_runtime_resources_without_development_fixtures(
             assert metadata.split(b"\n\n", maxsplit=1)[1] == readme
         else:
             assert (
-                next(content for name, content in files.items() if name.endswith("/README.md"))
+                next(
+                    content
+                    for name, content in files.items()
+                    if len(name.split("/")) == 2 and name.endswith("/README.md")
+                )
                 == readme
             )
-        assert not any("/tests/" in f"/{name}" for name in files)
+        assert not any(
+            "/tests/" in f"/{name}" and "/assets/canary/tests/" not in f"/{name}" for name in files
+        )
         assert not any("/.agent/" in f"/{name}" for name in files)
         assert not any(
             part in {".git", ".fleet", ".venv", "__pycache__"}
