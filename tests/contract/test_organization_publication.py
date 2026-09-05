@@ -538,7 +538,9 @@ def test_real_host_unsupported_metadata_is_retained_and_rejected(
     elif metadata == "acl":
         subprocess.run(["/bin/chmod", "+a", "everyone allow read", str(entry)], check=True)
     else:
-        os.chflags(entry, stat.UF_NODUMP)
+        set_flags = getattr(os, "chflags", None)
+        assert callable(set_flags), "Darwin metadata fixture requires the native flag setter"
+        set_flags(entry, stat.UF_NODUMP)
     with factory().session(project, OPERATION) as session, pytest.raises(FleetError) as error:
         session.capture_target()
     assert_closed(error.value)
