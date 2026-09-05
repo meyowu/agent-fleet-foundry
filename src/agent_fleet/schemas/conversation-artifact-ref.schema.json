@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "ArtifactKind": {
+      "enum": [
+        "fleet_config_proposal",
+        "config_snapshot",
+        "task_spec",
+        "implementation_report",
+        "specialist_report",
+        "graph_join",
+        "patch",
+        "test_report",
+        "verifier_verdict",
+        "run_summary",
+        "command_transcript",
+        "command_evidence",
+        "repository_profile",
+        "project_knowledge",
+        "fleet_plan",
+        "evidence_bundle",
+        "error_report",
+        "runtime_usage",
+        "sandbox_inspection",
+        "resource_cleanup",
+        "bootstrap_report",
+        "cos_response"
+      ],
+      "title": "ArtifactKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/ArtifactKind"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "artifact_id",
+    "sha256",
+    "run_id",
+    "kind"
+  ],
+  "title": "ConversationArtifactRef",
+  "type": "object"
+}

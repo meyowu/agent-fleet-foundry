@@ -15,6 +15,7 @@ from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
 from agent_fleet.adapters.diagnostics.system import LocalSystemDiagnostics
 from agent_fleet.adapters.executable_resolution import resolve_fixed_executable
 from agent_fleet.adapters.filesystem.workspace import BoundedWorkspaceFileSystem
+from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
 from agent_fleet.adapters.persistence.graphs import SqliteGraphStore
 from agent_fleet.adapters.persistence.runtime_budgets import SqliteRuntimeBudgetStore
 from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
@@ -32,6 +33,7 @@ from agent_fleet.adapters.trust.filesystem import FilesystemTrustStore
 from agent_fleet.application.approvals import ApprovalService
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.application.bootstrap import BootstrapService
+from agent_fleet.application.conversations import ConversationService
 from agent_fleet.application.doctor import DoctorService
 from agent_fleet.application.evidence import EvidenceAssembler
 from agent_fleet.application.gateway import ToolGateway
@@ -64,6 +66,8 @@ class ApplicationContainer:
     state: SqliteStateStore
     budgets: SqliteRuntimeBudgetStore
     graphs: SqliteGraphStore
+    conversation_store: SqliteConversationStore
+    conversations: ConversationService
     artifacts: ArtifactService
     projects: ProjectService
     bootstrap: BootstrapService
@@ -192,6 +196,9 @@ def build_container(
     local_artifacts = LocalArtifactStore(root / "artifacts")
     artifacts = ArtifactService(local_artifacts, state, clock, ids, active_redactor)
     graphs = SqliteGraphStore(root / "state.db", clock, ids, active_redactor, local_artifacts)
+    conversation_store = SqliteConversationStore(
+        root / "state.db", clock, ids, active_redactor, state
+    )
     repository = GitRepositoryAdapter(root, ids)
     profiler = StaticRepositoryProfiler()
     config = YamlConfigurationAdapter(active_redactor)
@@ -262,6 +269,7 @@ def build_container(
         budgets=budgets,
         graphs=graphs,
         permission_policy=permissions,
+        conversations=conversation_store,
     )
     projects = ProjectService(
         root,
@@ -292,21 +300,42 @@ def build_container(
         ids=ids,
         redactor=active_redactor,
     )
+    approvals = ApprovalService(state, permissions)
+    inspection = InspectionService(state, artifacts, budgets, graphs)
+    cancellation = CancellationService(
+        state, resources, clock, graphs, conversations=conversation_store
+    )
+    conversations = ConversationService(
+        conversation_store,
+        state,
+        repository,
+        workflow,
+        inspection,
+        artifacts,
+        approvals,
+        permissions,
+        cancellation,
+        ids,
+        active_redactor,
+        secrets,
+    )
     return ApplicationContainer(
         state_root=root,
         state=state,
         budgets=budgets,
         graphs=graphs,
+        conversation_store=conversation_store,
+        conversations=conversations,
         artifacts=artifacts,
         projects=projects,
         bootstrap=bootstrap_service,
         workflow=workflow,
-        approvals=ApprovalService(state, permissions),
+        approvals=approvals,
         permissions=permissions,
         patches=PatchService(state, artifacts, repository, config, secrets, clock, graphs),
-        inspection=InspectionService(state, artifacts, budgets, graphs),
-        cancellation=CancellationService(state, resources, clock, graphs),
-        recovery=RecoveryService(state, resources, graphs),
+        inspection=inspection,
+        cancellation=cancellation,
+        recovery=RecoveryService(state, resources, graphs, conversations=conversation_store),
         doctor=DoctorService(
             root,
             state,

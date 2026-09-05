@@ -6,7 +6,8 @@ import asyncio
 from pathlib import Path
 
 from agent_fleet.application.sandboxes import SandboxRegistry
-from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.conversation import ConversationClaim, ConversationTurnStatus
+from agent_fleet.domain.errors import ConversationOwnershipUnavailableError, ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     FleetEvent,
@@ -26,6 +27,7 @@ from agent_fleet.domain.models import (
 from agent_fleet.domain.security import canonical_json_hash
 from agent_fleet.domain.workflow import is_terminal
 from agent_fleet.ports.clock import Clock
+from agent_fleet.ports.conversation import ConversationStore
 from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
@@ -531,10 +533,18 @@ class ResourceService:
 
 
 class RecoveryService:
-    def __init__(self, state: StateStore, resources: ResourceService, graphs: GraphStore) -> None:
+    def __init__(
+        self,
+        state: StateStore,
+        resources: ResourceService,
+        graphs: GraphStore,
+        *,
+        conversations: ConversationStore | None = None,
+    ) -> None:
         self.state = state
         self.resources = resources
         self.graphs = graphs
+        self.conversations = conversations
 
     def owned_run_ids(self, run_id: str) -> tuple[str, ...]:
         """Return exact recovery ownership for user-visible lease accounting."""
@@ -550,6 +560,21 @@ class RecoveryService:
         """
 
         run = self.state.get_run(run_id)
+        conversation_fenced = False
+        if self.conversations is not None:
+            binding = self.conversations.binding_for_run(run_id)
+            if binding is not None:
+                turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+                if (
+                    turn.active_claim_id is not None
+                    or turn.status is ConversationTurnStatus.RECOVERY_REQUIRED
+                ):
+                    if turn.fenced_at is None:
+                        self.conversations.fence(
+                            run_id, expected_revision=turn.revision, reason="recovery"
+                        )
+                    conversation_fenced = True
+                    run = self.state.get_run(run_id)
         child = self.graphs.child_binding(run_id)
         if child is not None:
             raise FleetError(
@@ -585,19 +610,34 @@ class RecoveryService:
         )
         if self.state.outstanding_leases(run_id):
             await self.resources.cleanup_run(run, recovered=True)
+        if conversation_fenced and self.conversations is not None:
+            binding = self.conversations.binding_for_run(run_id)
+            if binding is None:
+                raise ConversationOwnershipUnavailableError()
+            turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+            self.conversations.reconcile_fenced(run_id, expected_revision=turn.revision)
         return self.state.get_run(run_id)
 
 
 class CancellationService:
     def __init__(
-        self, state: StateStore, resources: ResourceService, clock: Clock, graphs: GraphStore
+        self,
+        state: StateStore,
+        resources: ResourceService,
+        clock: Clock,
+        graphs: GraphStore,
+        *,
+        conversations: ConversationStore | None = None,
     ) -> None:
         self.state = state
         self.resources = resources
         self.clock = clock
         self.graphs = graphs
+        self.conversations = conversations
 
-    async def cancel(self, run_id: str) -> Run:
+    async def cancel(
+        self, run_id: str, *, conversation_claim: ConversationClaim | None = None
+    ) -> Run:
         run = self.state.get_run(run_id)
         child = self.graphs.child_binding(run_id)
         if child is not None:
@@ -607,6 +647,25 @@ class CancellationService:
                 "Use the parent run ID to stop every dependent node safely.",
                 details={"parent_run_id": child.parent_run_id},
             )
+        conversation_fenced = False
+        if self.conversations is not None:
+            binding = self.conversations.binding_for_run(run_id)
+            if binding is not None:
+                turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+                if turn.status is ConversationTurnStatus.RECOVERY_REQUIRED:
+                    raise ConversationOwnershipUnavailableError()
+                if (
+                    turn.active_claim_id is not None
+                    or turn.status is ConversationTurnStatus.WAITING
+                ):
+                    self.conversations.fence(
+                        run_id,
+                        expected_revision=turn.revision,
+                        reason="cancel",
+                        claim=conversation_claim,
+                    )
+                    conversation_fenced = True
+                    run = self.state.get_run(run_id)
         outstanding = bool(self.state.outstanding_leases(run_id))
         child_outstanding = any(
             self.state.outstanding_leases(binding.child_run_id)
@@ -620,8 +679,10 @@ class CancellationService:
                         "A terminal run still has owned resources requiring recovery.",
                         "Confirm its previous owner stopped and recover the parent run.",
                     )
+                if conversation_fenced:
+                    self._reconcile_conversation_fence(run_id)
                 return run
-            if not outstanding and not child_outstanding:
+            if not outstanding and not child_outstanding and not conversation_fenced:
                 return run
         if run.status is not RunStatus.CANCELLED:
             run = run.model_copy(
@@ -633,7 +694,18 @@ class CancellationService:
         await _cleanup_graph_descendants(self.graphs, self.state, self.resources, run)
         if outstanding:
             await self.resources.cleanup_run(run)
+        if conversation_fenced:
+            self._reconcile_conversation_fence(run_id)
         return self.state.get_run(run_id)
+
+    def _reconcile_conversation_fence(self, run_id: str) -> None:
+        if self.conversations is None:
+            raise ConversationOwnershipUnavailableError()
+        binding = self.conversations.binding_for_run(run_id)
+        if binding is None:
+            raise ConversationOwnershipUnavailableError()
+        turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+        self.conversations.reconcile_fenced(run_id, expected_revision=turn.revision)
 
 
 async def _cleanup_graph_descendants(

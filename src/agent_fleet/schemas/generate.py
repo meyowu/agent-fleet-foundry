@@ -17,6 +17,18 @@ from agent_fleet.domain.budgets import (
     RuntimeAttempt,
 )
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec, VerificationProfile
+from agent_fleet.domain.conversation import (
+    Conversation,
+    ConversationArtifactRef,
+    ConversationClaim,
+    ConversationContext,
+    ConversationContextEntry,
+    ConversationRegistration,
+    ConversationRunBinding,
+    ConversationSubmission,
+    ConversationSummary,
+    ConversationTurn,
+)
 from agent_fleet.domain.evidence import (
     CommandEvidence,
     EvidenceBundle,
@@ -112,6 +124,16 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "graph-join-preparation.schema.json": GraphJoinPreparation,
     "graph-join-completion.schema.json": GraphJoinCompletion,
     "graph-delivery-evidence.schema.json": GraphDeliveryEvidence,
+    "conversation.schema.json": Conversation,
+    "conversation-summary.schema.json": ConversationSummary,
+    "conversation-artifact-ref.schema.json": ConversationArtifactRef,
+    "conversation-context-entry.schema.json": ConversationContextEntry,
+    "conversation-context.schema.json": ConversationContext,
+    "conversation-submission.schema.json": ConversationSubmission,
+    "conversation-run-binding.schema.json": ConversationRunBinding,
+    "conversation-claim.schema.json": ConversationClaim,
+    "conversation-turn.schema.json": ConversationTurn,
+    "conversation-registration.schema.json": ConversationRegistration,
     "sandbox-capabilities.schema.json": SandboxCapabilities,
     "sandbox-configuration.schema.json": SandboxConfiguration,
     "sandbox-requirements.schema.json": SandboxRequirements,

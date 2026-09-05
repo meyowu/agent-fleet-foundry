@@ -1,0 +1,462 @@
+{
+  "$defs": {
+    "ArtifactKind": {
+      "enum": [
+        "fleet_config_proposal",
+        "config_snapshot",
+        "task_spec",
+        "implementation_report",
+        "specialist_report",
+        "graph_join",
+        "patch",
+        "test_report",
+        "verifier_verdict",
+        "run_summary",
+        "command_transcript",
+        "command_evidence",
+        "repository_profile",
+        "project_knowledge",
+        "fleet_plan",
+        "evidence_bundle",
+        "error_report",
+        "runtime_usage",
+        "sandbox_inspection",
+        "resource_cleanup",
+        "bootstrap_report",
+        "cos_response"
+      ],
+      "title": "ArtifactKind",
+      "type": "string"
+    },
+    "ConversationArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "sha256",
+        "run_id",
+        "kind"
+      ],
+      "title": "ConversationArtifactRef",
+      "type": "object"
+    },
+    "ConversationContext": {
+      "additionalProperties": false,
+      "properties": {
+        "conversation_id": {
+          "pattern": "^conv_[0-9a-f]{32}$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "entries": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ConversationContextEntry"
+          },
+          "maxItems": 8,
+          "title": "Entries",
+          "type": "array"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "through_sequence": {
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "Through Sequence",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "project_id",
+        "through_sequence"
+      ],
+      "title": "ConversationContext",
+      "type": "object"
+    },
+    "ConversationContextEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ConversationArtifactRef"
+          },
+          "maxItems": 8,
+          "title": "Artifact Refs",
+          "type": "array"
+        },
+        "result_summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "run_status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "sequence": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "turn_id": {
+          "pattern": "^turn_[0-9a-f]{32}$",
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "user_summary": {
+          "$ref": "#/$defs/ConversationSummary"
+        }
+      },
+      "required": [
+        "turn_id",
+        "sequence",
+        "run_id",
+        "run_status",
+        "user_summary"
+      ],
+      "title": "ConversationContextEntry",
+      "type": "object"
+    },
+    "ConversationRunBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "budget_limits": {
+          "$ref": "#/$defs/RunBudgetLimits"
+        },
+        "config_snapshot_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Snapshot Sha256",
+          "type": "string"
+        },
+        "context_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Context Sha256",
+          "type": "string"
+        },
+        "conversation_id": {
+          "pattern": "^conv_[0-9a-f]{32}$",
+          "title": "Conversation Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "repository_identity": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repository Identity",
+          "type": "string"
+        },
+        "run_binding_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Run Binding Sha256",
+          "type": "string"
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sequence": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "submission_key": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Submission Key",
+          "type": "string"
+        },
+        "submission_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Submission Sha256",
+          "type": "string"
+        },
+        "turn_id": {
+          "pattern": "^turn_[0-9a-f]{32}$",
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "user_goal_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "User Goal Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "turn_id",
+        "project_id",
+        "repository_identity",
+        "sequence",
+        "submission_key",
+        "submission_sha256",
+        "user_goal_sha256",
+        "run_id",
+        "run_binding_sha256",
+        "config_snapshot_sha256",
+        "budget_limits",
+        "context_sha256",
+        "created_at"
+      ],
+      "title": "ConversationRunBinding",
+      "type": "object"
+    },
+    "ConversationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "ConversationSummary",
+      "type": "object"
+    },
+    "ConversationTurnStatus": {
+      "enum": [
+        "running",
+        "waiting",
+        "delivered",
+        "failed",
+        "cancelled",
+        "recovery_required"
+      ],
+      "title": "ConversationTurnStatus",
+      "type": "string"
+    },
+    "RunBudgetLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_active_seconds": {
+          "default": 3600,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Max Active Seconds",
+          "type": "integer"
+        },
+        "max_agent_invocations": {
+          "default": 64,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Max Agent Invocations",
+          "type": "integer"
+        },
+        "max_model_requests": {
+          "default": 128,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Max Model Requests",
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 512,
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Max Tool Calls",
+          "type": "integer"
+        },
+        "max_total_tokens": {
+          "default": 262144,
+          "maximum": 100000000,
+          "minimum": 1,
+          "title": "Max Total Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "RunBudgetLimits",
+      "type": "object"
+    },
+    "RunStatus": {
+      "enum": [
+        "created",
+        "running",
+        "waiting_for_children",
+        "paused_for_approval",
+        "ready_for_review",
+        "applying",
+        "completed",
+        "failed",
+        "cancelled",
+        "rejected",
+        "abandoned"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "active_claim_id": {
+      "anyOf": [
+        {
+          "pattern": "^corr_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Active Claim Id"
+    },
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "artifact_refs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ConversationArtifactRef"
+      },
+      "maxItems": 8,
+      "title": "Artifact Refs",
+      "type": "array"
+    },
+    "binding": {
+      "$ref": "#/$defs/ConversationRunBinding"
+    },
+    "context": {
+      "$ref": "#/$defs/ConversationContext"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "fenced_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fenced At"
+    },
+    "kind": {
+      "const": "ConversationTurn",
+      "default": "ConversationTurn",
+      "title": "Kind",
+      "type": "string"
+    },
+    "observed_run_status": {
+      "$ref": "#/$defs/RunStatus"
+    },
+    "owner_generation": {
+      "minimum": 1,
+      "title": "Owner Generation",
+      "type": "integer"
+    },
+    "result_summary": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConversationSummary"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "settled_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Settled At"
+    },
+    "status": {
+      "$ref": "#/$defs/ConversationTurnStatus"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "user_summary": {
+      "$ref": "#/$defs/ConversationSummary"
+    }
+  },
+  "required": [
+    "binding",
+    "status",
+    "owner_generation",
+    "context",
+    "user_summary",
+    "observed_run_status",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "ConversationTurn",
+  "type": "object"
+}

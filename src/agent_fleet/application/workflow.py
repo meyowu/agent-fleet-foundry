@@ -12,13 +12,15 @@ from typing import cast
 from pydantic import JsonValue, ValidationError
 
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.conversation_results import conversation_result
 from agent_fleet.application.evidence import EvidenceAssembler
 from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.graph import GraphCoordinator
 from agent_fleet.application.graph_workflow import GraphWorkflowExecution
+from agent_fleet.application.inspection import InspectionService
 from agent_fleet.application.permission_policy import PermissionPolicyService
 from agent_fleet.application.planning import FleetPlanner
-from agent_fleet.application.resources import ResourceService
+from agent_fleet.application.resources import CancellationService, ResourceService
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.application.runtime_tools import GatewayRuntimeToolCatalog
 from agent_fleet.application.sandboxes import (
@@ -27,9 +29,15 @@ from agent_fleet.application.sandboxes import (
 )
 from agent_fleet.domain.budgets import RunBudgetLimits, RuntimeAttemptStatus
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec
+from agent_fleet.domain.conversation import (
+    ConversationClaim,
+    ConversationSubmission,
+    ConversationTurnStatus,
+)
 from agent_fleet.domain.errors import (
     ApprovalDeniedError,
     ApprovalRequiredError,
+    ConversationOwnershipUnavailableError,
     ErrorCode,
     FleetError,
     GraphOwnershipUnavailableError,
@@ -77,6 +85,7 @@ from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import Redactor
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
+from agent_fleet.ports.conversation import ConversationStore
 from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
@@ -118,6 +127,7 @@ class WorkflowEngine:
         budgets: RuntimeBudgetStore,
         graphs: GraphStore,
         permission_policy: PermissionPolicyService | None = None,
+        conversations: ConversationStore | None = None,
     ) -> None:
         self.state = state
         self.repository = repository
@@ -135,6 +145,8 @@ class WorkflowEngine:
         self.graphs = graphs
         self.redactor = redactor
         self.permission_policy = permission_policy
+        self.conversations = conversations
+        self._conversation_claims: dict[str, ConversationClaim] = {}
         self.graph_execution = GraphWorkflowExecution(self)
         self.graph_coordinator = GraphCoordinator(graphs, state, self.graph_execution, clock)
 
@@ -150,6 +162,7 @@ class WorkflowEngine:
         credential_ref: str | None = None,
         allow_unsafe_local: bool = False,
         budget_limits: RunBudgetLimits | None = None,
+        conversation_submission: ConversationSubmission | None = None,
     ) -> Run:
         self._reject_untrusted_secrets(
             {
@@ -318,7 +331,24 @@ class WorkflowEngine:
             created_at=now,
             updated_at=now,
         )
-        self.state.create_run(run)
+        conversation_claim: ConversationClaim | None = None
+        if conversation_submission is None:
+            self.state.create_run(run)
+        else:
+            if self.conversations is None:
+                raise ConversationOwnershipUnavailableError()
+            self._reject_untrusted_secrets(conversation_submission.model_dump(mode="json"))
+            registration = self.conversations.register_turn_run(
+                conversation_submission,
+                run,
+                config_snapshot_sha256=config_hash,
+                budget_limits=budget_limits or RunBudgetLimits(),
+            )
+            conversation_claim = registration.claim
+            if conversation_claim is None:
+                return self.state.get_run(registration.turn.binding.run_id)
+            self._conversation_claims[run.run_id] = conversation_claim
+        orderly = False
         try:
             self.budgets.initialize_run(run.run_id, budget_limits or RunBudgetLimits())
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.INTAKE)
@@ -333,7 +363,9 @@ class WorkflowEngine:
             )
             if run.fleet_strategy == FleetStrategy.DIRECT.value:
                 run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
-                return await self._continue(run)
+                result = await self._continue(run)
+                orderly = True
+                return result
             if self._is_adaptive_graph(run):
                 if run.fleet_plan_artifact_id is None:
                     raise RuntimeError("The accepted graph has no FleetPlan artifact")
@@ -343,14 +375,25 @@ class WorkflowEngine:
                 self.graph_execution.initialize(run, plan)
                 run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
                 run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
-                return await self._continue(run)
+                result = await self._continue(run)
+                orderly = True
+                return result
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
             await self._prepare_workspace(run)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
-            return await self._continue(run)
+            result = await self._continue(run)
+            orderly = True
+            return result
         except ApprovalRequiredError:
+            orderly = True
             return self.state.get_run(run.run_id)
+        except asyncio.CancelledError:
+            if conversation_claim is not None:
+                await self._cancel_conversation_execution(conversation_claim)
+            raise
         except FleetError as error:
+            if isinstance(error, ConversationOwnershipUnavailableError):
+                raise
             latest = self.state.get_run(run.run_id)
             if latest.status is not RunStatus.PAUSED_FOR_APPROVAL:
                 latest = self._persist_failure_evidence(latest, error)
@@ -364,9 +407,72 @@ class WorkflowEngine:
                 )
                 await self.resources.cleanup_run(failed)
                 error.details.setdefault("run_id", run.run_id)
+                orderly = True
             raise
+        finally:
+            if conversation_claim is not None:
+                try:
+                    if orderly:
+                        self._settle_conversation_execution(conversation_claim)
+                finally:
+                    self._conversation_claims.pop(run.run_id, None)
 
     async def resume(self, run_id: str) -> Run:
+        # This guard deliberately precedes every terminal, approval and graph
+        # shortcut. Public fleet resume is not a conversation-ownership bypass.
+        if self.conversations is None:
+            return await self._resume_run(run_id)
+        binding = self.conversations.binding_for_run(run_id)
+        if binding is None:
+            return await self._resume_run(run_id)
+        turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+        if (
+            turn.active_claim_id is not None
+            or turn.status is ConversationTurnStatus.RECOVERY_REQUIRED
+        ):
+            raise ConversationOwnershipUnavailableError()
+        if turn.status in {
+            ConversationTurnStatus.DELIVERED,
+            ConversationTurnStatus.FAILED,
+            ConversationTurnStatus.CANCELLED,
+        }:
+            return self.state.get_run(run_id)
+        claim = self.conversations.claim_resume(run_id, expected_revision=turn.revision)
+        self._conversation_claims[run_id] = claim
+        orderly = False
+        try:
+            result = await self._resume_run(run_id)
+            orderly = True
+            return result
+        except ApprovalRequiredError:
+            orderly = True
+            raise
+        except asyncio.CancelledError:
+            await self._cancel_conversation_execution(claim)
+            raise
+        except FleetError:
+            latest = self.state.get_run(run_id)
+            orderly = latest.status in {
+                RunStatus.FAILED,
+                RunStatus.REJECTED,
+                RunStatus.CANCELLED,
+                RunStatus.ABANDONED,
+            } and not any(
+                self.state.outstanding_leases(owned_id)
+                for owned_id in (
+                    run_id,
+                    *(child.child_run_id for child in self.graphs.descendants(run_id)),
+                )
+            )
+            raise
+        finally:
+            try:
+                if orderly:
+                    self._settle_conversation_execution(claim)
+            finally:
+                self._conversation_claims.pop(run_id, None)
+
+    async def _resume_run(self, run_id: str) -> Run:
         continuation_claim: GraphDriverClaim | None = None
         run = self.state.get_run(run_id)
         child_binding = self.graphs.child_binding(run_id)
@@ -523,7 +629,9 @@ class WorkflowEngine:
             await self.resources.cleanup_run(rejected)
             return rejected
         except FleetError as error:
-            if isinstance(error, GraphOwnershipUnavailableError):
+            if isinstance(
+                error, (GraphOwnershipUnavailableError, ConversationOwnershipUnavailableError)
+            ):
                 raise
             latest = self.state.get_run(run_id)
             if latest.status is not RunStatus.PAUSED_FOR_APPROVAL:
@@ -539,6 +647,69 @@ class WorkflowEngine:
                 await self.resources.cleanup_run(failed)
                 error.details.setdefault("run_id", run_id)
             raise
+
+    def _assert_conversation_execution(self, run: Run) -> None:
+        if self.conversations is None:
+            return
+        child = self.graphs.child_binding(run.run_id)
+        root_id = child.parent_run_id if child is not None else run.run_id
+        binding = self.conversations.binding_for_run(root_id)
+        if binding is not None:
+            claim = self._conversation_claims.get(root_id)
+            if claim is None:
+                raise ConversationOwnershipUnavailableError()
+            self.conversations.assert_claim(claim)
+
+    async def _cancel_conversation_execution(self, claim: ConversationClaim) -> None:
+        if self.conversations is None:
+            raise ConversationOwnershipUnavailableError()
+        self.conversations.assert_claim(claim)
+        service = CancellationService(
+            self.state, self.resources, self.clock, self.graphs, conversations=self.conversations
+        )
+        cleanup = asyncio.create_task(service.cancel(claim.run_id, conversation_claim=claim))
+        # Strongly retain the exact cleanup until every repeated caller cancel
+        # has settled. No input loop or exiting CLI may leave a hidden worker.
+        while not cleanup.done():
+            try:
+                await asyncio.wait({cleanup})
+            except asyncio.CancelledError:
+                continue
+        cleanup.result()
+
+    def _settle_conversation_execution(self, claim: ConversationClaim) -> None:
+        if self.conversations is None:
+            raise ConversationOwnershipUnavailableError()
+        turn = self.conversations.get_turn(claim.project_id, claim.turn_id)
+        if turn.active_claim_id != claim.claim_id:
+            if turn.fenced_at is not None or turn.settled_at is not None:
+                return
+            raise ConversationOwnershipUnavailableError()
+        run = self.state.get_run(claim.run_id)
+        if run.status not in {
+            RunStatus.PAUSED_FOR_APPROVAL,
+            RunStatus.WAITING_FOR_CHILDREN,
+            RunStatus.READY_FOR_REVIEW,
+            RunStatus.COMPLETED,
+            RunStatus.REJECTED,
+            RunStatus.CANCELLED,
+            RunStatus.FAILED,
+            RunStatus.ABANDONED,
+        }:
+            # A partial registration/dispatch or uncertain state write is not
+            # an orderly pause. Retain the owner for stopped-process recovery.
+            return
+        self.conversations.assert_claim(claim)
+        summary, refs = conversation_result(
+            self.state,
+            self.artifacts,
+            InspectionService(self.state, self.artifacts, self.budgets, self.graphs),
+            run,
+        )
+        self._reject_untrusted_secrets(summary.model_dump(mode="json"))
+        self.conversations.settle(
+            claim, expected_revision=turn.revision, summary=summary, artifact_refs=refs
+        )
 
     async def _scope(
         self,
@@ -568,6 +739,17 @@ class WorkflowEngine:
             "delegation_roles": cast(JsonValue, fleet_spec.spec.agents["cos"].may_delegate_to),
             "max_parallel_agents": fleet_spec.spec.workflows["code-change"].max_parallel_agents,
         }
+        self._assert_conversation_execution(run)
+        if self.conversations is not None:
+            binding = self.conversations.binding_for_run(run.run_id)
+            if binding is not None:
+                turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+                context = turn.context.model_dump(mode="json")
+                self._reject_untrusted_secrets(context)
+                for entry in turn.context.entries:
+                    for ref in entry.artifact_refs:
+                        self.artifacts.read_bounded_text(ref.artifact_id)
+                invocation_input["conversation_context"] = context
         if run.runtime_name == "fake":
             invocation_input["fake_scenario"] = run.fake_scenario.value
         context_artifact_ids: list[str] = []
@@ -1382,6 +1564,7 @@ class WorkflowEngine:
         request: AgentInvocation,
         services: RuntimeInvocationServices,
     ) -> AgentInvocationResult:
+        self._assert_conversation_execution(run)
         accounting: RuntimeAccounting | None = None
         attempt_finished = False
         try:

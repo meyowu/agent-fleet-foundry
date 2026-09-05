@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "claim_id": {
+      "pattern": "^corr_[0-9a-f]{32}$",
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "claimed_at": {
+      "format": "date-time",
+      "title": "Claimed At",
+      "type": "string"
+    },
+    "conversation_id": {
+      "pattern": "^conv_[0-9a-f]{32}$",
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "generation": {
+      "minimum": 1,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "turn_id": {
+      "pattern": "^turn_[0-9a-f]{32}$",
+      "title": "Turn Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "claim_id",
+    "conversation_id",
+    "turn_id",
+    "project_id",
+    "run_id",
+    "generation",
+    "claimed_at"
+  ],
+  "title": "ConversationClaim",
+  "type": "object"
+}

@@ -62,13 +62,13 @@ The implementation status is deliberately explicit:
 | Differentiator | Accepted implementation boundary | Remaining product milestone |
 |---|---|---|
 | Repository-aware bootstrap | Static profile, knowledge artifacts, detected-command proposal, read-only diff preview, disposable deterministic canary through the ordinary Docker workflow, validated BootstrapReport, cleanup proof, and `.fleet/` publication only after success | Broader safe project-command discovery/execution and non-local sandbox support |
-| Adaptive Fleet | All five strategies accepted through Phase 5 M2: scoped concurrent children, read-only specialist dependencies, exact approval/ownership state, deterministic joins and fresh parent verification | Persistent chat and whole-Phase-5 acceptance remain next; M2 checkpoint commit is pending |
+| Adaptive Fleet | Whole Phase 5 accepted: scoped concurrent children, read-only specialist dependencies, exact approval/ownership state, deterministic joins, fresh parent verification and persistent bounded chat; M2 checkpoint `7a70b1a` is pushed | Chat checkpoint commit pending; final README archive read-back passed five tests in 1.70s; Phase 6 organization evolution remains next |
 | Permission control plane | Current user/project/workflow/role/task/sandbox intersection; exact once/run/project trust; explain/revoke/reset; durable single-winner dispatch and identity-bound approval resume; no harness-tool bypass | Preserve these ceilings through Phase 5 chat/adaptive execution and Phase 6 configuration evolution |
 | Sandbox abstraction | Exact fail-closed fake/Docker/local-unsafe dispatch; Docker pins a local daemon and immutable image, inspects one-shot containers, enforces network/resource boundaries, and recovers exact resources | Modal/hosted providers, approved network modes, and broader platform evidence |
 | Evidence-first delivery | Exact ConfigSnapshot/TaskSpec/FleetPlan/patch/command/cleanup/verdict/BootstrapReport bindings; accepted M1 criterion mapping and M2 joined graph/descendant-cleanup provenance; only fresh Docker verifier evidence can verify | Preserve exact evidence and bounded context through chat and configuration evolution |
 | Versioned evolution | FleetPatch schema and protected-path validator | Proposal/diff/apply/rollback in Phase 6 |
 
-Phase 4 was accepted on 2026-09-05 with `1001 passed, 10 skipped` and nine separate real-Docker passes. Phase 5 M1 and M2 are also accepted as bounded slices: M2's frozen default suite returned `1344 passed, 13 skipped in 1160.72s`, with twelve real-Docker cases separately passing in 140.05s and zero managed resources. Exact results, retained failures and checkpoint status are in `MVP_ACCEPTANCE.md`. No live model-provider acceptance was run. Whole-phase metadata remains 4 until persistent chat and all Phase 5 gates pass; Phase 6/7 and live-provider/license gates remain open. CLI and documentation must label FakeSandbox as simulated, local-unsafe as non-isolating, Docker's local trusted-computing-base limits, and roadmap-only behaviors directly even when the selected model runtime is real.
+Phase 4 was accepted on 2026-09-05 with `1001 passed, 10 skipped` and nine separate real-Docker passes. The complete Phase 5 is now accepted: its frozen default suite returned `1472 passed, 14 skipped in 1354.35s`, with thirteen real-Docker cases separately passing in 101.98s, zero managed containers and zero outstanding leases across 24 databases. Exact results, retained failures and checkpoint status are in `MVP_ACCEPTANCE.md`. No live model-provider acceptance was run. Whole-phase metadata is 5 and its separate focused refresh passed; the final README archive read-back passed five tests in 1.70s; the chat checkpoint remains pending. Phase 6/7 and live-provider/license gates remain open. CLI and documentation must label FakeSandbox as simulated, local-unsafe as non-isolating, Docker's local trusted-computing-base limits, and roadmap-only behaviors directly even when the selected model runtime is real.
 
 ## 3. Target users
 
@@ -202,6 +202,8 @@ The first UI may be a robust line-oriented REPL rather than a full-screen TUI. R
 - never print a secret or raw credential;
 - offer `--json` or a separate noninteractive command for automation.
 
+Accepted Phase 5 provides these behaviors through `fleet chat [path]`, exact `--conversation`/`--new` selection and `--message` with optional submission key/JSON. Atomic project-bound turn/Run registration precedes model effects; public resume shares non-expiring execution ownership. One active turn, bounded summaries/references, responsive POSIX pipe/terminal controls, exact approvals and retained cancellation/recovery are implemented. The persistent-chat ExecPlan and E5.3 record the full behavioral gates, independent offline review and public bootstrap/Docker/approval/restart/explicit-apply journey. This does not establish live-provider, fresh-user release or final GitHub delivery.
+
 ## 5.3 Run a one-shot task
 
 Command:
@@ -246,7 +248,7 @@ FAILED
 REJECTED
 ```
 
-A run must be resumable at supported durable approval checkpoints. An adaptive parent exposes exact child approvals through `WAITING_FOR_CHILDREN`; public child resume/apply/cancel/recover are denied. Unknown dispatched ownership never permits automatic replay: operator-confirmed stopped-owner recovery abandons it and cleans exact descendants. Durable chat/restart context remains the next Phase 5 slice, not general provider-history restoration.
+A run must be resumable at supported durable approval checkpoints. An adaptive parent exposes exact child approvals through `WAITING_FOR_CHILDREN`; public child resume/apply/cancel/recover are denied. Unknown dispatched ownership never permits automatic replay: operator-confirmed stopped-owner recovery abandons it and cleans exact descendants. Accepted Phase 5 chat retains bounded summaries, exact turn/Run links and frozen context across restart; public resume enforces the same conversation ownership. It does not restore raw provider history.
 
 ## 5.4 Review and apply a candidate patch
 

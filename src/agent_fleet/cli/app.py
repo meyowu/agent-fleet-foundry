@@ -18,6 +18,7 @@ from rich.text import Text
 
 from agent_fleet import __version__
 from agent_fleet.bootstrap import build_container
+from agent_fleet.cli.chat import register_chat_command
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix, new_id
 from agent_fleet.domain.models import (
@@ -57,7 +58,7 @@ def version(json_output: JsonFlag = False) -> None:
         json_output,
         lambda: {
             "version": __version__,
-            "phase": "4",
+            "phase": "5",
             "runtime": "fake",
             "runtimes": ["fake", "pydantic-ai"],
             "sandbox": "fake",
@@ -874,6 +875,15 @@ def _exit_code(code: ErrorCode) -> int:
     }:
         return 5
     return 1
+
+
+register_chat_command(
+    app,
+    service_factory=lambda redactor: build_container(redactor=redactor).conversations,
+    redactor_factory=_environment_redactor,
+    presenter=_present_with_warnings,
+    error_presenter=_present_error,
+)
 
 
 def main() -> None:

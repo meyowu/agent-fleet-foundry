@@ -1,6 +1,6 @@
 # ADR 0004: Keep adaptive node authority in exact internal child runs
 
-- Status: Accepted implementation and Phase 5 Milestone 2 acceptance; graph checkpoint pending, full Phase 5 pending chat
+- Status: Accepted implementation and complete Phase 5 acceptance on 2026-09-05; graph checkpoint committed/pushed as `7a70b1a940209487deac5585583ba1f9924be8d9` (tree `bf75f1d681e36b30954235214ed641202945b060`), remote main remains `c700de1`; metadata is 5, final README archive read-back passed five tests in 1.70s, chat checkpoint pending
 - Date: 2026-09-05
 
 ## Context
@@ -34,7 +34,7 @@ Known approved-resume rehydration failure records FAILED, atomically fences the 
 
 ## Acceptance evidence
 
-On 2026-09-05, the unchanged source/test aggregate `4cbef9616084ad1465ee5fd84b97f81763f282bc95b96c11b5bb7d35cfeafeb9` passed `1344` default tests with `13` explicit skips. The separately enabled Docker suite passed all twelve cases, with zero managed containers and zero active leases across 22 test databases. Nine subprocess E2E and eleven independent delivery-audit cases passed; exact commands, times and retained failed attempts are in the graph ExecPlan. Final documentation archive/schema checks passed four cases in 4.37s and repeated in 1.73s. M2 is accepted, not committed yet. No live-provider, full-Phase-5 or release acceptance follows from this record.
+On 2026-09-05, the unchanged source/test aggregate `4cbef9616084ad1465ee5fd84b97f81763f282bc95b96c11b5bb7d35cfeafeb9` passed `1344` default tests with `13` explicit skips. The separately enabled Docker suite passed all twelve cases, with zero managed containers and zero active leases across 22 test databases. Nine subprocess E2E and eleven independent delivery-audit cases passed; exact commands, times and retained failed attempts are in the graph ExecPlan. Final documentation archive/schema checks passed four cases in 4.37s and repeated in 1.73s. At the initial test freeze M2 was accepted but not yet committed; it was subsequently committed and pushed as `7a70b1a`. No live-provider, full-Phase-5 or release acceptance follows from this record.
 
 ## Alternatives
 

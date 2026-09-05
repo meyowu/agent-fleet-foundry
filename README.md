@@ -4,11 +4,11 @@ Agent Fleet is a **local-first, BYOK Chief-of-Staff CLI that bootstraps, operate
 
 It is deliberately not a generic multi-agent chat framework or a permanent roster of named bots. Models propose scope, plans, actions, and organizational changes. Deterministic application code validates those proposals, owns permissions and sandbox selection, computes the canonical patch, and decides what the available evidence can prove.
 
-This repository implements **Phase 0 through Phase 4**: deterministic repository profiling, bounded adaptive FleetPlans, independent exact permissions and user-owned persistent trust, content-addressed evidence, real Git worktrees, guarded patch application, explicit BYOK PydanticAI, and a hardened local Docker execution boundary. The deterministic fake runtime remains available for offline development and tests; no live model-provider call is required for the bootstrap canary.
+This repository implements **Phase 0 through Phase 5**: deterministic repository profiling, all five bounded adaptive strategies, independent exact permissions and user-owned persistent trust, content-addressed evidence, real Git worktrees, guarded patch application, explicit BYOK PydanticAI, a hardened local Docker execution boundary, durable cumulative budgets and persistent CoS chat. The deterministic fake runtime remains available for offline development and tests; no live model-provider call is required for the bootstrap canary.
 
-**Phase 4 was accepted on 2026-09-05:** the final default suite passed 1,001 tests, and the separately enabled real-Docker suite passed nine. Phase 5–7 remain open; this is not a completed MVP release. The [completion plan](.agent/plans/2026-09-05-mvp-completion.md) and [acceptance ledger](docs/MVP_ACCEPTANCE.md) distinguish accepted behavior from remaining requirements, including the unrun live-provider gate and owner license decision.
+**Phase 5 was accepted on 2026-09-05:** the frozen default suite passed 1,472 tests, and the separately enabled real-Docker suite passed thirteen. Phase 6–7 remain open; this is not a completed MVP release. The [completion plan](.agent/plans/2026-09-05-mvp-completion.md) and [acceptance ledger](docs/MVP_ACCEPTANCE.md) distinguish accepted behavior from remaining requirements, including the unrun live-provider gate and owner license decision.
 
-The development branch has accepted two [Phase 5 slices](.agent/plans/2026-09-05-adaptive-workflow-chat.md): Milestone 1 (`ab28aaa`) adds durable budgets, role/delegation ceilings, repair feedback, substantive direct responses, criterion evidence and text-only new-file patches; Milestone 2 adds [adaptive graph execution](.agent/plans/2026-09-05-adaptive-graph.md). M2's frozen default suite passed 1,344 tests and its separate real-Docker suite passed twelve. Its checkpoint commit is pending. Phase 4 (`2e93092`) remains the last accepted whole phase; persistent chat remains unimplemented. The development branch `codex/mvp-completion` has been pushed through M1 with remote read-back at `ab28aaa`; `main` remains `c700de1`. Neither slice is a completed MVP or a new main-branch merge.
+The development branch contains three accepted [Phase 5 milestones](.agent/plans/2026-09-05-adaptive-workflow-chat.md): budgets/evidence (`ab28aaa`), [adaptive graphs](.agent/plans/2026-09-05-adaptive-graph.md) (`7a70b1a`), and [persistent chat](.agent/plans/2026-09-05-persistent-chat.md). The first two checkpoints are pushed to `codex/mvp-completion`, with remote read-back at `7a70b1a`; the accepted chat checkpoint is being finalized. `main` remains `c700de1`. Working-tree acceptance is not a new main-branch merge or completed MVP release.
 
 Three sandbox providers are registered. `DockerSandboxProvider` is the isolated path and creates one inspected, resource-bounded, network-disabled container per reviewed command from an already-local immutable image. `FakeSandboxProvider` records commands without executing them. `LocalUnsafeSandboxProvider` executes directly on the host only after a separate `--allow-unsafe-local` confirmation and can never count as isolated evidence. Provider selection is exact and immutable for a project/run; Docker failure never falls back to host execution.
 
@@ -19,7 +19,7 @@ Six capabilities determine whether Agent Fleet provides differentiated value:
 | Capability | Current implementation boundary | Remaining target |
 |---|---|---|
 | Repository-aware bootstrap | **Enforced:** bounded static inspection finds supported ecosystems, build systems, boundaries, exact candidate commands, provenance, confidence, and ambiguities; preview is read-only; init stages the proposal, runs a disposable canary through the normal Docker workflow, validates a hash-linked `BootstrapReport`, proves cleanup, and only then publishes `.fleet/`. | The canary is a deterministic Fleet-owned fixture; executing arbitrary target-repository setup or networked commands remains out of scope. |
-| Adaptive Fleet | **M2 accepted:** every run persists a validated `FleetPlan`; direct/single/pair create only planned roles. Parallel Engineers use separate scoped child runs and stable patch joins; read-only Researcher/Architect reports flow through declared dependencies. | Persistent CoS chat remains the next Phase 5 slice; graph checkpoint commit remains pending. |
+| Adaptive Fleet | **Phase 5 accepted:** persistent project-bound CoS chat; every run has a validated `FleetPlan`; direct/single/pair create only planned roles. Parallel Engineers use scoped child runs and stable joins; read-only Researcher/Architect reports follow declared dependencies. | Preserve exact authority/context/evidence through operational configuration evolution. |
 | Independent permission control plane | **Phase 4 accepted:** ToolGateway re-evaluates current role/workflow/task/user/sandbox ceilings; exact once/run/project rules, explain/revoke/reset, private user-owned trust and durable single-winner dispatch are verified. Phase 5 Milestone 1 preserves cumulative budgets across approval pauses. | Arbitrary shell and approved isolated-worker networking remain unavailable; general provider-history restoration is not implemented. |
 | Independent sandbox abstraction | **Enforced local slice:** strict `SandboxRequirements` matching dispatches exact fake, Docker, or separately confirmed local-unsafe providers. Docker pins a local Unix daemon and image ID, inspects effective configuration before start, bounds execution, and recovers exact labeled resources. | Modal and hosted providers, approved network modes, and a multi-user/remote-daemon trust model remain unimplemented. |
 | Evidence-first delivery | **Enforced:** exact ConfigSnapshot, TaskSpec, FleetPlan, patch, command inspection/transcript, verdict, cleanup, BootstrapReport, risk, and proof-gap links form content-addressed evidence. Accepted M1 resolves typed criterion references; accepted M2 binds joined-candidate and descendant-cleanup provenance. Only fresh non-mutating Docker evidence can verify; fake/local-unsafe cannot. | Preserve these boundaries through chat and configuration evolution; broader project command/tool coverage remains tracked work. |
@@ -74,9 +74,11 @@ The opt-in real-Docker suite never runs implicitly:
 
 ```bash
 AGENT_FLEET_ENABLE_DOCKER_TESTS=1 \
-AGENT_FLEET_DOCKER_TEST_IMAGE=agent-fleet-runner:phase3 \
+AGENT_FLEET_DOCKER_TEST_IMAGE='<preloaded-local-runner-with-python-and-pytest>' \
 uv run pytest -q -m docker_integration tests/docker
 ```
+
+The full Docker suite now includes public profiler-detected pytest execution. Supply an explicitly prepared local image containing Python and genuine pytest dependencies; the former stdlib-only runner is insufficient for this new journey. Fleet does not pull images or install these dependencies. The local acceptance used an offline-built `agent-fleet-runner:phase5-chat`; that tag is a local artifact, not a published image.
 
 On macOS with Colima, pytest's temporary root must be under a host path shared into the VM; pass `--basetemp="${HOME}/.cache/agent-fleet-docker-tests"` when the system temp directory resolves beneath `/private/var`.
 
@@ -206,12 +208,43 @@ Independent writers finish in any order; patches join in stable node-ID order in
 
 Driver and parent-continuation claims are durable and have no automatic expiry. Duplicate resume cannot acquire the same work or clean the winning owner's resources. If an owner crashes after dispatch or resume preparation, use exact operator-confirmed recovery, not an automatic retry. Cancellation fences the graph and retains dependency-ordered cleanup; cleanup failures remain recoverable leases. EvidenceBundle includes typed graph/join/child-cleanup provenance, while its verification commands remain parent-owned.
 
+## Persistent CoS chat (Phase 5 accepted)
+
+After successful initialization, use the registered runtime and sandbox:
+
+```bash
+uv run fleet chat /path/to/repo
+# At the chat prompt:
+/help
+/status
+/permissions <request-id>
+/approve <request-id> --once
+/resume
+/artifacts
+/exit
+```
+
+Natural-language lines submit a goal; slash commands are deterministic local controls. Approval does not resume automatically. `/deny <request-id>`, `/cancel`, and `/approve <request-id> --run` or `--always --scope project` use the same exact permission service as ordinary CLI commands. `/permissions` without an ID lists the selected project's rules. Inspect and explicitly apply the resulting candidate using `fleet patch show <run-id>` and `fleet patch apply <run-id>` outside chat. A delivered turn does not mean the patch was applied or independently verified: inspect its Run evidence and warnings.
+
+Reopening `fleet chat /path/to/repo` selects the latest project-bound conversation. Use `--conversation <conversation-id>` to select an exact conversation or `--new` for a new one. Automation can submit one goal:
+
+```bash
+uv run fleet chat /path/to/repo --conversation <conversation-id> \
+  --message "Explain the validation path" --submission-id review-validation-1 --json
+```
+
+The submission key is scoped to the conversation. Retrying identical content returns the original turn/Run, even after later turns, without another execution or budget reset; different content under the same key fails. Only one active turn is allowed. New goals are not queued while running or awaiting approval. Public `fleet resume <run-id>` enforces the same conversation ownership as `/resume`.
+
+History contains bounded summaries and authoritative artifact references, not raw provider histories: at most eight recent settled turns and 32 KiB of serialized context. Omitted/truncated context is explicit. Lines are bounded to 16 KiB UTF-8; a conversation holds at most 1,000 turns. Interactive input supports POSIX terminals and pipes with bounded buffering; unsupported descriptors/platforms fail clearly. `--json` and `--submission-id` require `--message`.
+
+While a role is working, `/status` remains responsive. EOF, `/exit`, and repeated Ctrl-C retain and await cancellation/cleanup of locally active work; an already paused approval turn remains available for restart. Use `/cancel` explicitly to cancel a waiting turn. A delayed cancellation stays bound to its original Run and cannot cancel a newer turn. Unknown ownership after a crash never expires into a right to replay; stop its original process, inspect the Run, and use `fleet recover <run-id> --confirm-owner-stopped`. Recovery can fence a conversation-owned interrupted CREATED or PAUSED state, preserves budgets, and releases the turn only after exact root/descendant cleanup. Each new chat invocation must explicitly select `--allow-unsafe-local` before host execution; `/resume` uses that session's choice.
+
 ## What is enforced now
 
 - strict Pydantic v2 persistent/external models and safe YAML loading;
 - type-specific stable ID prefixes for persistent and public identity fields, including project, run, task, agent, event, approval, grant, artifact, intent, lease, workspace, sandbox, plan, and FleetPatch IDs;
 - explicit workflow transitions with transactional per-run events;
-- SQLite migrations `0001`–`0006`, durable exact once/run/always approval grants, per-action persistent-rule capability receipts, provider/image/daemon-bound Projects and Runs, cumulative budget accounting, graph ownership and recoverable worktree/sandbox/execution leases;
+- SQLite migrations `0001`–`0007`, durable exact once/run/always approval grants, per-action persistent-rule capability receipts, provider/image/daemon-bound Projects and Runs, cumulative budget accounting, graph/conversation ownership and recoverable worktree/sandbox/execution leases;
 - repository-aware no-execution profiling with provenance, ambiguity, read/entry/depth limits, and symlink defenses;
 - repository-specific FleetSpec/verification proposals plus immutable profile/knowledge artifacts;
 - exact content-addressed ConfigSnapshot and TaskSpec bindings for each run, status inspection, and patch apply;
@@ -247,7 +280,7 @@ On POSIX, the bounded Docker CLI runner starts a private process group, sends at
 
 Only `network=none` is accepted by the isolated Phase 3 path. Images must already exist locally and may expose only the allowlisted environment defaults; Fleet does not build, pull, patch, or attest their supply chain. Cgroup-v2 daemons may report `MemorySwappiness=null`; Fleet accepts that only while the inspected memory and memory-swap hard limits are equal, which proves no container swap allocation. A crash after the durable create-dispatch checkpoint but before an exact Docker ID is persisted is intentionally conservative: zero label matches remain `FAILED`, parent resources stay intact, and no command is replayed. If the resource appears later, the operator reruns exact-run recovery after confirming the old owner stopped; a permanent zero remains outstanding for diagnosis rather than becoming an unsafe absence claim. Phase 3 has no cross-process owner-liveness lock, so it intentionally does not run destructive recovery automatically on every CLI startup.
 
-One overall model verdict cannot independently establish multiple acceptance criteria. Milestone 1 adds `structured_criterion_results` with exact current independent-verifier command/artifact references; missing mappings remain inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`, and invalid mappings cannot establish PASS. The normal two-criterion/new-module Docker journey now proves this boundary; the same fake-sandbox mapping remains inconclusive. The policy surface covers bounded candidate operations, exact reviewed verification commands, and one explicit fake approval fixture. Phase 4 adds a separately reviewed user path ceiling, not an inference of path intent from natural language; target-checkout mutation still requires explicit patch review/apply. There is no approved isolated-worker networking, remote/hosted sandbox, arbitrary shell surface, external write, persistent CoS chat, keyring/second-provider integration, or operational FleetPatch apply/rollback workflow.
+One overall model verdict cannot independently establish multiple acceptance criteria. Milestone 1 adds `structured_criterion_results` with exact current independent-verifier command/artifact references; missing mappings remain inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`, and invalid mappings cannot establish PASS. The normal two-criterion/new-module Docker journey now proves this boundary; the same fake-sandbox mapping remains inconclusive. The policy surface covers bounded candidate operations, exact reviewed verification commands, and one explicit fake approval fixture. Phase 4 adds a separately reviewed user path ceiling, not an inference of path intent from natural language; target-checkout mutation still requires explicit patch review/apply. There is no approved isolated-worker networking, remote/hosted sandbox, arbitrary shell surface, external write, keyring/second-provider integration, or operational FleetPatch apply/rollback workflow. Persistent CoS chat is accepted as described above.
 
 The Phase 5 candidate delivery path is intentionally text-only: changed or deleted binary files, unsafe file types, protected paths and changed Git indexes fail closed. New regular UTF-8 files are included in canonical patches; unchanged binary assets may remain in a repository. This avoids concealing registered secrets inside Git's encoded binary-patch format. Ignored paths retain Git ignore semantics; there is no global cache-name exclusion. Generated test fixtures explicitly ignore their Python test caches. New-file snapshots are bounded to 1,024 files, 2 MB per file and 8 MB total; emitted patches are limited to 16 MB, while model patch context retains its smaller 120 KB bound.
 
@@ -265,11 +298,11 @@ Patch application updates the original working tree only. It does not stage, com
 - Phase 2: implemented explicit BYOK `env:NAME` references and the PydanticAI runtime behind the project-owned runtime/tool contracts.
 - Phase 3: completed local Docker sandbox, bounded file/command tools, deterministic recovery, and evidence-gated bootstrap.
 - Phase 4: accepted three-state policy, exact once/run/project trust, audited revocation and safe approval resume.
-- Phase 5: budgets/evidence (M1) and all five execution strategies (M2) accepted; persistent CoS chat and whole-phase acceptance remain open.
+- Phase 5: accepted cumulative budgets, all five adaptive strategies and persistent bounded CoS chat.
 - Phase 6: reviewable FleetPatch organization updates.
 - Phase 7: release hardening, cross-platform evidence, and owner license decision.
 
-Phase 0–4 establishes the local execution, exact-permission and evidence foundation; M1/M2 extend it with accepted budgets and adaptive execution. Persistent chat, operational FleetPatch, release hardening and the remaining live-provider/license gates are still required for the complete MVP.
+Phase 0–5 establishes local execution, exact permissions, evidence, durable budgets, adaptive execution and persistent chat. Operational FleetPatch, release hardening/guide and the remaining live-provider/license gates are still required for the complete MVP.
 
 ## Quality gates
 
@@ -283,6 +316,26 @@ AGENT_FLEET_ENABLE_DOCKER_TESTS=1 \
 AGENT_FLEET_DOCKER_TEST_IMAGE=agent-fleet-runner:phase3 \
 uv run pytest -q -m docker_integration tests/docker
 ```
+
+## Verification snapshot (Phase 5 accepted, 2026-09-05)
+
+The frozen chat/workflow implementation passed on macOS arm64/Colima. Source/test aggregate `2f806013a7e029b5dea20c08ca64a94a4dd135a156a65662bfa31a859ec8b3f3` remained unchanged through all behavioral gates. This is a byte-checksum, not a Git commit. After those gates passed, only the CLI whole-phase marker and its two assertions changed from 4 to 5. Final source/test checksum is `f7e5d377c89c21876052841809c7efa454cbd20764420a5465b7f0a868ec89f6`; the focused metadata/package/static refresh passed as recorded in the [chat acceptance log](.agent/plans/2026-09-05-persistent-chat.md#final-acceptance-command-log).
+
+| Gate | Exact result |
+| --- | --- |
+| Complete default suite | `1472 passed, 14 skipped in 1354.35s`; thirteen Docker and one live-provider case gated. Both opt-ins disabled. |
+| Separately enabled real Docker | `13 passed, 4 deselected in 101.98s`; zero managed containers and zero outstanding leases across 24 state databases. Nine recovered historical leases remain as audit records. |
+| Unit / contract | `716 passed in 67.88s` / `396 passed in 9.57s`. |
+| Marked integration / subprocess E2E | `251 passed, 85 deselected in 952.14s` / `19 passed in 255.40s`. |
+| Fresh independent conversation safety | `29 passed in 51.59s`; root replay `29 passed in 51.80s`. |
+| Dependency/static/schema | Lock resolved 51, sync checked 49; Ruff format checked 217 files, lint passed, mypy passed 186 files, all 65 schemas and whitespace checks passed. |
+| Initial archives | Offline wheel/sdist and schema tests: `5 passed in 3.29s`; each archive has 178 package files, 65 schemas, seven migrations and five prompts. Documentation-final refresh follows the metadata update. |
+| Post-acceptance phase marker | CLI/archive/schema group `35 passed in 32.52s`; final Ruff format checked 219 files, lint passed, mypy passed 186 files, schema and whitespace checks passed. |
+| Documentation-final archives | Wheel/sdist rebuilt and schema/archive read-back: `5 passed`. Archives match source and README bytes. A preceding README-frozen repeat took 1.99s; the acceptance log records the final refresh after this result entry. |
+
+The normal public bootstrap→chat→Safe approvals→restart→real pytest→independent verdict→explicit patch apply journey passed in Docker with offline FunctionModel responses. Both Engineer and Verifier ran three actual tests, target files remained unchanged before apply, and exact turn/Run/ledger identities survived reconstruction. The local pytest runner image is `sha256:15245c81b1efb7a68bad269f03737955eb5e6a2b7fc79aa98faa49c93a899851`, explicitly built without pull/network from genuine cached dependencies. It is not a published image or fresh-user install proof.
+
+Independent review found and fixed a cancellation race that could target a newer turn and a terminal-fence reconciliation gap. The failing regressions and initial fixture-assumption failures remain in the living plan and are superseded by the frozen passes above. No live provider or actual provider credential was used. Phase 6/7, detailed guide, fresh-user/platform installation proof, final GitHub merge and owner-license/live-provider release gates remain open.
 
 ## Verification snapshot (Phase 5 Milestone 2 accepted, 2026-09-05)
 
@@ -299,7 +352,7 @@ The frozen graph slice passed on the local macOS arm64/Colima environment. Its s
 
 The pre-final marked integration attempt failed (`2 failed, 212 passed, 85 deselected in 823.08s`): terminal rehydration could not release its owner, and missing child evidence leaked a raw filesystem error. Those defects and embedded plan/join/cleanup consistency gaps were repaired and re-proved by the focused and final frozen suites. The failed attempt is retained, not counted as acceptance.
 
-Normal offline FunctionModel and real-Docker journeys prove scoped parallel/specialist execution, fresh joined-patch verification and explicit parent-only application. Child test results cannot replace parent evidence; FakeSandbox remains INCONCLUSIVE. Unknown dispatched ownership is not replayable and requires operator-confirmed recovery. No live provider or actual provider credential was used. The M2 checkpoint is pending; chat, full Phase 5, Phase 6/7, fresh-user/cross-platform installation, final GitHub merge and owner-license/live-provider release gates remain open.
+Normal offline FunctionModel and real-Docker journeys prove scoped parallel/specialist execution, fresh joined-patch verification and explicit parent-only application. Child test results cannot replace parent evidence; FakeSandbox remains INCONCLUSIVE. Unknown dispatched ownership is not replayable and requires operator-confirmed recovery. No live provider or actual provider credential was used. M2 was subsequently committed and pushed as `7a70b1a`; chat/full Phase 5 acceptance, Phase 6/7, fresh-user/cross-platform installation, final GitHub merge and owner-license/live-provider release gates remain open.
 
 ## Verification snapshot (Phase 5 Milestone 1 accepted, 2026-09-05)
 

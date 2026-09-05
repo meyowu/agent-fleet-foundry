@@ -939,7 +939,7 @@ def test_absent_database_is_not_created_and_old_schema_requires_explicit_migrati
     assert not absent.exists()
     h = graph_harness(tmp_path)
     with sqlite3.connect(h.state.database_path) as connection:
-        connection.execute("DELETE FROM schema_migrations WHERE version=6")
+        connection.execute("DELETE FROM schema_migrations WHERE version >= 6")
     with pytest.raises(FleetError):
         h.graphs.get(h.parent.run_id)
 
@@ -1325,6 +1325,6 @@ def test_migration_six_is_atomic_and_preserves_existing_version_five_runs(
             is None
         )
     assert h.state.get_run(original.run_id) == original
-    assert h.state.migrate() == 6
+    assert h.state.migrate() == 7
     assert h.state.get_run(original.run_id) == original
     assert h.initialize() == h.reopen().get(original.run_id)

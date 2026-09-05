@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import timedelta
 from importlib.resources import files
 from pathlib import Path
-from typing import cast
+from typing import TypeVar, cast
 
 from pydantic import JsonValue, ValidationError
 
@@ -32,6 +33,7 @@ from agent_fleet.domain.models import (
     SandboxExecutionRecoveryRequest,
     SandboxHandle,
     StoredToolIntent,
+    StrictModel,
     TaskSpec,
     ToolIntent,
     jsonable,
@@ -41,7 +43,9 @@ from agent_fleet.domain.workflow import validate_transition
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
 
-SUPPORTED_SCHEMA_VERSION = 6
+SUPPORTED_SCHEMA_VERSION = 7
+
+_StateModel = TypeVar("_StateModel", bound=StrictModel)
 
 
 class SqliteStateStore:
@@ -145,54 +149,109 @@ class SqliteStateStore:
     def create_run(self, run: Run) -> None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                "INSERT INTO runs(run_id, project_id, status, stage, data_json) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    run.run_id,
-                    run.project_id,
-                    run.status.value,
-                    run.stage.value if run.stage else None,
-                    run.model_dump_json(),
-                ),
-            )
-            self._insert_event(
-                connection,
-                self._event_for_run(
-                    run, "run.created", {"goal": run.goal, "status": run.status.value}
-                ),
-            )
+            self._insert_run_in_transaction(connection, run)
             connection.commit()
+
+    def _insert_run_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        run: Run,
+        *,
+        created_payload: dict[str, object] | None = None,
+    ) -> None:
+        """Reuse the canonical Run/event insertion inside an adapter-owned transaction."""
+        run = self._decode_state_record(Run, run.model_dump_json(warnings=False))
+        connection.execute(
+            "INSERT INTO runs(run_id, project_id, status, stage, data_json) VALUES (?, ?, ?, ?, ?)",
+            (
+                run.run_id,
+                run.project_id,
+                run.status.value,
+                run.stage.value if run.stage else None,
+                run.model_dump_json(),
+            ),
+        )
+        self._insert_event(
+            connection,
+            self._event_for_run(
+                run,
+                "run.created",
+                {"goal": run.goal, "status": run.status.value, **(created_payload or {})},
+            ),
+        )
+
+    def _decode_state_record(self, model: type[_StateModel], raw: str) -> _StateModel:
+        """Bound and scan before parsing without retaining secret-bearing parse exceptions."""
+        result: _StateModel | None = None
+        if (
+            isinstance(raw, str)
+            and len(raw.encode("utf-8")) <= 1_048_576
+            and not self.redactor.contains_secret_data(raw)
+        ):
+            with suppress(ValidationError, ValueError, TypeError):
+                result = model.model_validate_json(raw)
+        if result is None:
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "A durable state record is invalid or unsafe to inspect.",
+                "Inspect the selected state safely before continuing its execution.",
+            )
+        return result
+
+    def _validated_run(self, connection: sqlite3.Connection, run_id: str) -> Run:
+        if self.redactor.contains_secret_data(run_id):
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "The durable Run identity is invalid.",
+                "Use an exact recorded Run identity.",
+            )
+        row = connection.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        if row is None:
+            raise _not_found("run", run_id)
+        run = self._decode_state_record(Run, row["data_json"])
+        if (
+            run.run_id != run_id
+            or run.project_id != row["project_id"]
+            or run.status.value != row["status"]
+            or (run.stage.value if run.stage else None) != row["stage"]
+        ):
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "The durable Run does not match its stored identity.",
+                "Inspect its immutable registration before resuming.",
+            )
+        return run
+
+    def _save_run_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        run: Run,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> Run:
+        run = self._decode_state_record(Run, run.model_dump_json(warnings=False))
+        current = self._validated_run(connection, run.run_id)
+        validate_transition(current, run.status, run.stage)
+        connection.execute(
+            "UPDATE runs SET status = ?, stage = ?, data_json = ? WHERE run_id = ?",
+            (
+                run.status.value,
+                run.stage.value if run.stage else None,
+                run.model_dump_json(),
+                run.run_id,
+            ),
+        )
+        self._insert_event(connection, self._event_for_run(run, event_type, payload))
+        return run
 
     def get_run(self, run_id: str) -> Run:
         with self._connect() as connection:
-            row = connection.execute(
-                "SELECT data_json FROM runs WHERE run_id = ?", (run_id,)
-            ).fetchone()
-        if row is None:
-            raise _not_found("run", run_id)
-        return Run.model_validate_json(row["data_json"])
+            return self._validated_run(connection, run_id)
 
     def save_run(self, run: Run, event_type: str, payload: dict[str, object]) -> Run:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT data_json FROM runs WHERE run_id = ?", (run.run_id,)
-            ).fetchone()
-            if row is None:
-                raise _not_found("run", run.run_id)
-            current = Run.model_validate_json(row["data_json"])
-            validate_transition(current, run.status, run.stage)
-            connection.execute(
-                "UPDATE runs SET status = ?, stage = ?, data_json = ? WHERE run_id = ?",
-                (
-                    run.status.value,
-                    run.stage.value if run.stage else None,
-                    run.model_dump_json(),
-                    run.run_id,
-                ),
-            )
-            self._insert_event(connection, self._event_for_run(run, event_type, payload))
+            run = self._save_run_in_transaction(connection, run, event_type, payload)
             connection.commit()
         return run
 
@@ -279,6 +338,52 @@ class SqliteStateStore:
                 "SELECT data_json FROM run_events WHERE run_id = ? ORDER BY sequence", (run_id,)
             ).fetchall()
         return [FleetEvent.model_validate_json(row["data_json"]) for row in rows]
+
+    def list_events_after(
+        self, run_id: str, *, after_sequence: int = 0, limit: int = 100
+    ) -> Sequence[FleetEvent]:
+        if (
+            type(after_sequence) is not int
+            or after_sequence < 0
+            or type(limit) is not int
+            or not 1 <= limit <= 100
+        ):
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "Event pagination requires a nonnegative cursor and a limit from 1 to 100.",
+                "Use the last recorded sequence as the next cursor.",
+            )
+        with self._connect() as connection:
+            run = self._validated_run(connection, run_id)
+            rows = connection.execute(
+                "SELECT * FROM run_events WHERE run_id = ? AND sequence > ? "
+                "ORDER BY sequence LIMIT ?",
+                (run_id, after_sequence, limit),
+            ).fetchall()
+            events: list[FleetEvent] = []
+            previous = after_sequence
+            for row in rows:
+                event = self._decode_state_record(FleetEvent, row["data_json"])
+                if (
+                    event.run_id != run_id
+                    or event.project_id != run.project_id
+                    or event.sequence is None
+                    or event.sequence <= previous
+                    or any(
+                        getattr(event, key) != row[key]
+                        for key in ("event_id", "run_id", "project_id", "sequence", "event_type")
+                    )
+                    or event.occurred_at.isoformat() != row["occurred_at"]
+                ):
+                    raise FleetError(
+                        ErrorCode.RECOVERY_REQUIRED,
+                        "An event page does not match its durable Run journal.",
+                        "Inspect the exact Run journal before continuing.",
+                    )
+                events.append(event)
+                assert event.sequence is not None
+                previous = event.sequence
+            return events
 
     def save_artifact(self, artifact: ArtifactMetadata) -> None:
         with self._connect() as connection:

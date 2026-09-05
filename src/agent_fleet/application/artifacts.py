@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
+
 from pydantic import JsonValue
 
 from agent_fleet.domain.errors import ErrorCode, FleetError
@@ -76,3 +78,25 @@ class ArtifactService:
     def read_text(self, artifact_id: str) -> str:
         metadata = self.state.get_artifact(artifact_id)
         return self.store.get(metadata.content_ref, metadata.sha256).decode("utf-8")
+
+    def read_bounded_text(self, artifact_id: str, *, max_bytes: int = 16_777_216) -> str:
+        """Validate bytes, size, UTF-8 and registered secrets before context use."""
+        metadata = self.state.get_artifact(artifact_id)
+        if not 0 <= metadata.byte_size <= max_bytes:
+            raise _bounded_read_error()
+        content = self.store.get(metadata.content_ref, metadata.sha256, max_bytes=max_bytes)
+        value: str | None = None
+        if len(content) == metadata.byte_size:
+            with suppress(UnicodeError):
+                value = content.decode("utf-8")
+        if value is None or self.redactor.contains_secret(value):
+            raise _bounded_read_error()
+        return value
+
+
+def _bounded_read_error() -> FleetError:
+    return FleetError(
+        ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+        "The context artifact exceeds its bound or fails content validation.",
+        "Inspect the original artifact; no unvalidated content was used as conversation context.",
+    )

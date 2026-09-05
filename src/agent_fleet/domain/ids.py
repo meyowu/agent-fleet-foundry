@@ -23,6 +23,8 @@ class IdPrefix(StrEnum):
     WORKSPACE = "ws"
     FLEET_PLAN = "plan"
     FLEET_PATCH = "fpatch"
+    CONVERSATION = "conv"
+    CONVERSATION_TURN = "turn"
 
 
 def new_id(prefix: IdPrefix) -> str:

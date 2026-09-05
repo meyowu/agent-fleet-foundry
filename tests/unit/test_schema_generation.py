@@ -128,3 +128,57 @@ def test_adaptive_graph_public_schema_catalog_is_complete_and_bounded() -> None:
     delivery = SCHEMAS["graph-delivery-evidence.schema.json"].model_json_schema()
     assert delivery["properties"]["child_cleanup_receipts"]["maxItems"] == 16
     assert delivery["properties"]["sequential_repair_iterations"]["maximum"] == 5
+
+
+def test_conversation_public_schemas_keep_context_and_ownership_bounded() -> None:
+    expected = {
+        "conversation.schema.json",
+        "conversation-summary.schema.json",
+        "conversation-artifact-ref.schema.json",
+        "conversation-context-entry.schema.json",
+        "conversation-context.schema.json",
+        "conversation-submission.schema.json",
+        "conversation-run-binding.schema.json",
+        "conversation-claim.schema.json",
+        "conversation-turn.schema.json",
+        "conversation-registration.schema.json",
+    }
+    assert expected <= SCHEMAS.keys()
+    for name in expected:
+        assert SCHEMAS[name].model_json_schema()["additionalProperties"] is False
+    conversation = SCHEMAS["conversation.schema.json"].model_json_schema()["properties"]
+    assert conversation["conversation_id"]["pattern"] == r"^conv_[0-9a-f]{32}$"
+    assert conversation["project_id"]["pattern"] == r"^prj_[0-9a-f]{32}$"
+    assert conversation["next_turn_sequence"]["maximum"] == 1001
+    assert conversation["created_at"]["format"] == "date-time"
+    context = SCHEMAS["conversation-context.schema.json"].model_json_schema()
+    assert context["properties"]["entries"]["maxItems"] == 8
+    assert context["properties"]["through_sequence"]["maximum"] == 1000
+    entry = context["$defs"]["ConversationContextEntry"]["properties"]
+    assert entry["turn_id"]["pattern"] == r"^turn_[0-9a-f]{32}$"
+    assert entry["artifact_refs"]["maxItems"] == 8
+    submission = SCHEMAS["conversation-submission.schema.json"].model_json_schema()["properties"]
+    assert submission["submission_key"]["pattern"] == r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    assert not {"run_id", "provider_model", "credential_ref", "grant"}.intersection(submission)
+    turn = SCHEMAS["conversation-turn.schema.json"].model_json_schema()
+    assert turn["properties"]["artifact_refs"]["maxItems"] == 8
+    assert set(turn["$defs"]["ConversationTurnStatus"]["enum"]) == {
+        "running",
+        "waiting",
+        "delivered",
+        "failed",
+        "cancelled",
+        "recovery_required",
+    }
+    binding = SCHEMAS["conversation-run-binding.schema.json"].model_json_schema()["properties"]
+    assert {
+        "budget_limits",
+        "context_sha256",
+        "run_binding_sha256",
+        "submission_sha256",
+    } <= binding.keys()
+    claim = SCHEMAS["conversation-claim.schema.json"].model_json_schema()["properties"]
+    assert claim["claim_id"]["pattern"] == r"^corr_[0-9a-f]{32}$"
+    assert claim["generation"]["minimum"] == 1
+    # UTF-8 byte totals, UTC-only offsets and cross-record identity are runtime
+    # validators; JSON Schema's representable bounds do not replace those checks.
