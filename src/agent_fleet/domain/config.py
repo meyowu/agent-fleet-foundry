@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -10,6 +11,8 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from agent_fleet.domain.models import (
     ActionId,
     AgentLifecycle,
+    CommandSpec,
+    LogicalRepoPath,
     ProviderModelId,
     RoleId,
     RuntimeCapability,
@@ -20,6 +23,7 @@ from agent_fleet.domain.models import (
     WorkflowId,
 )
 from agent_fleet.domain.security import sha256_bytes
+from agent_fleet.domain.trust import canonical_trust_path
 
 _LEGACY_ROLE_LABELS: dict[str, frozenset[str]] = {
     "cos": frozenset({"chief-of-staff"}),
@@ -146,6 +150,99 @@ class AgentRequest(ConfigModel):
 class WorkflowRequest(ConfigModel):
     definition: str
     max_repair_iterations: int = Field(alias="maxRepairIterations", ge=0, le=5)
+    max_parallel_agents: int = Field(default=2, alias="maxParallelAgents", ge=1, le=8)
+    allowed_tools: list[ActionId] | None = Field(default=None, alias="allowedTools", max_length=64)
+
+
+WORKFLOW_STAGES = (
+    "intake",
+    "scoping",
+    "workspace-preparation",
+    "implementing",
+    "verifying",
+    "repairing",
+    "presenting",
+    "applying",
+)
+
+
+class WorkflowDefinitionLimits(ConfigModel):
+    max_repair_iterations: int = Field(alias="maxRepairIterations", ge=0, le=5)
+
+
+class WorkflowDefinition(ConfigModel):
+    api_version: Literal["agentfleet.dev/v1alpha1"] = Field(alias="apiVersion")
+    kind: Literal["Workflow"]
+    metadata: Metadata
+    stages: list[str] = Field(min_length=8, max_length=8)
+    limits: WorkflowDefinitionLimits
+    verification_skills: list[str] = Field(
+        default_factory=list, alias="verificationSkills", max_length=32
+    )
+
+    @field_validator("stages")
+    @classmethod
+    def fixed_stage_sequence(cls, values: list[str]) -> list[str]:
+        if tuple(values) != WORKFLOW_STAGES:
+            raise ValueError("workflow stages must retain the supported code-change sequence")
+        return values
+
+    @field_validator("verification_skills")
+    @classmethod
+    def canonical_skill_references(cls, values: list[str]) -> list[str]:
+        folded: set[str] = set()
+        for value in values:
+            path = PurePosixPath(value)
+            if (
+                len(path.parts) != 2
+                or path.parts[0] != "skills"
+                or path.suffix != ".yaml"
+                or path.as_posix() != value
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", path.stem) is None
+                or value.casefold() in folded
+            ):
+                raise ValueError(
+                    "verification skills require unique canonical skills/name.yaml references"
+                )
+            folded.add(value.casefold())
+        return values
+
+
+class VerificationSkill(ConfigModel):
+    api_version: Literal["agentfleet.dev/v1alpha1"] = Field(alias="apiVersion")
+    kind: Literal["VerificationSkill"]
+    metadata: Metadata
+    applies_to_paths: list[LogicalRepoPath] = Field(
+        alias="appliesToPaths", min_length=1, max_length=128
+    )
+    required_command_ids: list[ActionId] = Field(
+        alias="requiredCommandIds", min_length=1, max_length=128
+    )
+
+    @field_validator("applies_to_paths")
+    @classmethod
+    def canonical_scope(cls, values: list[str]) -> list[str]:
+        folded: set[str] = set()
+        for value in values:
+            canonical_trust_path(value, allow_root=True)
+            if (
+                len(value.encode("utf-8", errors="surrogatepass")) > 4096
+                or any(0xD800 <= ord(char) <= 0xDFFF for char in value)
+                or len(PurePosixPath(value).parts) > 64
+                or value.casefold() in folded
+            ):
+                raise ValueError(
+                    "skill scopes must be bounded, UTF-8 and case-insensitively unique"
+                )
+            folded.add(value.casefold())
+        return values
+
+    @field_validator("required_command_ids")
+    @classmethod
+    def unique_commands(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("skill command IDs must be unique")
+        return values
 
 
 class ProjectFiles(ConfigModel):
@@ -215,14 +312,24 @@ class VerificationCommand(ConfigModel):
 class VerificationProfile(ConfigModel):
     api_version: Literal["agentfleet.dev/v1alpha1"] = Field(alias="apiVersion")
     kind: Literal["VerificationProfile"]
-    commands: dict[str, VerificationCommand]
-    required_for_code_change: list[str] = Field(alias="requiredForCodeChange")
+    commands: dict[ActionId, VerificationCommand] = Field(max_length=32)
+    required_for_code_change: list[ActionId] = Field(alias="requiredForCodeChange", max_length=32)
 
     @model_validator(mode="after")
     def commands_exist(self) -> VerificationProfile:
+        if len(self.required_for_code_change) != len(set(self.required_for_code_change)):
+            raise ValueError("required verification command IDs must be unique")
         missing = set(self.required_for_code_change) - set(self.commands)
         if missing:
             raise ValueError(f"required verification commands are missing: {sorted(missing)}")
+        for command_id, command in self.commands.items():
+            CommandSpec(
+                command_id=command_id,
+                executable=command.executable,
+                argv=tuple(command.argv),
+                logical_cwd=command.cwd,
+                timeout_seconds=command.timeout_seconds,
+            )
         return self
 
 

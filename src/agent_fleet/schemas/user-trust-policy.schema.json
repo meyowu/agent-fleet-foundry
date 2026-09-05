@@ -1,0 +1,413 @@
+{
+  "$defs": {
+    "CanonicalResource": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "title": "Identifier",
+          "type": "string"
+        },
+        "kind": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "identifier"
+      ],
+      "title": "CanonicalResource",
+      "type": "object"
+    },
+    "CommandSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Argv",
+          "type": "array"
+        },
+        "command_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "environment": {
+          "maxProperties": 32,
+          "patternProperties": {
+            "^[A-Z][A-Z0-9_]{0,63}$": {
+              "maxLength": 4096,
+              "type": "string"
+            }
+          },
+          "title": "Environment",
+          "type": "object"
+        },
+        "executable": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^(?:[A-Za-z0-9._+-]+|\\./[A-Za-z0-9._+-]+)$",
+          "title": "Executable",
+          "type": "string"
+        },
+        "logical_cwd": {
+          "default": ".",
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Logical Cwd",
+          "type": "string"
+        },
+        "max_output_bytes": {
+          "default": 64000,
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Max Output Bytes",
+          "type": "integer"
+        },
+        "network_requirement": {
+          "default": "none",
+          "enum": [
+            "none",
+            "required"
+          ],
+          "title": "Network Requirement",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command_id",
+        "executable"
+      ],
+      "title": "CommandSpec",
+      "type": "object"
+    },
+    "ExactPermissionScope": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Action",
+          "type": "string"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "network_mode": {
+          "enum": [
+            "none",
+            "approved-unrestricted"
+          ],
+          "title": "Network Mode",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "maxProperties": 32,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "principal_role": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Principal Role",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "repository_identity": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repository Identity",
+          "type": "string"
+        },
+        "resource": {
+          "$ref": "#/$defs/CanonicalResource"
+        },
+        "sandbox_provider": {
+          "enum": [
+            "fake",
+            "docker",
+            "local-unsafe"
+          ],
+          "title": "Sandbox Provider",
+          "type": "string"
+        },
+        "sandbox_security_level": {
+          "$ref": "#/$defs/SandboxSecurityLevel"
+        },
+        "source_checkout_read_only": {
+          "const": true,
+          "default": true,
+          "title": "Source Checkout Read Only",
+          "type": "boolean"
+        },
+        "stage": {
+          "$ref": "#/$defs/WorkflowStage"
+        },
+        "workflow": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Workflow",
+          "type": "string"
+        },
+        "workspace_kind": {
+          "$ref": "#/$defs/WorkspaceKind"
+        }
+      },
+      "required": [
+        "project_id",
+        "repository_identity",
+        "principal_role",
+        "workflow",
+        "stage",
+        "action",
+        "resource",
+        "workspace_kind",
+        "sandbox_provider",
+        "sandbox_security_level",
+        "network_mode"
+      ],
+      "title": "ExactPermissionScope",
+      "type": "object"
+    },
+    "JsonValue": {},
+    "ProjectTrustSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_paths": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Allowed Paths",
+          "type": "array"
+        },
+        "grants_revoked_before": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grants Revoked Before"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "repository_identity": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repository Identity",
+          "type": "string"
+        },
+        "trust_mode": {
+          "$ref": "#/$defs/TrustMode",
+          "default": "balanced"
+        }
+      },
+      "required": [
+        "project_id",
+        "repository_identity"
+      ],
+      "title": "ProjectTrustSettings",
+      "type": "object"
+    },
+    "SandboxSecurityLevel": {
+      "enum": [
+        "fake",
+        "isolated",
+        "unsafe_host"
+      ],
+      "title": "SandboxSecurityLevel",
+      "type": "string"
+    },
+    "TrustMode": {
+      "enum": [
+        "safe",
+        "balanced",
+        "autonomous-sandbox"
+      ],
+      "title": "TrustMode",
+      "type": "string"
+    },
+    "UserTrustRule": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "created_by": {
+          "const": "user",
+          "default": "user",
+          "title": "Created By",
+          "type": "string"
+        },
+        "effect": {
+          "enum": [
+            "allow",
+            "deny"
+          ],
+          "title": "Effect",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revoked At"
+        },
+        "rule_id": {
+          "pattern": "^rule_[0-9a-f]{32}$",
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/ExactPermissionScope"
+        },
+        "source_approval_request_id": {
+          "anyOf": [
+            {
+              "pattern": "^perm_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Approval Request Id"
+        }
+      },
+      "required": [
+        "rule_id",
+        "scope",
+        "effect",
+        "created_at"
+      ],
+      "title": "UserTrustRule",
+      "type": "object"
+    },
+    "WorkflowStage": {
+      "enum": [
+        "intake",
+        "scoping",
+        "workspace_preparation",
+        "implementing",
+        "verifying",
+        "repairing",
+        "presenting",
+        "applying",
+        "cleanup"
+      ],
+      "title": "WorkflowStage",
+      "type": "string"
+    },
+    "WorkspaceKind": {
+      "enum": [
+        "candidate",
+        "verification"
+      ],
+      "title": "WorkspaceKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "kind": {
+      "const": "UserTrustPolicy",
+      "default": "UserTrustPolicy",
+      "title": "Kind",
+      "type": "string"
+    },
+    "projects": {
+      "items": {
+        "$ref": "#/$defs/ProjectTrustSettings"
+      },
+      "maxItems": 1024,
+      "title": "Projects",
+      "type": "array"
+    },
+    "revision": {
+      "default": 0,
+      "maximum": 9223372036854775807,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "rules": {
+      "items": {
+        "$ref": "#/$defs/UserTrustRule"
+      },
+      "maxItems": 8192,
+      "title": "Rules",
+      "type": "array"
+    }
+  },
+  "title": "UserTrustPolicy",
+  "type": "object"
+}

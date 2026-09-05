@@ -1,0 +1,688 @@
+"""Bounded POSIX chat input and thin, deterministic conversation presentation."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import shlex
+import signal
+import stat
+import sys
+from collections.abc import Callable
+from contextlib import suppress
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Protocol, TextIO
+
+import typer
+from pydantic import JsonValue
+from rich.console import Console
+from rich.markup import escape
+from typer import _click as click
+from typer._click.exceptions import UsageError
+from typer.core import TyperCommand
+
+from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.models import ApprovalChoice, FakeScenario, jsonable
+from agent_fleet.domain.security import Redactor
+
+if TYPE_CHECKING:
+    from agent_fleet.application.conversations import ChatExecutionOptions
+
+type View = dict[str, JsonValue]
+_MAX_LINE_BYTES = 16_384
+_MAX_QUEUED_LINES = 8
+_PROGRESS_INTERVAL = 0.25
+_HELP = (
+    "/status  /artifacts  /permissions [request-id]  /cancel  /resume\n"
+    "/approve <request-id> --once|--run|--always --scope project\n"
+    "/deny <request-id> [--reason <text>]  /help  /exit\n"
+    "New goals wait until the current turn settles. Approval never resumes automatically.\n"
+    "Review and apply code patches with fleet patch; organization proposals with fleet fleet-patch."
+)
+
+
+class ConversationClient(Protocol):
+    """The selected-project application boundary; no runtime or storage access."""
+
+    def select(
+        self, project_path: Path, *, conversation_id: str | None = None, create_new: bool = False
+    ) -> View: ...
+
+    def status(self, conversation_id: str) -> View: ...
+
+    async def submit(
+        self,
+        conversation_id: str,
+        *,
+        message: str,
+        submission_id: str | None,
+        options: ChatExecutionOptions,
+    ) -> View: ...
+
+    async def resume(self, conversation_id: str, *, allow_unsafe_local: bool = False) -> View: ...
+
+    async def cancel(self, conversation_id: str) -> View: ...
+
+    def artifacts(self, conversation_id: str) -> View: ...
+
+    def permissions(self, conversation_id: str, *, identifier: str | None = None) -> View: ...
+
+    def approve(self, conversation_id: str, request_id: str, *, choice: ApprovalChoice) -> View: ...
+
+    def deny(self, conversation_id: str, request_id: str, *, reason: str | None = None) -> View: ...
+
+    def progress(
+        self, conversation_id: str, *, cursor: str | None = None, limit: int = 50
+    ) -> View: ...
+
+
+class Presenter(Protocol):
+    def __call__(
+        self,
+        command: str,
+        json_output: bool,
+        operation: Callable[[], tuple[JsonValue, list[str]]],
+        *,
+        redactor: Redactor | None = None,
+    ) -> None: ...
+
+
+class ErrorPresenter(Protocol):
+    def __call__(
+        self, command: str, error: FleetError, json_output: bool, redactor: Redactor
+    ) -> None: ...
+
+
+class LineInput(Protocol):
+    async def read_line(self) -> str | None: ...
+
+
+def _input_error() -> FleetError:
+    return FleetError(
+        ErrorCode.CONFIG_INVALID,
+        "Chat requires bounded UTF-8 lines from a supported POSIX pipe or terminal.",
+        "Use lines up to 16 KiB, or submit one goal with --message; no input was replayed.",
+    )
+
+
+def _command_error() -> FleetError:
+    return FleetError(
+        ErrorCode.CONFIG_INVALID,
+        "The chat command or its arguments are invalid.",
+        "Use /help or fleet chat --help for the exact supported syntax.",
+    )
+
+
+class PosixLineInput:
+    """Read only ready descriptors, with bounded buffering and kernel backpressure.
+
+    No worker thread survives EOF or cancellation. This adapter never closes its
+    caller's descriptor and restores its original blocking flag when detached.
+    """
+
+    def __init__(self, stream: TextIO) -> None:
+        self.stream = stream
+        self._fd: int | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._was_blocking = True
+        self._registered = False
+        self._eof = False
+        self._buffer = bytearray()
+        self._queue: asyncio.Queue[str | FleetError | None] = asyncio.Queue(_MAX_QUEUED_LINES)
+
+    async def __aenter__(self) -> PosixLineInput:
+        valid = False
+        with suppress(OSError, ValueError, AttributeError, NotImplementedError):
+            fd = self.stream.fileno()
+            mode = os.fstat(fd).st_mode
+            if os.name == "posix" and (stat.S_ISFIFO(mode) or os.isatty(fd)):
+                self._fd = fd
+                self._loop = asyncio.get_running_loop()
+                self._was_blocking = os.get_blocking(fd)
+                os.set_blocking(fd, False)
+                self._attach()
+                valid = True
+        if not valid:
+            self.close()
+            raise _input_error()
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        self.close()
+
+    def _attach(self) -> None:
+        if self._loop is not None and self._fd is not None and not self._registered:
+            self._loop.add_reader(self._fd, self._ready)
+            self._registered = True
+
+    def _detach(self) -> None:
+        if self._registered and self._loop is not None and self._fd is not None:
+            self._loop.remove_reader(self._fd)
+        self._registered = False
+
+    def close(self) -> None:
+        self._detach()
+        if self._fd is not None:
+            with suppress(OSError):
+                os.set_blocking(self._fd, self._was_blocking)
+        self._fd = None
+        self._buffer.clear()
+
+    def _fail(self) -> None:
+        self._detach()
+        self._eof = True
+        self._buffer.clear()
+        while not self._queue.empty():
+            self._queue.get_nowait()
+        self._queue.put_nowait(_input_error())
+
+    def _ready(self) -> None:
+        if self._fd is None:
+            return
+        chunk: bytes | None = None
+        failed = False
+        try:
+            chunk = os.read(self._fd, 4096)
+        except BlockingIOError:
+            return
+        except OSError:
+            failed = True
+        if failed:
+            self._fail()
+            return
+        if not chunk:
+            self._eof = True
+            self._detach()
+        else:
+            self._buffer.extend(chunk)
+        self._pump()
+
+    def _pump(self) -> None:
+        while not self._queue.full():
+            newline = self._buffer.find(b"\n")
+            if newline < 0:
+                if len(self._buffer) > _MAX_LINE_BYTES:
+                    self._fail()
+                    return
+                if not self._eof:
+                    break
+                if not self._buffer:
+                    self._queue.put_nowait(None)
+                    return
+                newline = len(self._buffer)
+            if newline > _MAX_LINE_BYTES:
+                self._fail()
+                return
+            raw = bytes(self._buffer[:newline]).removesuffix(b"\r")
+            del self._buffer[: newline + 1]
+            line: str | None = None
+            with suppress(UnicodeError):
+                line = raw.decode("utf-8")
+            if line is None or "\x00" in line:
+                self._fail()
+                return
+            self._queue.put_nowait(line)
+        if self._queue.full():
+            self._detach()
+        elif not self._eof:
+            self._attach()
+
+    async def read_line(self) -> str | None:
+        item = await self._queue.get()
+        if isinstance(item, FleetError):
+            raise item
+        if item is not None:
+            self._pump()
+        return item
+
+
+def _display_text(value: str, redactor: Redactor) -> str:
+    cleaned, _ = redactor.redact_text(value)
+    # Rich markup=False is not itself a terminal escape-sequence boundary.
+    return "".join(
+        char
+        if char == "\n" or (ord(char) >= 32 and not 127 <= ord(char) <= 159)
+        else f"\\x{ord(char):02x}"
+        for char in cleaned
+    )
+
+
+def _view_text(view: View) -> str:
+    lines = [f"Conversation: {view.get('conversation_id')}"]
+    run = view.get("run")
+    if isinstance(run, dict):
+        lines.append(f"Run: {view.get('run_id')}  {run.get('status')} / {run.get('stage')}")
+        lines.append(f"Verified complete: {run.get('verified_complete')}")
+        requests = [run.get("pending_approval_id")]
+        children = run.get("pending_child_approval_ids")
+        if isinstance(children, list):
+            requests.extend(children)
+        for request in requests:
+            if isinstance(request, str):
+                lines.append(f"Pending approval: {request}")
+        if run.get("patch_artifact_id"):
+            lines.append(f"Patch artifact: {run['patch_artifact_id']}")
+        if run.get("evidence_bundle_artifact_id"):
+            lines.append(f"Evidence: {run['evidence_bundle_artifact_id']}")
+    summary = view.get("result_summary")
+    if isinstance(summary, str):
+        lines.append(summary)
+    if view.get("summary_truncated"):
+        lines.append("Conversation summary was shortened; the original goal remains on its Run.")
+    if view.get("recovery_required"):
+        lines.append("Execution ownership is uncertain. Inspect the exact run before recovery.")
+    warnings = view.get("warnings")
+    if isinstance(warnings, list):
+        lines.extend(f"Warning: {warning}" for warning in warnings if isinstance(warning, str))
+    return "\n".join(lines)
+
+
+def _human_value(value: JsonValue, redactor: Redactor) -> JsonValue:
+    """The shared table presenter interprets markup; escape chat text before it."""
+    if isinstance(value, str):
+        return escape(_display_text(value, redactor))
+    if isinstance(value, list):
+        return [_human_value(item, redactor) for item in value]
+    if isinstance(value, dict):
+        return {
+            escape(_display_text(key, redactor)): _human_value(item, redactor)
+            for key, item in value.items()
+        }
+    return value
+
+
+async def _await_retained(task: asyncio.Task[View]) -> View:
+    while not task.done():
+        with suppress(asyncio.CancelledError):
+            await asyncio.shield(task)
+    return task.result()
+
+
+async def run_session(
+    service: ConversationClient,
+    selected: View,
+    options: ChatExecutionOptions,
+    reader: LineInput,
+    *,
+    emit: Callable[[str], None],
+    show_error: Callable[[FleetError], None],
+    redactor: Redactor,
+    interrupt: asyncio.Event | None = None,
+) -> View:
+    """Multiplex input and execution; all lifecycle policy stays in the service."""
+    conversation_id = selected.get("conversation_id")
+    if not isinstance(conversation_id, str):
+        raise _command_error()
+    interrupted = interrupt or asyncio.Event()
+    line_task = asyncio.create_task(reader.read_line())
+    interrupt_task = asyncio.create_task(interrupted.wait())
+    execution: asyncio.Task[View] | None = None
+    cursor: str | None = None
+    displayed_requests: set[str] = set()
+    progress_enabled = True
+    last_progress = 0.0
+
+    def display(value: str) -> None:
+        emit(_display_text(value, redactor))
+
+    def result(view: View) -> None:
+        display(_view_text(view))
+
+    def data(view: View) -> None:
+        cleaned, _ = redactor.redact_data(view)
+        display(json.dumps(cleaned, ensure_ascii=True, sort_keys=True, indent=2))
+
+    async def stop() -> View:
+        nonlocal execution
+        cleanup = asyncio.create_task(service.cancel(conversation_id))
+        view = await _await_retained(cleanup)
+        if execution is not None:
+            with suppress(asyncio.CancelledError, FleetError):
+                await _await_retained(execution)
+            execution = None
+        return view
+
+    result(selected)
+    display("Type a goal or /help. /exit cancels and awaits locally active work.")
+    try:
+        while True:
+            tasks: set[asyncio.Task[object]] = {line_task, interrupt_task}
+            if execution is not None:
+                tasks.add(execution)
+            done, _ = await asyncio.wait(
+                tasks, timeout=_PROGRESS_INTERVAL, return_when=asyncio.FIRST_COMPLETED
+            )
+            if execution is not None and execution in done:
+                try:
+                    result(execution.result())
+                except FleetError as error:
+                    show_error(error)
+                except asyncio.CancelledError:
+                    pass
+                execution = None
+            if interrupt_task in done:
+                if execution is not None:
+                    result(await stop())
+                break
+            if line_task in done:
+                line = line_task.result()
+                if line is None:
+                    if execution is not None:
+                        result(await stop())
+                    break
+                line_task = asyncio.create_task(reader.read_line())
+                if not line.strip():
+                    continue
+                try:
+                    if line.lstrip().startswith("/"):
+                        words: list[str] | None = None
+                        with suppress(ValueError):
+                            words = shlex.split(line)
+                        if not words:
+                            raise _command_error()
+                        command, *arguments = words
+                        if command == "/exit" and not arguments:
+                            if execution is not None:
+                                result(await stop())
+                            break
+                        if command == "/help" and not arguments:
+                            display(_HELP)
+                        elif command == "/status" and not arguments:
+                            result(service.status(conversation_id))
+                        elif command == "/artifacts" and not arguments:
+                            data(service.artifacts(conversation_id))
+                        elif command == "/permissions" and len(arguments) <= 1:
+                            data(
+                                service.permissions(
+                                    conversation_id, identifier=arguments[0] if arguments else None
+                                )
+                            )
+                        elif command == "/cancel" and not arguments:
+                            result(await stop())
+                        elif command == "/resume" and not arguments:
+                            if execution is not None:
+                                raise _busy_error()
+                            execution = asyncio.create_task(
+                                service.resume(
+                                    conversation_id, allow_unsafe_local=options.allow_unsafe_local
+                                )
+                            )
+                            progress_enabled = True
+                        elif command == "/approve":
+                            request_id, choice = _approval(arguments)
+                            data(service.approve(conversation_id, request_id, choice=choice))
+                        elif command == "/deny" and (
+                            len(arguments) == 1
+                            or (len(arguments) == 3 and arguments[1] == "--reason")
+                        ):
+                            data(
+                                service.deny(
+                                    conversation_id,
+                                    arguments[0],
+                                    reason=arguments[2] if len(arguments) == 3 else None,
+                                )
+                            )
+                        else:
+                            raise _command_error()
+                    else:
+                        if execution is not None:
+                            raise _busy_error()
+                        execution = asyncio.create_task(
+                            service.submit(
+                                conversation_id, message=line, submission_id=None, options=options
+                            )
+                        )
+                        progress_enabled = True
+                except FleetError as error:
+                    show_error(error)
+            now = asyncio.get_running_loop().time()
+            if progress_enabled and now - last_progress >= _PROGRESS_INTERVAL:
+                last_progress = now
+                try:
+                    page = service.progress(conversation_id, cursor=cursor, limit=50)
+                    next_cursor = page.get("cursor")
+                    cursor = next_cursor if isinstance(next_cursor, str) else None
+                    events = page.get("events")
+                    if isinstance(events, list):
+                        for event in events:
+                            if isinstance(event, dict) and isinstance(event.get("summary"), str):
+                                display(str(event["summary"]))
+                                requests = event.get("request_ids")
+                                current_requests = (
+                                    {item for item in requests if isinstance(item, str)}
+                                    if isinstance(requests, list)
+                                    else set()
+                                )
+                                if isinstance(requests, list):
+                                    for pending_id in requests:
+                                        if (
+                                            isinstance(pending_id, str)
+                                            and pending_id not in displayed_requests
+                                        ):
+                                            display(f"Pending approval: {pending_id}")
+                                displayed_requests = current_requests
+                except FleetError as error:
+                    show_error(error)
+                    progress_enabled = False
+    finally:
+        try:
+            if execution is not None and not execution.done():
+                await stop()
+            elif execution is not None:
+                with suppress(asyncio.CancelledError, FleetError):
+                    execution.result()
+        finally:
+            line_task.cancel()
+            interrupt_task.cancel()
+            await asyncio.gather(line_task, interrupt_task, return_exceptions=True)
+    return service.status(conversation_id)
+
+
+def _busy_error() -> FleetError:
+    return FleetError(
+        ErrorCode.RECOVERY_REQUIRED,
+        "This conversation already has a local execution in progress.",
+        "Use /status or /cancel; a new goal is not queued automatically.",
+    )
+
+
+def _approval(arguments: list[str]) -> tuple[str, ApprovalChoice]:
+    choices = {"--once": ApprovalChoice.ALLOW_ONCE, "--run": ApprovalChoice.ALLOW_RUN}
+    if len(arguments) == 2 and arguments[1] in choices:
+        return arguments[0], choices[arguments[1]]
+    if len(arguments) == 4 and arguments[1:] == ["--always", "--scope", "project"]:
+        return arguments[0], ApprovalChoice.ALLOW_ALWAYS
+    raise FleetError(
+        ErrorCode.APPROVAL_INVALID,
+        "Choose exactly one of --once, --run, or --always --scope project.",
+        "Inspect the exact request with /permissions before approving it.",
+    )
+
+
+async def _terminal_session(
+    service: ConversationClient,
+    selected: View,
+    options: ChatExecutionOptions,
+    *,
+    redactor: Redactor,
+    show_error: Callable[[FleetError], None],
+) -> View:
+    terminal = Console()
+    interrupted = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    previous = signal.getsignal(signal.SIGINT)
+    installed = False
+    try:
+        with suppress(NotImplementedError, RuntimeError, ValueError):
+            loop.add_signal_handler(signal.SIGINT, interrupted.set)
+            installed = True
+        if not installed:
+            raise _input_error()
+        async with PosixLineInput(sys.stdin) as reader:
+            return await run_session(
+                service,
+                selected,
+                options,
+                reader,
+                emit=lambda text: terminal.print(text, markup=False, highlight=False),
+                show_error=show_error,
+                redactor=redactor,
+                interrupt=interrupted,
+            )
+    finally:
+        if installed:
+            loop.remove_signal_handler(signal.SIGINT)
+            signal.signal(signal.SIGINT, previous)
+
+
+async def _message_session(
+    service: ConversationClient,
+    conversation_id: str,
+    *,
+    message: str,
+    submission_id: str | None,
+    options: ChatExecutionOptions,
+) -> View:
+    """Keep interrupt cleanup inside the one noninteractive result envelope."""
+    loop = asyncio.get_running_loop()
+    interrupted = asyncio.Event()
+    previous = signal.getsignal(signal.SIGINT)
+    installed = False
+    with suppress(NotImplementedError, RuntimeError, ValueError):
+        loop.add_signal_handler(signal.SIGINT, interrupted.set)
+        installed = True
+    if not installed:
+        raise FleetError(
+            ErrorCode.CONFIG_INVALID,
+            "Chat cannot install safe interrupt handling in this execution context.",
+            "Run the CLI in a supported POSIX process; no conversation execution started.",
+        )
+    execution = asyncio.create_task(
+        service.submit(
+            conversation_id, message=message, submission_id=submission_id, options=options
+        )
+    )
+    interrupt_task = asyncio.create_task(interrupted.wait())
+    try:
+        await asyncio.wait({execution, interrupt_task}, return_when=asyncio.FIRST_COMPLETED)
+        if execution.done():
+            return execution.result()
+        cleanup = asyncio.create_task(service.cancel(conversation_id))
+        result = await _await_retained(cleanup)
+        with suppress(asyncio.CancelledError, FleetError):
+            await _await_retained(execution)
+        return result
+    finally:
+        try:
+            if not execution.done():
+                await _await_retained(asyncio.create_task(service.cancel(conversation_id)))
+                with suppress(asyncio.CancelledError, FleetError):
+                    await _await_retained(execution)
+        finally:
+            interrupt_task.cancel()
+            await asyncio.gather(interrupt_task, return_exceptions=True)
+            loop.remove_signal_handler(signal.SIGINT)
+            signal.signal(signal.SIGINT, previous)
+
+
+def register_chat_command(
+    app: typer.Typer,
+    *,
+    service_factory: Callable[[Redactor], ConversationClient],
+    redactor_factory: Callable[[], Redactor],
+    presenter: Presenter,
+    error_presenter: ErrorPresenter,
+) -> None:
+    """Wire one command without importing the parent CLI or creating a container."""
+
+    class SafeChatCommand(TyperCommand):
+        def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+            json_requested = "--json" in args
+            parsed: list[str] | None = None
+            with suppress(UsageError):
+                parsed = super().parse_args(ctx, args)
+            if parsed is None:
+                error_presenter("fleet chat", _command_error(), json_requested, redactor_factory())
+                raise typer.Exit(code=2)
+            return parsed
+
+    @app.command("chat", cls=SafeChatCommand)
+    def chat(
+        path: Annotated[Path, typer.Argument(help="Registered project repository.")] = Path("."),
+        conversation: Annotated[str | None, typer.Option("--conversation")] = None,
+        create_new: Annotated[bool, typer.Option("--new")] = False,
+        message: Annotated[str | None, typer.Option("--message")] = None,
+        submission_id: Annotated[str | None, typer.Option("--submission-id")] = None,
+        json_output: Annotated[bool, typer.Option("--json")] = False,
+        runtime: Annotated[str | None, typer.Option("--runtime")] = None,
+        sandbox: Annotated[str | None, typer.Option("--sandbox")] = None,
+        provider_model: Annotated[str | None, typer.Option("--provider-model")] = None,
+        credential_ref: Annotated[str | None, typer.Option("--credential-ref")] = None,
+        fake_scenario: Annotated[str | None, typer.Option("--fake-scenario")] = None,
+        allow_unsafe_local: Annotated[bool, typer.Option("--allow-unsafe-local")] = False,
+    ) -> None:
+        """Reopen a bounded conversation; approval and patch application stay explicit."""
+        redactor = redactor_factory()
+
+        def operation() -> tuple[JsonValue, list[str]]:
+            from agent_fleet.application.conversations import ChatExecutionOptions
+
+            if (create_new and conversation is not None) or (
+                message is None and (json_output or submission_id is not None)
+            ):
+                raise _command_error()
+            if message is not None and (not message.strip() or message.lstrip().startswith("/")):
+                raise _command_error()
+            scenario: FakeScenario | None = None
+            if fake_scenario is not None:
+                with suppress(ValueError):
+                    scenario = FakeScenario(fake_scenario)
+                if scenario is None:
+                    raise _command_error()
+            options = ChatExecutionOptions(
+                runtime_name=runtime,
+                sandbox_name=sandbox,
+                provider_model=provider_model,
+                credential_ref=credential_ref,
+                fake_scenario=scenario,
+                allow_unsafe_local=allow_unsafe_local,
+            )
+            service = service_factory(redactor)
+            selected = service.select(path, conversation_id=conversation, create_new=create_new)
+            selected_id = selected.get("conversation_id")
+            if not isinstance(selected_id, str):
+                raise _command_error()
+            if message is not None:
+                view = asyncio.run(
+                    _message_session(
+                        service,
+                        selected_id,
+                        message=message,
+                        submission_id=submission_id,
+                        options=options,
+                    )
+                )
+            else:
+                view = asyncio.run(
+                    _terminal_session(
+                        service,
+                        selected,
+                        options,
+                        redactor=redactor,
+                        show_error=lambda error: error_presenter(
+                            "fleet chat", error, False, redactor
+                        ),
+                    )
+                )
+            warnings = view.get("warnings")
+            data = jsonable({key: value for key, value in view.items() if key != "warnings"})
+            if not json_output:
+                data = _human_value(data, redactor)
+            return data, (
+                [warning for warning in warnings if isinstance(warning, str)]
+                if isinstance(warnings, list)
+                else []
+            )
+
+        presenter("fleet chat", json_output, operation, redactor=redactor)

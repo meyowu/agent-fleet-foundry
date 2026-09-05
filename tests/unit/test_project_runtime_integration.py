@@ -10,12 +10,16 @@ from typing import cast
 import pytest
 
 from agent_fleet.adapters.artifacts.local import LocalArtifactStore
+from agent_fleet.adapters.config.publication import NativeOrganizationFileSystem
 from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
+from agent_fleet.adapters.persistence.evolution import SqliteOrganizationStore
 from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.repository.profile import StaticRepositoryProfiler
+from agent_fleet.adapters.secrets.environment import EnvironmentSecretStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.evolution import OrganizationService
 from agent_fleet.application.projects import ProjectService
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.domain.errors import ErrorCode, FleetError
@@ -84,18 +88,32 @@ def _real_service(
     artifacts = ArtifactService(
         LocalArtifactStore(state_root / "artifacts"), state, clock, ids, redactor
     )
+    config = YamlConfigurationAdapter(redactor)
+    organization = OrganizationService(
+        state,
+        SqliteOrganizationStore(state_root / "state.db", clock, ids, redactor, state, config),
+        NativeOrganizationFileSystem(redactor),
+        config,
+        repository,
+        artifacts,
+        clock,
+        ids,
+        redactor,
+        EnvironmentSecretStore(redactor),
+    )
     service = ProjectService(
         state_root,
         state,
         repository,
         StaticRepositoryProfiler(),
         artifacts,
-        YamlConfigurationAdapter(redactor),
+        config,
         clock,
         ids,
         redactor,
         SandboxCapabilities.phase1_fake(),
         cast(RuntimeRegistry, registry),
+        organization=organization,
     )
     return service, state, repository_root
 
@@ -117,6 +135,7 @@ def _preflight_only_service(
         Redactor(),
         SandboxCapabilities.phase1_fake(),
         cast(RuntimeRegistry, registry),
+        organization=cast(OrganizationService, dependency),
     )
 
 

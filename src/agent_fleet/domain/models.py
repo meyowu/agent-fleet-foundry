@@ -23,7 +23,7 @@ from pydantic import (
     model_validator,
 )
 
-from agent_fleet.domain.security import canonical_json_hash
+from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 
 OpaqueId = Annotated[str, StringConstraints(pattern=r"^[a-z]+_[0-9a-f]{32}$")]
 ProjectId = Annotated[str, StringConstraints(pattern=r"^prj_[0-9a-f]{32}$")]
@@ -42,6 +42,18 @@ ExecutionId = Annotated[str, StringConstraints(pattern=r"^exec_[0-9a-f]{32}$")]
 WorkspaceId = Annotated[str, StringConstraints(pattern=r"^ws_[0-9a-f]{32}$")]
 FleetPlanId = Annotated[str, StringConstraints(pattern=r"^plan_[0-9a-f]{32}$")]
 FleetPatchId = Annotated[str, StringConstraints(pattern=r"^fpatch_[0-9a-f]{32}$")]
+FleetPatchPath = Annotated[
+    str,
+    StringConstraints(
+        min_length=8,
+        max_length=4096,
+        pattern=r"^\.fleet/[^/\\\x00][^\\\x00]*$",
+    ),
+]
+FleetPatchContent = Annotated[str, StringConstraints(max_length=1_000_000)]
+FleetPatchRationale = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=4096)
+]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 ImageIdentity = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 RoleId = Annotated[
@@ -158,6 +170,75 @@ class FrozenStrictModel(StrictModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class FleetPatchOperation(StrEnum):
+    ADD = "add"
+    REPLACE = "replace"
+    REMOVE = "remove"
+
+
+class FleetPatchFileChange(StrictModel):
+    operation: FleetPatchOperation
+    path: FleetPatchPath
+    before_sha256: Sha256 | None = None
+    after_sha256: Sha256 | None = None
+    content: FleetPatchContent | None = None
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if (
+            not value
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)
+            or value.startswith("/")
+            or "\\" in value
+            or not path.parts
+            or ".." in path.parts
+            or path.parts[0] != ".fleet"
+            or path.as_posix() != value
+        ):
+            raise ValueError(
+                "FleetPatch paths must be canonical repository-relative paths beneath .fleet/"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_operation_content(self) -> FleetPatchFileChange:
+        if self.operation is FleetPatchOperation.ADD:
+            if self.before_sha256 is not None:
+                raise ValueError("add changes cannot declare a prior content hash")
+            self._require_content_hash()
+        elif self.operation is FleetPatchOperation.REPLACE:
+            if self.before_sha256 is None:
+                raise ValueError("replace changes require a prior content hash")
+            self._require_content_hash()
+        elif (
+            self.before_sha256 is None or self.after_sha256 is not None or self.content is not None
+        ):
+            raise ValueError(
+                "remove changes require a prior hash and cannot contain an after hash or content"
+            )
+        return self
+
+    def _require_content_hash(self) -> None:
+        if self.content is None or self.after_sha256 is None:
+            raise ValueError("add/replace changes require content and its SHA-256 hash")
+        actual = sha256_bytes(self.content.encode("utf-8"))
+        if self.after_sha256 != actual:
+            raise ValueError("FleetPatch after hash does not match its UTF-8 content")
+
+
+class FleetPatch(StrictModel):
+    api_version: Literal["agentfleet.dev/v1alpha1"] = "agentfleet.dev/v1alpha1"
+    kind: Literal["FleetPatch"] = "FleetPatch"
+    fleet_patch_id: FleetPatchId
+    project_id: ProjectId
+    base_fleet_spec_sha256: Sha256
+    changes: list[FleetPatchFileChange] = Field(min_length=1, max_length=128)
+    rationale: FleetPatchRationale
+    rollback_of: FleetPatchId | None = None
+
+
 def _require_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("timestamp must be timezone-aware")
@@ -245,6 +326,8 @@ class AgentRole(StrEnum):
     COS = "cos"
     ENGINEER = "engineer"
     VERIFIER = "verifier"
+    RESEARCHER = "researcher"
+    ARCHITECT = "architect"
 
 
 class AgentLifecycle(StrEnum):
@@ -255,8 +338,10 @@ class AgentLifecycle(StrEnum):
 class AgentStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class RuntimeCapability(StrEnum):
@@ -293,6 +378,7 @@ class RuntimeToolOutcome(StrEnum):
 class RunStatus(StrEnum):
     CREATED = "created"
     RUNNING = "running"
+    WAITING_FOR_CHILDREN = "waiting_for_children"
     PAUSED_FOR_APPROVAL = "paused_for_approval"
     READY_FOR_REVIEW = "ready_for_review"
     APPLYING = "applying"
@@ -323,9 +409,13 @@ class Verdict(StrEnum):
 
 class ArtifactKind(StrEnum):
     FLEET_CONFIG_PROPOSAL = "fleet_config_proposal"
+    FLEET_PATCH = "fleet_patch"
+    FLEET_PATCH_DIFF = "fleet_patch_diff"
     CONFIG_SNAPSHOT = "config_snapshot"
     TASK_SPEC = "task_spec"
     IMPLEMENTATION_REPORT = "implementation_report"
+    SPECIALIST_REPORT = "specialist_report"
+    GRAPH_JOIN = "graph_join"
     PATCH = "patch"
     TEST_REPORT = "test_report"
     VERIFIER_VERDICT = "verifier_verdict"
@@ -341,6 +431,7 @@ class ArtifactKind(StrEnum):
     SANDBOX_INSPECTION = "sandbox_inspection"
     RESOURCE_CLEANUP = "resource_cleanup"
     BOOTSTRAP_REPORT = "bootstrap_report"
+    COS_RESPONSE = "cos_response"
 
 
 class WorkspaceKind(StrEnum):
@@ -372,6 +463,8 @@ class PermissionOutcome(StrEnum):
 class ApprovalChoice(StrEnum):
     DENY = "deny"
     ALLOW_ONCE = "allow_once"
+    ALLOW_RUN = "allow_run"
+    ALLOW_ALWAYS = "allow_always"
 
 
 class ApprovalStatus(StrEnum):
@@ -402,6 +495,8 @@ class FakeScenario(StrEnum):
     VERIFIER_MUTATION = "verifier_mutation"
     DIRECT = "direct"
     SINGLE_ENGINEER = "single_engineer"
+    PARALLEL_ENGINEERS = "parallel_engineers"
+    SPECIALIST = "specialist"
 
 
 class RuntimeConfiguration(FrozenStrictModel):
@@ -527,6 +622,7 @@ class Project(StrictModel):
     bootstrap_report_sha256: Sha256 | None = None
     bootstrap_canary_run_id: RunId | None = None
     bootstrap_verified: bool = False
+    permission_scope_required: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -568,10 +664,31 @@ class Project(StrictModel):
         return self
 
 
+class AgentExecutionCheckpoint(FrozenStrictModel):
+    """Identity-bound specialist session retained across approval pauses."""
+
+    agent_instance_id: AgentInstanceId
+    workspace_id: WorkspaceId
+    sandbox_id: SandboxId
+    iteration: int = Field(ge=0, le=5)
+    created_at: datetime
+
+    _created_utc = field_validator("created_at")(_require_utc)
+
+
+class VerificationCheckpoint(AgentExecutionCheckpoint):
+    patch_sha256: Sha256
+    baseline_fingerprint: Sha256
+
+
 class Run(StrictModel):
     run_id: RunId
     project_id: ProjectId
     correlation_id: CorrelationId
+    parent_run_id: RunId | None = None
+    parent_plan_sha256: Sha256 | None = None
+    parent_node_id: RoleId | None = None
+    parent_iteration: int | None = Field(default=None, ge=0, le=5)
     goal: str
     base_revision: str
     target_status_fingerprint: Sha256
@@ -606,6 +723,9 @@ class Run(StrictModel):
     command_evidence_artifact_ids: list[ArtifactId] = Field(default_factory=list)
     runtime_usage_artifact_ids: list[ArtifactId] = Field(default_factory=list)
     verifier_agent_instance_id: AgentInstanceId | None = None
+    engineer_checkpoint: AgentExecutionCheckpoint | None = None
+    specialist_checkpoint: AgentExecutionCheckpoint | None = None
+    verification_checkpoint: VerificationCheckpoint | None = None
     verifier_verdict_artifact_id: ArtifactId | None = None
     evidence_bundle_artifact_id: ArtifactId | None = None
     evidence_bundle_hash: Sha256 | None = None
@@ -630,6 +750,18 @@ class Run(StrictModel):
 
     @model_validator(mode="after")
     def validate_runtime_selection(self) -> Run:
+        child_fields = (
+            self.parent_run_id,
+            self.parent_plan_sha256,
+            self.parent_node_id,
+            self.parent_iteration,
+        )
+        if any(value is not None for value in child_fields) and not all(
+            value is not None for value in child_fields
+        ):
+            raise ValueError("internal child run requires its complete parent binding")
+        if self.parent_run_id == self.run_id:
+            raise ValueError("a run cannot be its own parent")
         _validate_runtime_selection(
             self.runtime_name,
             self.provider_model,
@@ -681,13 +813,37 @@ class AcceptanceCriterion(StrictModel):
     description: BoundedText
 
 
+class WriterAssignment(StrictModel):
+    """A bounded untrusted subgoal; only the planner may instantiate its writer."""
+
+    node_id: RoleId
+    goal: BoundedSummary
+    scope: list[LogicalRepoPath] = Field(min_length=1, max_length=128)
+    criterion_ids: list[CriterionId] = Field(min_length=1, max_length=128)
+
+    @field_validator("scope")
+    @classmethod
+    def validate_scope(cls, values: list[str]) -> list[str]:
+        return _validate_logical_paths(values, field_name="scope")
+
+    @field_validator("criterion_ids")
+    @classmethod
+    def validate_criteria(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("writer assignment criterion IDs must be unique")
+        return values
+
+
 class ScopeDecision(StrictModel):
     """Untrusted CoS proposal accepted only after control-plane validation."""
 
     normalized_goal: BoundedSummary
+    response: BoundedSummary | None = None
     workflow: WorkflowId = "code-change"
     change_kind: Literal["read_only", "code_change"] = "code_change"
     fleet_strategy: FleetStrategyName
+    writer_assignments: list[WriterAssignment] = Field(default_factory=list, max_length=8)
+    max_parallel_agents: int = Field(default=2, ge=1, le=8)
     allowed_paths: list[LogicalRepoPath] = Field(max_length=128)
     forbidden_paths: list[LogicalRepoPath] = Field(max_length=128)
     acceptance_criteria: list[AcceptanceCriterion] = Field(min_length=1, max_length=128)
@@ -719,6 +875,20 @@ class ScopeDecision(StrictModel):
 
     @model_validator(mode="after")
     def validate_scope_coherence(self) -> ScopeDecision:
+        assignments = self.writer_assignments
+        if self.fleet_strategy == "parallel_engineers":
+            if len(assignments) < 2 or self.max_parallel_agents < 2:
+                raise ValueError("parallel strategy requires multiple bounded writer assignments")
+            node_ids = [assignment.node_id for assignment in assignments]
+            if len(node_ids) != len(set(node_ids)) or "verifier" in node_ids:
+                raise ValueError("writer node IDs must be unique and cannot replace the verifier")
+            criterion_ids = {item.criterion_id for item in self.acceptance_criteria}
+            if {item for assignment in assignments for item in assignment.criterion_ids} != (
+                criterion_ids
+            ):
+                raise ValueError("writer assignments must cover exactly the original criteria")
+        elif assignments:
+            raise ValueError("only the parallel strategy accepts writer assignments")
         required = set(self.required_evidence)
         if self.change_kind == "read_only":
             if self.fleet_strategy != "direct" or self.allowed_paths:
@@ -1125,6 +1295,25 @@ class PermissionDecision(StrictModel):
     decision_code: str
     explanation: str
     protected: bool = False
+    matched_rule_ids: list[Annotated[str, StringConstraints(min_length=1, max_length=128)]] = Field(
+        default_factory=list, max_length=128
+    )
+    effective_scope: dict[str, JsonValue] | None = None
+    risk: str = Field(default="unknown", min_length=1, max_length=64)
+    available_choices: list[ApprovalChoice] = Field(default_factory=list, max_length=4)
+    grant_id: GrantId | None = None
+    source_rule_id: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
+
+    @field_validator("effective_scope")
+    @classmethod
+    def validate_effective_scope(
+        cls, value: dict[str, JsonValue] | None
+    ) -> dict[str, JsonValue] | None:
+        if value is not None:
+            _validate_bounded_json(
+                value, field_name="effective permission scope", max_bytes=131_072
+            )
+        return value
 
 
 class ApprovalRequest(StrictModel):
@@ -1138,8 +1327,13 @@ class ApprovalRequest(StrictModel):
     reason: str
     status: ApprovalStatus = ApprovalStatus.PENDING
     available_choices: list[ApprovalChoice] = Field(
-        default_factory=lambda: [ApprovalChoice.DENY, ApprovalChoice.ALLOW_ONCE]
+        default_factory=lambda: [ApprovalChoice.DENY, ApprovalChoice.ALLOW_ONCE],
+        min_length=1,
+        max_length=4,
     )
+    authorization_scope: dict[str, JsonValue] | None = None
+    resolution_choice: ApprovalChoice | None = None
+    source_rule_id: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
     created_at: datetime
     expires_at: datetime
     resolved_at: datetime | None = None
@@ -1151,10 +1345,28 @@ class ApprovalRequest(StrictModel):
         lambda value: _require_utc(value) if value is not None else value
     )
 
+    @field_validator("authorization_scope")
+    @classmethod
+    def validate_authorization_scope(
+        cls, value: dict[str, JsonValue] | None
+    ) -> dict[str, JsonValue] | None:
+        if value is not None:
+            _validate_bounded_json(
+                value, field_name="approval authorization scope", max_bytes=131_072
+            )
+        return value
+
+    @field_validator("available_choices")
+    @classmethod
+    def validate_available_choices(cls, values: list[ApprovalChoice]) -> list[ApprovalChoice]:
+        if len(values) != len(set(values)):
+            raise ValueError("approval choices must be unique")
+        return values
+
 
 class CapabilityGrant(StrictModel):
     grant_id: GrantId
-    request_id: ApprovalRequestId
+    request_id: ApprovalRequestId | None = None
     intent_id: IntentId
     project_id: ProjectId
     run_id: RunId
@@ -1166,15 +1378,49 @@ class CapabilityGrant(StrictModel):
     intent_hash: Sha256
     issued_by: Literal["user"] = "user"
     issued_at: datetime
-    expires_at: datetime
-    remaining_uses: int = Field(default=1, ge=0, le=1)
+    expires_at: datetime | None = None
+    choice: ApprovalChoice = ApprovalChoice.ALLOW_ONCE
+    scope_sha256: Sha256 | None = None
+    remaining_uses: int | None = Field(default=1, ge=0, le=10_000)
     consumed_at: datetime | None = None
+    revoked_at: datetime | None = None
+    source_rule_id: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None
 
     _issued_utc = field_validator("issued_at")(_require_utc)
-    _expires_utc = field_validator("expires_at")(_require_utc)
+    _expires_utc = field_validator("expires_at")(
+        lambda value: _require_utc(value) if value is not None else value
+    )
     _consumed_utc = field_validator("consumed_at")(
         lambda value: _require_utc(value) if value is not None else value
     )
+    _revoked_utc = field_validator("revoked_at")(
+        lambda value: _require_utc(value) if value is not None else value
+    )
+
+    @model_validator(mode="after")
+    def validate_grant_choice(self) -> CapabilityGrant:
+        if self.choice is ApprovalChoice.DENY:
+            raise ValueError("a denied request cannot issue a capability")
+        if self.request_id is None and (
+            self.choice is not ApprovalChoice.ALLOW_ALWAYS
+            or self.source_rule_id is None
+            or self.remaining_uses not in {0, 1}
+            or (self.remaining_uses == 0 and self.consumed_at is None)
+        ):
+            raise ValueError("request-free grants require a bounded persistent-rule receipt")
+        if self.choice is ApprovalChoice.ALLOW_ONCE and self.remaining_uses not in {0, 1}:
+            raise ValueError("allow-once grants have exactly one use before consumption")
+        if self.choice is ApprovalChoice.ALLOW_ONCE and (
+            self.expires_at is None
+            or not 0 < (self.expires_at - self.issued_at).total_seconds() <= 600
+        ):
+            raise ValueError("allow-once grants require an expiry within ten minutes of issuance")
+        if (
+            self.choice in {ApprovalChoice.ALLOW_RUN, ApprovalChoice.ALLOW_ALWAYS}
+            and self.scope_sha256 is None
+        ):
+            raise ValueError("reusable grants require an exact authorization scope hash")
+        return self
 
 
 class ImplementationReport(StrictModel):
@@ -1199,6 +1445,30 @@ class ImplementationReport(StrictModel):
         return values
 
 
+class SpecialistReport(StrictModel):
+    """Untrusted read-only analysis, never execution or verification authority."""
+
+    role: Literal["researcher", "architect"]
+    summary: BoundedSummary
+    findings: list[BoundedText] = Field(max_length=32)
+    recommendations: list[BoundedText] = Field(max_length=32)
+    proof_gaps: list[BoundedText] = Field(max_length=32)
+
+    @model_validator(mode="after")
+    def validate_total_size(self) -> SpecialistReport:
+        if len(self.model_dump_json().encode("utf-8")) > 32_768:
+            raise ValueError("specialist report exceeds its 32768-byte context ceiling")
+        return self
+
+
+class CriterionResult(StrictModel):
+    criterion_id: CriterionId
+    verdict: Verdict
+    evidence_artifact_ids: list[ArtifactId] = Field(max_length=64)
+    command_ids: list[ActionId] = Field(max_length=32)
+    explanation: BoundedText
+
+
 class VerifierVerdict(StrictModel):
     verdict: Verdict
     criterion_results: list[BoundedText] = Field(max_length=128)
@@ -1207,6 +1477,7 @@ class VerifierVerdict(StrictModel):
     required_repairs: list[BoundedText] = Field(max_length=128)
     proof_gaps: list[BoundedText] = Field(max_length=128)
     rationale: BoundedSummary
+    structured_criterion_results: list[CriterionResult] | None = Field(default=None, max_length=128)
 
     @field_validator("evidence_artifact_ids")
     @classmethod
@@ -1355,7 +1626,9 @@ class AgentInvocation(StrictModel):
         return value
 
 
-type RuntimeOutput = ScopeDecision | ImplementationReport | VerifierVerdict
+type RuntimeOutput = (
+    ScopeDecision | FleetPatch | ImplementationReport | VerifierVerdict | SpecialistReport
+)
 
 
 class AgentInvocationResult(StrictModel):

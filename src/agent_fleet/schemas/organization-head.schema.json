@@ -1,0 +1,59 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "audit_event_id": {
+      "pattern": "^evt_[0-9a-f]{32}$",
+      "title": "Audit Event Id",
+      "type": "string"
+    },
+    "config_snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Snapshot Sha256",
+      "type": "string"
+    },
+    "pending_operation_id": {
+      "anyOf": [
+        {
+          "pattern": "^fop_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pending Operation Id"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "project_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Project Sha256",
+      "type": "string"
+    },
+    "revision": {
+      "maximum": 1000000000,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "tree_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Tree Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "revision",
+    "tree_sha256",
+    "config_snapshot_sha256",
+    "project_sha256",
+    "audit_event_id"
+  ],
+  "title": "OrganizationHead",
+  "type": "object"
+}

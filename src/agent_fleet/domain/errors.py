@@ -70,6 +70,28 @@ class FleetError(Exception):
         self.details = details or {}
 
 
+class ConversationOwnershipUnavailableError(FleetError):
+    """The caller acquired no conversation authority and cannot mutate its Run."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            ErrorCode.RECOVERY_REQUIRED,
+            "Conversation execution ownership is unavailable.",
+            "Inspect the exact turn; do not replay uncertain work or clean another owner.",
+        )
+
+
+class GraphOwnershipUnavailableError(FleetError):
+    """A caller acquired no graph authority and must not mutate its parent."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            ErrorCode.RECOVERY_REQUIRED,
+            "Adaptive graph execution ownership is unavailable.",
+            "Inspect the parent graph; do not interrupt another owner or replay uncertain work.",
+        )
+
+
 class ApprovalRequiredError(FleetError):
     def __init__(self, request_id: str) -> None:
         super().__init__(

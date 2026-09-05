@@ -59,16 +59,16 @@ The product has differentiated value only when the following six properties are 
 
 The implementation status is deliberately explicit:
 
-| Differentiator | Implemented through Phase 3 | Remaining product milestone |
+| Differentiator | Accepted implementation boundary | Remaining product milestone |
 |---|---|---|
 | Repository-aware bootstrap | Static profile, knowledge artifacts, detected-command proposal, read-only diff preview, disposable deterministic canary through the ordinary Docker workflow, validated BootstrapReport, cleanup proof, and `.fleet/` publication only after success | Broader safe project-command discovery/execution and non-local sandbox support |
-| Adaptive Fleet | Validated plan plus direct/single-Engineer/Engineer+Verifier paths through fake or PydanticAI runtime | Parallel and specialist scheduling in Phase 5 |
-| Permission control plane | Independent broker contract, exact allow-once, and no runtime host-path or harness-tool bypass | Run/persistent exact trust, explain, and revoke in Phase 4 |
+| Adaptive Fleet | Whole Phase 5 accepted: scoped concurrent children, read-only specialist dependencies, exact approval/ownership state, deterministic joins, fresh parent verification and persistent bounded chat; complete checkpoint `a46b688` is pushed | Preserve current guarantees through the Phase 6 candidate and final release gates |
+| Permission control plane | Current user/project/workflow/role/task/sandbox intersection; exact once/run/project trust; explain/revoke/reset; durable single-winner dispatch and identity-bound approval resume; no harness-tool bypass | Preserve these ceilings through Phase 5 chat/adaptive execution and Phase 6 configuration evolution |
 | Sandbox abstraction | Exact fail-closed fake/Docker/local-unsafe dispatch; Docker pins a local daemon and immutable image, inspects one-shot containers, enforces network/resource boundaries, and recovers exact resources | Modal/hosted providers, approved network modes, and broader platform evidence |
-| Evidence-first delivery | Exact ConfigSnapshot/TaskSpec/FleetPlan/patch/command/cleanup/verdict/BootstrapReport bindings; fresh Docker verifier evidence can satisfy CompletionGate while fake/local-unsafe cannot | General multi-criterion model mapping and full Phase 5 workflow |
-| Versioned evolution | FleetPatch schema and protected-path validator | Proposal/diff/apply/rollback in Phase 6 |
+| Evidence-first delivery | Exact ConfigSnapshot/TaskSpec/FleetPlan/patch/command/cleanup/verdict/BootstrapReport bindings; accepted M1 criterion mapping and M2 joined graph/descendant-cleanup provenance; only fresh Docker verifier evidence can verify | Preserve exact evidence and bounded context through chat and configuration evolution |
+| Versioned evolution | Phase 6 locally accepted: bounded CoS proposal, semantic/text diff, explicit native whole-tree apply, durable admission, current-head audited inverse rollback and recovery; complete offline/native/real-Docker evidence | Linux platform proof and final release remain open |
 
-Implemented Phase 3 functionality is not shorthand for the complete MVP. CLI and documentation must label FakeSandbox as simulated, local-unsafe as non-isolating, Docker's local trusted-computing-base limits, and roadmap-only behaviors directly even when the selected model runtime is real.
+Phases4–6 were locally accepted on2026-09-05. Phase5 is pushed through `a46b688`; Phase6 passed1973 default tests with15 explicit skips and fourteen separately enabled real-Docker cases, with no outstanding managed resources. E6 records exact freezes, failed attempts, repair, metadata6 and checkpoint refresh. Phase7, fresh-user/Linux proof, final GitHub delivery and live-provider/license release gates remain open. No live model-provider acceptance was run. CLI and documentation must label FakeSandbox as simulated, local-unsafe as non-isolating, Docker's local trusted-computing-base limits and unaccepted/platform-dependent behavior directly even when the selected model runtime is real.
 
 ## 3. Target users
 
@@ -172,7 +172,7 @@ fleet init . \
 
 For the implemented adapter, `<provider>` is exactly `openai` or `openai-chat`; there is no implicit fallback. Preview validates the full selection and proposal without reading the environment variable, writing Fleet/repository state, or contacting a provider. Init resolves the explicit reference before writes but does not invoke a model. The `env:NAME` reference is persisted only in Fleet-owned state; `.fleet/` stores the selected runtime and opaque provider/model ID, never the reference or raw value. `fleet doctor` performs inspect-only credential readiness with no provider call. `fleet run` revalidates the registered selection, resolves the credential, and may then send the bounded role prompt/context over HTTPS from the trusted control plane.
 
-Phase 3 does not overwrite a differing existing generated `.fleet/` tree. A runtime, provider/model, or sandbox reconfiguration that changes repository files fails before Project/artifact state or repository mutation. The user reviews a fresh preview, moves the whole conflicting generated tree aside, and reruns explicit init. A credential-reference-only change may succeed in place because that reference is Fleet-owned state and never part of `.fleet/`.
+Initialization does not overwrite a differing generated `.fleet/` tree. Before any admitted Run establishes an organization head, identical generated bytes may be reused and a credential-reference-only change does not alter repository files. Phase 6 additionally rejects every headed reinitialization, even after `.fleet/` is moved aside or when only the recorded reference changes. Supported edits use reviewed FleetPatch; protected runtime/provider/reference/sandbox changes require a separate project registration with prior state preserved. Rotating the actual key under the same recorded reference remains possible without rewriting registration.
 
 Steps 8–10 are implemented for a Docker-selected init. The target remains untouched through preview and canary execution. Confirmed init uses a deterministic fake runtime with the real Docker provider to produce a nonempty canary patch, Engineer command evidence, a fresh non-mutating Verifier command, cleanup receipts, CompletionDecision, and hash-valid `BootstrapReport`; only then may `.fleet/` be published. Fake or local-unsafe selection cannot satisfy this publication gate. No live provider call or arbitrary target-repository code is required by the bootstrap canary.
 
@@ -202,6 +202,8 @@ The first UI may be a robust line-oriented REPL rather than a full-screen TUI. R
 - never print a secret or raw credential;
 - offer `--json` or a separate noninteractive command for automation.
 
+Accepted Phase 5 provides these behaviors through `fleet chat [path]`, exact `--conversation`/`--new` selection and `--message` with optional submission key/JSON. Atomic project-bound turn/Run registration precedes model effects; public resume shares non-expiring execution ownership. One active turn, bounded summaries/references, responsive POSIX pipe/terminal controls, exact approvals and retained cancellation/recovery are implemented. The persistent-chat ExecPlan and E5.3 record the full behavioral gates, independent offline review and public bootstrap/Docker/approval/restart/explicit-apply journey. This does not establish live-provider, fresh-user release or final GitHub delivery.
+
 ## 5.3 Run a one-shot task
 
 Command:
@@ -218,7 +220,7 @@ Before execution, CoS proposes a typed FleetPlan. The deterministic planner acce
 - `parallel_engineers` for independent shards with an explicit join/merge policy;
 - a specialist DAG such as Researcher -> Architect -> Engineer -> Verifier when the repository and task justify it.
 
-The plan records why each role is needed. Unplanned roles are not instantiated, and a role name never grants tools or permission. Parallel and specialist scheduling remain Phase 5 behavior even though the FleetPlan schema represents them. Phase 2 supplies strict real-model `ScopeDecision`, `ImplementationReport`, and `VerifierVerdict` values for the supported direct/single/pair paths; the deterministic control plane still constructs and validates the plan.
+The plan records why each role is needed. Unplanned roles are not instantiated, and a role name never grants tools or permission. Accepted Phase 5 M2 executes all five strategies through fake and offline-tested PydanticAI adapters. Parallel children receive disjoint scopes and shared cumulative budgets, then join in stable node-ID order; specialists return bounded read-only `SpecialistReport` dependencies. The parent Verifier checks the original task and combined patch. Legacy advanced plans without complete subgoal/criterion mappings remain readable but cannot execute. The deterministic control plane constructs and validates every plan.
 
 For a PydanticAI project, run-time `--runtime`, `--provider-model`, and `--credential-ref` flags may be omitted to use the reviewed Fleet-owned registration. If supplied, they must match it exactly. `--fake-scenario` is rejected for the real runtime. Provider HTTPS remains a trusted-control-plane network boundary distinct from worker networking. Every model-visible action crosses the role-bound tool catalog, ToolGateway, and PermissionBroker. Phase 3 Engineer tools are bounded list/read/search/diff/write/edit/delete plus exact reviewed commands; Verifier receives only list/read/search/diff and exact reviewed commands. Descriptor-relative workspace operations and selected sandbox dispatch remain control-plane-owned; fake commands are simulated, local-unsafe is explicitly non-isolating, and only Docker can produce isolated evidence.
 
@@ -240,12 +242,13 @@ A run may instead become:
 
 ```text
 PAUSED_FOR_APPROVAL
+WAITING_FOR_CHILDREN
 CANCELLED
 FAILED
 REJECTED
 ```
 
-A run must be resumable when it pauses for approval or when the process exits after a durable checkpoint.
+A run must be resumable at supported durable approval checkpoints. An adaptive parent exposes exact child approvals through `WAITING_FOR_CHILDREN`; public child resume/apply/cancel/recover are denied. Unknown dispatched ownership never permits automatic replay: operator-confirmed stopped-owner recovery abandons it and cleans exact descendants. Accepted Phase 5 chat retains bounded summaries, exact turn/Run links and frozen context across restart; public resume enforces the same conversation ownership. It does not restore raw provider history.
 
 ## 5.4 Review and apply a candidate patch
 
@@ -406,6 +409,8 @@ Default restrictions:
 - no external side effects.
 
 ## 7. Default trust modes
+
+The lists below describe the broader product target. **Accepted Phase 4 behavior is narrower:** Safe asks for supported exact reviewed commands without a matching grant/rule; Balanced and Autonomous Sandbox currently share the same supported reviewed-command ceiling. All modes enforce reviewed paths and role/workflow/request/task/sandbox intersections. Unknown executables, arbitrary shell, package-registry/network expansion and external writes are not made executable by an approval. Isolated workers support only `network=none`; local-unsafe remains separately confirmed and non-isolating. See `CONFIG_AND_SCHEMAS.md` for implemented choices, lifetimes and CLI.
 
 ## 7.1 Safe
 

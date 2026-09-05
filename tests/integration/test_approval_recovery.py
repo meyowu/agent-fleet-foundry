@@ -10,6 +10,8 @@ from agent_fleet.bootstrap import build_container
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
+    AgentStatus,
+    ApprovalChoice,
     FakeScenario,
     LeaseKind,
     LeaseStatus,
@@ -73,6 +75,60 @@ async def test_denial_rejects_without_executing_side_effect(harness: FleetHarnes
         reconstructed.state.count_executed_intents(paused.run_id, "fixture.record_side_effect") == 0
     )
     assert reconstructed.state.active_leases(paused.run_id) == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_legacy_once_request_adopts_original_engineer_without_grant_transfer(
+    harness: FleetHarness,
+) -> None:
+    paused = await harness.start(FakeScenario.APPROVAL)
+    assert paused.pending_approval_id is not None
+    state = harness.container.state
+    request = state.get_approval(paused.pending_approval_id)
+    intent = state.get_intent(request.intent_id).intent
+    original = state.get_agent_instance(intent.agent_instance_id)
+    state.save_agent_instance(
+        original.model_copy(
+            update={
+                "status": AgentStatus.FAILED,
+                "completed_at": state.clock.now(),
+            }
+        )
+    )
+    state.save_run(paused.model_copy(update={"engineer_checkpoint": None}), "fixture.legacy", {})
+    legacy = request.model_copy(
+        update={
+            "authorization_scope": None,
+            "available_choices": [ApprovalChoice.DENY, ApprovalChoice.ALLOW_ONCE],
+        }
+    )
+    with state._connect() as connection:
+        connection.execute(
+            "UPDATE approvals SET data_json = ? WHERE request_id = ?",
+            (legacy.model_dump_json(), request.request_id),
+        )
+    reopened = build_container(harness.state_root)
+    grant = reopened.approvals.approve_once(request.request_id)
+    ready = await reopened.workflow.resume(paused.run_id)
+    assert ready.status is RunStatus.READY_FOR_REVIEW
+    assert ready.engineer_checkpoint is None
+    assert grant.agent_instance_id == original.agent_instance_id
+    assert (
+        reopened.state.get_agent_instance(original.agent_instance_id).status
+        is AgentStatus.COMPLETED
+    )
+    assert reopened.state.count_executed_intents(ready.run_id, "fixture.record_side_effect") == 1
+    assert (
+        len(
+            [
+                event
+                for event in reopened.state.list_events(ready.run_id)
+                if event.event_type == "engineering.checkpoint_adopted"
+            ]
+        )
+        == 1
+    )
 
 
 @pytest.mark.integration

@@ -12,12 +12,10 @@ import pydantic_ai.models as pydantic_ai_models
 import pytest
 from typer.testing import CliRunner
 
-import agent_fleet.cli.app as cli_module
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.system import UuidIdGenerator
-from agent_fleet.bootstrap import ApplicationContainer, build_container
+from agent_fleet.bootstrap import build_container
 from agent_fleet.cli.app import app
-from agent_fleet.domain.security import Redactor
 from agent_fleet.ports.secret_store import SecretRef
 
 _LIVE_PROVIDER_MODEL = "AGENT_FLEET_LIVE_PROVIDER_MODEL"
@@ -144,9 +142,10 @@ def test_ordinary_suite_denies_network_and_live_model_requests() -> None:
 
 
 @pytest.mark.live_provider
+@pytest.mark.docker_integration
 def test_live_provider_cli_cos_engineer_verifier_canary(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    real_docker_image: str,
 ) -> None:
     provider_model = os.environ[_LIVE_PROVIDER_MODEL]
     credential_ref = os.environ[_LIVE_PROVIDER_CREDENTIAL_REF]
@@ -159,26 +158,19 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     repository = GitRepositoryAdapter(tmp_path, UuidIdGenerator()).create_canary_fixture(
         tmp_path / "live-provider-repository"
     )
+    manifest = repository / "pyproject.toml"
+    manifest.write_text(
+        manifest.read_text() + "\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
+    )
+    git = GitRepositoryAdapter(tmp_path, UuidIdGenerator())
+    git._run(["git", "add", "--", "pyproject.toml"], cwd=repository)
+    git._run(
+        ["git", "commit", "--no-gpg-sign", "--no-verify", "-m", "Declare canary import path"],
+        cwd=repository,
+    )
     state_root = tmp_path / "live-provider-state"
     environment = {"AGENT_FLEET_HOME": str(state_root)}
     runner = CliRunner()
-    containers: list[ApplicationContainer] = []
-
-    def recording_build_container(
-        state_root_override: Path | None = None,
-        *,
-        migrate: bool = True,
-        redactor: Redactor | None = None,
-    ) -> ApplicationContainer:
-        container = build_container(
-            state_root_override,
-            migrate=migrate,
-            redactor=redactor,
-        )
-        containers.append(container)
-        return container
-
-    monkeypatch.setattr(cli_module, "build_container", recording_build_container)
 
     initialized = _mapping(
         _invoke_json(
@@ -193,7 +185,9 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
                 "--credential-ref",
                 credential_ref,
                 "--sandbox",
-                "fake",
+                "docker",
+                "--docker-image",
+                real_docker_image,
                 "--yes",
                 "--json",
             ],
@@ -204,8 +198,10 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     )
     assert initialized["runtime"] == "pydantic-ai"
     assert initialized["provider_model"] == provider_model
-    assert initialized["sandbox"] == "fake"
-    assert initialized["security_level"] == "fake"
+    assert initialized["sandbox"] == "docker"
+    assert initialized["security_level"] == "isolated"
+    assert initialized["bootstrap_verified"] is True
+    assert initialized["bootstrap_cleanup_complete"] is True
 
     executed = _mapping(
         _invoke_json(
@@ -222,7 +218,7 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
                 "--credential-ref",
                 credential_ref,
                 "--sandbox",
-                "fake",
+                "docker",
                 "--json",
             ],
             environment,
@@ -233,6 +229,19 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     run_id = executed.get("run_id")
     if not isinstance(run_id, str):
         pytest.fail("live provider canary did not return a run ID", pytrace=False)
+
+    # Explicitly opted-in disposable test approves only each observed exact request.
+    for _ in range(12):
+        if executed["status"] != "paused_for_approval":
+            break
+        request_id = executed.get("pending_approval_id")
+        assert isinstance(request_id, str)
+        _invoke_json(runner, ["permissions", "explain", request_id, "--json"], environment, forms)
+        _invoke_json(runner, ["approve", request_id, "--run", "--json"], environment, forms)
+        executed = _mapping(
+            _invoke_json(runner, ["resume", run_id, "--json"], environment, forms), "resume data"
+        )
+    assert executed["status"] == "ready_for_review"
 
     status = _mapping(
         _invoke_json(runner, ["status", run_id, "--json"], environment, forms),
@@ -251,21 +260,24 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     assert status["runtime"] == "pydantic-ai"
     assert status["provider_model"] == provider_model
     assert status["fleet_strategy"] == "engineer_verifier"
-    assert status["sandbox"] == "fake"
-    assert status["security_level"] == "fake"
-    assert status["verified_complete"] is False
+    assert status["sandbox"] == "docker"
+    assert status["security_level"] == "isolated"
+    assert status["verified_complete"] is True
 
     evidence = _mapping(status.get("evidence"), "evidence")
-    assert evidence["verified_complete"] is False
+    assert evidence["verified_complete"] is True
+    assert evidence["proof_gaps"] == []
     reason_codes = _items(evidence.get("completion_reason_codes"), "completion reasons")
-    assert "SIMULATED_EVIDENCE_ONLY" in reason_codes
+    assert "SIMULATED_EVIDENCE_ONLY" not in reason_codes
     command_results = _items(evidence.get("command_results"), "command evidence")
     assert len(command_results) >= 2
     for result in command_results:
         command = _mapping(result, "command evidence item")
-        assert command["strength"] == "simulated"
-        assert command["sandbox_provider"] == "fake"
-        assert command["sandbox_security_level"] == "fake"
+        assert command["strength"] in {"observed", "independently_verified"}
+        assert command["sandbox_provider"] == "docker"
+        assert command["sandbox_security_level"] == "isolated"
+        assert command["exit_code"] == 0
+        assert command["sandbox_inspection_artifact_id"] is not None
 
     completed_roles: list[object] = []
     for event_value in log_items:
@@ -273,10 +285,11 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
         payload = event.get("payload")
         if event.get("event_type") == "agent.completed" and isinstance(payload, dict):
             completed_roles.append(payload.get("role"))
-    assert completed_roles[:3] == ["cos", "engineer", "verifier"]
+    assert completed_roles[0] == "cos" and completed_roles.count("cos") == 1
+    assert completed_roles.index("engineer") < completed_roles.index("verifier")
 
     usage_ids = _items(status.get("runtime_usage_artifact_ids"), "runtime usage bindings")
-    assert len(usage_ids) == 3
+    assert len(usage_ids) >= 3
     container = build_container(state_root)
     usage_roles: list[str] = []
     for artifact_id in usage_ids:
@@ -296,19 +309,8 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
         total_tokens = usage.get("total_tokens")
         assert isinstance(requests, int) and requests >= 1
         assert isinstance(total_tokens, int) and total_tokens > 0
-    assert usage_roles == ["cos", "engineer", "verifier"]
-
-    sandbox_requests = [
-        request.model_dump(mode="json")
-        for application in containers
-        for request in application.sandbox.requests
-    ]
-    assert len(sandbox_requests) >= 2
-    _assert_no_credential_leak(
-        json.dumps(sandbox_requests, sort_keys=True).encode("utf-8"),
-        forms,
-        "FakeSandbox request records",
-    )
+    assert usage_roles[0] == "cos" and {"cos", "engineer", "verifier"} <= set(usage_roles)
+    assert not container.state.outstanding_leases()
 
     artifact_kinds = {
         _mapping(item, "artifact metadata item").get("kind") for item in artifact_items

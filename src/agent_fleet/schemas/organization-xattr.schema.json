@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "const": "com.apple.provenance",
+      "title": "Name",
+      "type": "string"
+    },
+    "value_base64": {
+      "maxLength": 5464,
+      "title": "Value Base64",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "value_base64"
+  ],
+  "title": "OrganizationXattr",
+  "type": "object"
+}

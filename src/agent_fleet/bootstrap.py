@@ -11,10 +11,15 @@ from pathlib import Path
 from platformdirs import user_data_path
 
 from agent_fleet.adapters.artifacts.local import LocalArtifactStore
+from agent_fleet.adapters.config.publication import NativeOrganizationFileSystem
 from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
 from agent_fleet.adapters.diagnostics.system import LocalSystemDiagnostics
 from agent_fleet.adapters.executable_resolution import resolve_fixed_executable
 from agent_fleet.adapters.filesystem.workspace import BoundedWorkspaceFileSystem
+from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
+from agent_fleet.adapters.persistence.evolution import SqliteOrganizationStore
+from agent_fleet.adapters.persistence.graphs import SqliteGraphStore
+from agent_fleet.adapters.persistence.runtime_budgets import SqliteRuntimeBudgetStore
 from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.repository.profile import StaticRepositoryProfiler
@@ -26,15 +31,21 @@ from agent_fleet.adapters.sandbox.local_unsafe import LocalUnsafeSandboxProvider
 from agent_fleet.adapters.sandbox.process import BoundedProcessRunner
 from agent_fleet.adapters.secrets.environment import EnvironmentSecretStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
+from agent_fleet.adapters.trust.filesystem import FilesystemTrustStore
 from agent_fleet.application.approvals import ApprovalService
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.application.bootstrap import BootstrapService
+from agent_fleet.application.conversations import ConversationService
 from agent_fleet.application.doctor import DoctorService
 from agent_fleet.application.evidence import EvidenceAssembler
+from agent_fleet.application.evolution import OrganizationService
 from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.inspection import InspectionService
 from agent_fleet.application.patches import PatchService
-from agent_fleet.application.permissions import BaselinePermissionBroker
+from agent_fleet.application.permission_policy import (
+    PermissionPolicyService,
+    PolicyPermissionBroker,
+)
 from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.projects import ProjectService
 from agent_fleet.application.resources import CancellationService, RecoveryService, ResourceService
@@ -56,11 +67,17 @@ _FIXED_DOCKER_EXECUTABLES = (
 class ApplicationContainer:
     state_root: Path
     state: SqliteStateStore
+    budgets: SqliteRuntimeBudgetStore
+    graphs: SqliteGraphStore
+    conversation_store: SqliteConversationStore
+    conversations: ConversationService
+    organization: OrganizationService
     artifacts: ArtifactService
     projects: ProjectService
     bootstrap: BootstrapService
     workflow: WorkflowEngine
     approvals: ApprovalService
+    permissions: PermissionPolicyService
     patches: PatchService
     inspection: InspectionService
     cancellation: CancellationService
@@ -179,8 +196,13 @@ def build_container(
     state = SqliteStateStore(root / "state.db", clock, ids, active_redactor)
     if migrate:
         state.migrate()
+    budgets = SqliteRuntimeBudgetStore(root / "state.db", clock, ids, active_redactor, state)
     local_artifacts = LocalArtifactStore(root / "artifacts")
     artifacts = ArtifactService(local_artifacts, state, clock, ids, active_redactor)
+    graphs = SqliteGraphStore(root / "state.db", clock, ids, active_redactor, local_artifacts)
+    conversation_store = SqliteConversationStore(
+        root / "state.db", clock, ids, active_redactor, state
+    )
     repository = GitRepositoryAdapter(root, ids)
     profiler = StaticRepositoryProfiler()
     config = YamlConfigurationAdapter(active_redactor)
@@ -216,9 +238,28 @@ def build_container(
     )
     sandboxes = SandboxRegistry({"fake": sandbox, "docker": docker, "local-unsafe": local_unsafe})
     resources = ResourceService(state, repository, sandboxes, clock, ids)
-    permission_broker = BaselinePermissionBroker()
+    trust = FilesystemTrustStore(root / "trust" / "trust.yaml", active_redactor)
+    permissions = PermissionPolicyService(
+        state, trust, config, repository, clock, ids, active_redactor
+    )
+    permission_broker = PolicyPermissionBroker(permissions)
     planner = FleetPlanner(clock, ids)
-    evidence = EvidenceAssembler(state, artifacts, clock)
+    evidence = EvidenceAssembler(state, artifacts, clock, config, graphs)
+    organization_store = SqliteOrganizationStore(
+        root / "state.db", clock, ids, active_redactor, state, config
+    )
+    organization = OrganizationService(
+        state,
+        organization_store,
+        NativeOrganizationFileSystem(active_redactor),
+        config,
+        repository,
+        artifacts,
+        clock,
+        ids,
+        active_redactor,
+        secrets,
+    )
     gateway = ToolGateway(
         state,
         artifacts,
@@ -244,6 +285,11 @@ def build_container(
         clock,
         ids,
         active_redactor,
+        budgets=budgets,
+        graphs=graphs,
+        organization=organization,
+        permission_policy=permissions,
+        conversations=conversation_store,
     )
     projects = ProjectService(
         root,
@@ -258,6 +304,7 @@ def build_container(
         sandbox.capabilities,
         runtimes,
         sandboxes=sandboxes,
+        organization=organization,
     )
     bootstrap_service = BootstrapService(
         state_root=root,
@@ -274,18 +321,45 @@ def build_container(
         ids=ids,
         redactor=active_redactor,
     )
+    approvals = ApprovalService(state, permissions)
+    inspection = InspectionService(state, artifacts, budgets, graphs)
+    cancellation = CancellationService(
+        state, resources, clock, graphs, conversations=conversation_store
+    )
+    conversations = ConversationService(
+        conversation_store,
+        state,
+        repository,
+        workflow,
+        inspection,
+        artifacts,
+        approvals,
+        permissions,
+        cancellation,
+        ids,
+        active_redactor,
+        secrets,
+    )
     return ApplicationContainer(
         state_root=root,
         state=state,
+        budgets=budgets,
+        graphs=graphs,
+        conversation_store=conversation_store,
+        conversations=conversations,
+        organization=organization,
         artifacts=artifacts,
         projects=projects,
         bootstrap=bootstrap_service,
         workflow=workflow,
-        approvals=ApprovalService(state),
-        patches=PatchService(state, artifacts, repository, config, secrets, clock),
-        inspection=InspectionService(state, artifacts),
-        cancellation=CancellationService(state, resources, clock),
-        recovery=RecoveryService(state, resources),
+        approvals=approvals,
+        permissions=permissions,
+        patches=PatchService(
+            state, artifacts, repository, config, secrets, clock, graphs, organization
+        ),
+        inspection=inspection,
+        cancellation=cancellation,
+        recovery=RecoveryService(state, resources, graphs, conversations=conversation_store),
         doctor=DoctorService(
             root,
             state,

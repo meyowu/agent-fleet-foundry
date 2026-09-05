@@ -27,6 +27,8 @@ _ENV_CREDENTIAL_REF = re.compile(r"env:([A-Za-z_][A-Za-z0-9_]*)\Z")
 def _live_provider_inputs_are_ready() -> bool:
     if os.environ.get(_LIVE_PROVIDER_FLAG) != "1":
         return False
+    if os.environ.get(_DOCKER_TEST_FLAG) != "1" or not os.environ.get(_DOCKER_TEST_IMAGE):
+        return False
     provider_model = os.environ.get(_LIVE_PROVIDER_MODEL, "")
     provider, separator, model_name = provider_model.partition(":")
     if separator != ":" or provider not in {"openai", "openai-chat"} or not model_name:
@@ -64,10 +66,14 @@ def enforce_external_request_boundary(
     if not is_docker_test:
         monkeypatch.setattr("agent_fleet.bootstrap._FIXED_DOCKER_EXECUTABLES", ())
     if is_live_provider_test:
+        if not is_docker_test:
+            pytest.fail("live provider canary must also declare the real Docker boundary")
         if not _live_provider_inputs_are_ready():
+            if os.environ.get(_LIVE_PROVIDER_FLAG) == "1":
+                pytest.fail("explicit live opt-in requires all provider and Docker inputs")
             pytest.skip(
-                "live provider canary requires explicit opt-in, supported model, "
-                "credential reference, and configured referenced environment variable"
+                "live provider canary requires both live and Docker opt-ins, a local image, "
+                "supported model, credential reference and its configured environment value"
             )
         with override_allow_model_requests(True):
             yield

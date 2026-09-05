@@ -1,0 +1,314 @@
+{
+  "$defs": {
+    "FleetPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agentfleet.dev/v1alpha1",
+          "default": "agentfleet.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "base_fleet_spec_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Base Fleet Spec Sha256",
+          "type": "string"
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/FleetPatchFileChange"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "title": "Changes",
+          "type": "array"
+        },
+        "fleet_patch_id": {
+          "pattern": "^fpatch_[0-9a-f]{32}$",
+          "title": "Fleet Patch Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "FleetPatch",
+          "default": "FleetPatch",
+          "title": "Kind",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "rollback_of": {
+          "anyOf": [
+            {
+              "pattern": "^fpatch_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rollback Of"
+        }
+      },
+      "required": [
+        "fleet_patch_id",
+        "project_id",
+        "base_fleet_spec_sha256",
+        "changes",
+        "rationale"
+      ],
+      "title": "FleetPatch",
+      "type": "object"
+    },
+    "FleetPatchFileChange": {
+      "additionalProperties": false,
+      "properties": {
+        "after_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Sha256"
+        },
+        "before_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Sha256"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "maxLength": 1000000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content"
+        },
+        "operation": {
+          "$ref": "#/$defs/FleetPatchOperation"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 8,
+          "pattern": "^\\.fleet/[^/\\\\\\x00][^\\\\\\x00]*$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "path"
+      ],
+      "title": "FleetPatchFileChange",
+      "type": "object"
+    },
+    "FleetPatchOperation": {
+      "enum": [
+        "add",
+        "replace",
+        "remove"
+      ],
+      "title": "FleetPatchOperation",
+      "type": "string"
+    },
+    "FleetPatchSemanticChange": {
+      "additionalProperties": false,
+      "properties": {
+        "after_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Sha256"
+        },
+        "before_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Sha256"
+        },
+        "category": {
+          "enum": [
+            "role_guidance",
+            "workflow",
+            "verification",
+            "verification_skill",
+            "documentation"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/FleetPatchOperation"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 8,
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "operation",
+        "category"
+      ],
+      "title": "FleetPatchSemanticChange",
+      "type": "object"
+    },
+    "OrganizationAdmission": {
+      "additionalProperties": false,
+      "properties": {
+        "config_snapshot_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Snapshot Sha256",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 1000000000,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "tree_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Tree Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "revision",
+        "tree_sha256",
+        "config_snapshot_sha256"
+      ],
+      "title": "OrganizationAdmission",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "after_config_snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "After Config Snapshot Sha256",
+      "type": "string"
+    },
+    "after_tree_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "After Tree Sha256",
+      "type": "string"
+    },
+    "audit_event_id": {
+      "anyOf": [
+        {
+          "pattern": "^evt_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Audit Event Id"
+    },
+    "base": {
+      "$ref": "#/$defs/OrganizationAdmission"
+    },
+    "before_config_snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Before Config Snapshot Sha256",
+      "type": "string"
+    },
+    "before_tree_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Before Tree Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "patch": {
+      "$ref": "#/$defs/FleetPatch"
+    },
+    "semantic_changes": {
+      "items": {
+        "$ref": "#/$defs/FleetPatchSemanticChange"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Semantic Changes",
+      "type": "array"
+    },
+    "source_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Source Run Id",
+      "type": "string"
+    },
+    "text_diff": {
+      "maxLength": 12000000,
+      "title": "Text Diff",
+      "type": "string"
+    }
+  },
+  "required": [
+    "patch",
+    "source_run_id",
+    "base",
+    "before_tree_sha256",
+    "after_tree_sha256",
+    "before_config_snapshot_sha256",
+    "after_config_snapshot_sha256",
+    "text_diff",
+    "semantic_changes",
+    "created_at"
+  ],
+  "title": "FleetPatchProposalRecord",
+  "type": "object"
+}

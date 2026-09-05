@@ -37,7 +37,7 @@ def test_empty_migration_is_idempotent_and_reopens(tmp_path: Path) -> None:
         assert connection.execute("PRAGMA user_version").fetchone() == (0,)
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,)]
+        ).fetchall() == [(version,) for version in range(1, SUPPORTED_SCHEMA_VERSION + 1)]
 
 
 def test_v1_migration_preserves_agents_and_allows_only_unbound_cos(tmp_path: Path) -> None:

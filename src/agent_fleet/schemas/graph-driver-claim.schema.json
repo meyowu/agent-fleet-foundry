@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "claim_id": {
+      "pattern": "^corr_[0-9a-f]{32}$",
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "claimed_at": {
+      "format": "date-time",
+      "title": "Claimed At",
+      "type": "string"
+    },
+    "generation": {
+      "minimum": 1,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "parent_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Parent Run Id",
+      "type": "string"
+    },
+    "plan_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Plan Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "parent_run_id",
+    "plan_sha256",
+    "claim_id",
+    "generation",
+    "claimed_at"
+  ],
+  "title": "GraphDriverClaim",
+  "type": "object"
+}

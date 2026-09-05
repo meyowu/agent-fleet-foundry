@@ -1,0 +1,192 @@
+{
+  "$defs": {
+    "ApprovalChoice": {
+      "enum": [
+        "deny",
+        "allow_once",
+        "allow_run",
+        "allow_always"
+      ],
+      "title": "ApprovalChoice",
+      "type": "string"
+    },
+    "ApprovalStatus": {
+      "enum": [
+        "pending",
+        "approved",
+        "denied"
+      ],
+      "title": "ApprovalStatus",
+      "type": "string"
+    },
+    "CanonicalResource": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "title": "Identifier",
+          "type": "string"
+        },
+        "kind": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "identifier"
+      ],
+      "title": "CanonicalResource",
+      "type": "object"
+    },
+    "JsonValue": {}
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_.-]*$",
+      "title": "Action",
+      "type": "string"
+    },
+    "authorization_scope": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Authorization Scope"
+    },
+    "available_choices": {
+      "items": {
+        "$ref": "#/$defs/ApprovalChoice"
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "title": "Available Choices",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "denial_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Denial Reason"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "intent_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Intent Hash",
+      "type": "string"
+    },
+    "intent_id": {
+      "pattern": "^intent_[0-9a-f]{32}$",
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "principal_role": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Principal Role",
+      "type": "string"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    },
+    "request_id": {
+      "pattern": "^perm_[0-9a-f]{32}$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "resolution_choice": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ApprovalChoice"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "resolved_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Resolved At"
+    },
+    "resource": {
+      "$ref": "#/$defs/CanonicalResource"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "source_rule_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Rule Id"
+    },
+    "status": {
+      "$ref": "#/$defs/ApprovalStatus",
+      "default": "pending"
+    }
+  },
+  "required": [
+    "request_id",
+    "intent_id",
+    "run_id",
+    "intent_hash",
+    "principal_role",
+    "action",
+    "resource",
+    "reason",
+    "created_at",
+    "expires_at"
+  ],
+  "title": "ApprovalRequest",
+  "type": "object"
+}

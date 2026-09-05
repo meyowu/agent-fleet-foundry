@@ -10,10 +10,19 @@ from agent_fleet.domain.models import (
     Workspace,
     WorkspaceKind,
 )
+from agent_fleet.domain.repository_boundary import OrganizationRepositoryBoundary
 
 
 class RepositoryPort(Protocol):
     def inspect(self, root: Path) -> RepositoryInfo: ...
+
+    def inspect_organization_boundary(self, root: Path) -> OrganizationRepositoryBoundary: ...
+
+    def prepare_workspace(
+        self, run_id: str, base_revision: str, kind: WorkspaceKind
+    ) -> Workspace: ...
+
+    def materialize_workspace(self, repository_root: Path, workspace: Workspace) -> Workspace: ...
 
     def create_workspace(
         self,
@@ -26,6 +35,8 @@ class RepositoryPort(Protocol):
     def apply_patch_to_workspace(self, workspace: Workspace, patch: bytes) -> None: ...
 
     def compute_patch(self, workspace: Workspace) -> PatchInfo: ...
+
+    def patch_changed_paths(self, patch: bytes) -> list[str]: ...
 
     def workspace_status_fingerprint(self, workspace: Workspace) -> str: ...
 

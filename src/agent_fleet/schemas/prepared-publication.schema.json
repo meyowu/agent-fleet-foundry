@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "DirectoryIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "device": {
+          "minimum": 0,
+          "title": "Device",
+          "type": "integer"
+        },
+        "inode": {
+          "exclusiveMinimum": 0,
+          "title": "Inode",
+          "type": "integer"
+        },
+        "mode": {
+          "maximum": 4095,
+          "minimum": 0,
+          "title": "Mode",
+          "type": "integer"
+        },
+        "uid": {
+          "minimum": 0,
+          "title": "Uid",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "device",
+        "inode",
+        "uid",
+        "mode"
+      ],
+      "title": "DirectoryIdentity",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "after_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "After Sha256",
+      "type": "string"
+    },
+    "backend": {
+      "enum": [
+        "darwin-renameatx_np",
+        "linux-renameat2"
+      ],
+      "title": "Backend",
+      "type": "string"
+    },
+    "before_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Before Sha256",
+      "type": "string"
+    },
+    "durability": {
+      "enum": [
+        "fsync+fullfsync",
+        "fsync"
+      ],
+      "title": "Durability",
+      "type": "string"
+    },
+    "operation_id": {
+      "pattern": "^fop_[0-9a-f]{32}$",
+      "title": "Operation Id",
+      "type": "string"
+    },
+    "parent_identity": {
+      "$ref": "#/$defs/DirectoryIdentity"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "repository_basename": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Repository Basename",
+      "type": "string"
+    },
+    "repository_directory_identity": {
+      "$ref": "#/$defs/DirectoryIdentity"
+    },
+    "repository_identity": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repository Identity",
+      "type": "string"
+    },
+    "scratch_basename": {
+      "pattern": "^\\.fleet-publication-fop_[0-9a-f]{32}$",
+      "title": "Scratch Basename",
+      "type": "string"
+    },
+    "scratch_identity": {
+      "$ref": "#/$defs/DirectoryIdentity"
+    },
+    "staged_identity": {
+      "$ref": "#/$defs/DirectoryIdentity"
+    },
+    "target_identity": {
+      "$ref": "#/$defs/DirectoryIdentity"
+    }
+  },
+  "required": [
+    "operation_id",
+    "project_id",
+    "repository_identity",
+    "repository_basename",
+    "parent_identity",
+    "repository_directory_identity",
+    "target_identity",
+    "scratch_basename",
+    "scratch_identity",
+    "staged_identity",
+    "before_sha256",
+    "after_sha256",
+    "backend",
+    "durability"
+  ],
+  "title": "PreparedPublication",
+  "type": "object"
+}

@@ -48,10 +48,12 @@ from pydantic_ai.usage import RunUsage
 from pydantic_core import to_jsonable_python
 
 from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.fleet_patch import validate_fleet_patch
 from agent_fleet.domain.models import (
     AgentInvocation,
     AgentInvocationResult,
     AgentRole,
+    FleetPatch,
     ImplementationReport,
     RuntimeCapability,
     RuntimeConfiguration,
@@ -62,11 +64,13 @@ from agent_fleet.domain.models import (
     RuntimeToolCall,
     RuntimeToolDefinition,
     ScopeDecision,
+    SpecialistReport,
     UsageRecord,
     VerifierVerdict,
 )
 from agent_fleet.domain.security import Redactor
 from agent_fleet.ports.runtime import RuntimeInvocationServices, RuntimeToolCatalog
+from agent_fleet.ports.runtime_accounting import RuntimeAccounting
 from agent_fleet.ports.secret_store import (
     InvalidSecretReferenceError,
     SecretNotConfiguredError,
@@ -108,7 +112,10 @@ _PROMPT_PACKAGE = "agent_fleet.adapters.runtime.prompts"
 _OUTPUT_BY_ROLE: dict[
     str,
     tuple[
-        type[ScopeDecision] | type[ImplementationReport] | type[VerifierVerdict],
+        type[ScopeDecision]
+        | type[ImplementationReport]
+        | type[VerifierVerdict]
+        | type[SpecialistReport],
         str,
         str,
     ],
@@ -124,6 +131,8 @@ _OUTPUT_BY_ROLE: dict[
         "submit_verifier_verdict",
         "verifier.md",
     ),
+    AgentRole.RESEARCHER.value: (SpecialistReport, "submit_specialist_report", "researcher.md"),
+    AgentRole.ARCHITECT.value: (SpecialistReport, "submit_specialist_report", "architect.md"),
 }
 _CAPABILITIES = frozenset(
     {
@@ -137,9 +146,13 @@ _CAPABILITIES = frozenset(
 class _SecretBoundaryModel(WrapperModel):
     """Scan the exact PydanticAI request envelope before model dispatch."""
 
-    def __init__(self, wrapped: Model, redactor: Redactor) -> None:
+    def __init__(
+        self, wrapped: Model, redactor: Redactor, accounting: RuntimeAccounting | None = None
+    ) -> None:
         super().__init__(wrapped)
         self._redactor = redactor
+        self._accounting = accounting
+        self._request_sequence = 0
 
     @property
     def tool_deferral_mode(self) -> ToolDeferralMode | None:
@@ -175,7 +188,48 @@ class _SecretBoundaryModel(WrapperModel):
                 "Registered secret material reached the model-context boundary.",
                 "Remove credentials from model-visible data and start a new bounded invocation.",
             )
-        return await self.wrapped.request(messages, model_settings, model_request_parameters)
+        if self._accounting is None:
+            return await self.wrapped.request(messages, model_settings, model_request_parameters)
+        self._request_sequence += 1
+        requested_tokens = (model_settings or {}).get("max_tokens") or 32_768
+        reservation = self._accounting.reserve_request(
+            self._request_sequence, requested_tokens=requested_tokens
+        )
+        bounded_settings = ModelSettings(**(model_settings or {}))
+        bounded_settings["max_tokens"] = min(requested_tokens, reservation.token_allowance)
+        request_error: BaseException | None = None
+        response: ModelResponse | None = None
+        try:
+            async with asyncio.timeout(self._accounting.remaining_active_seconds()):
+                response = await self.wrapped.request(
+                    messages, bounded_settings, model_request_parameters
+                )
+        except BaseException as error:
+            request_error = error
+        if request_error is not None:
+            # Persist outside the exception handler: a storage error must not expose
+            # a provider exception as its inspectable context.
+            self._accounting.record_unknown(reservation)
+            if isinstance(request_error, TimeoutError):
+                raise _runtime_error(
+                    ErrorCode.RUNTIME_BUDGET_EXCEEDED,
+                    "The remaining aggregate runtime time allowance expired.",
+                    "Inspect the charged request; its provider outcome is unknown.",
+                )
+            raise request_error
+        assert response is not None
+        self._accounting.record_response(
+            reservation,
+            UsageRecord(
+                requests=1,
+                # SDK usage objects default omitted counters to zero. Without
+                # presence metadata, all-zero usage is conservatively unknown.
+                input_tokens=response.usage.input_tokens or None,
+                output_tokens=response.usage.output_tokens or None,
+                total_tokens=response.usage.total_tokens or None,
+            ),
+        )
+        return response
 
 
 class PydanticAIRuntimeAdapter:
@@ -433,6 +487,7 @@ class PydanticAIRuntimeAdapter:
                 configuration,
                 self._model_override,
                 self._model_override_metadata,
+                services.accounting,
             )
 
         provider, model_name = self._require_provider_model(configuration.provider_model)
@@ -484,6 +539,7 @@ class PydanticAIRuntimeAdapter:
                         provider=provider,
                         model=configuration.provider_model,
                     ),
+                    services.accounting,
                 )
         finally:
             # The transport is caller-owned when supplied to the SDK. Close it even
@@ -497,16 +553,20 @@ class PydanticAIRuntimeAdapter:
         configuration: RuntimeConfiguration,
         model: Model,
         provider_metadata: RuntimeProviderMetadata,
+        accounting: RuntimeAccounting | None = None,
     ) -> AgentInvocationResult:
         output_contract = _OUTPUT_BY_ROLE.get(str(request.role))
         if output_contract is None:
             raise _runtime_error(
                 ErrorCode.RUNTIME_CAPABILITY_MISSING,
                 "The PydanticAI adapter does not support the requested role.",
-                "Use one of the built-in cos, engineer, or verifier roles.",
+                "Use a built-in cos, engineer, verifier, researcher, or architect role.",
                 details={"role": str(request.role)},
             )
         output_model, output_tool_name, prompt_name = output_contract
+        fleet_patch_enabled = request.role == AgentRole.COS and isinstance(
+            request.input.get("organization_context"), dict
+        )
         definitions = _validated_definitions(tools, output_tool_name)
         instructions = _load_prompt(prompt_name)
         self._reject_model_visible_secret(
@@ -522,8 +582,11 @@ class PydanticAIRuntimeAdapter:
             ToolOutput(output_model, name=output_tool_name),
             DeferredToolRequests,
         ]
+        if fleet_patch_enabled:
+            self._reject_model_visible_secret(FleetPatch.model_json_schema())
+            output_spec.insert(1, ToolOutput(FleetPatch, name="submit_fleet_patch"))
         agent = Agent(
-            _SecretBoundaryModel(model, self._redactor),
+            _SecretBoundaryModel(model, self._redactor, accounting),
             output_type=cast(Any, output_spec),
             instructions=instructions,
             toolsets=toolsets,
@@ -543,6 +606,7 @@ class PydanticAIRuntimeAdapter:
         seen_call_ids: set[str] = set()
         tool_call_count = 0
         side_effect_attempted = False
+        batch_sequence = 0
 
         while True:
             if usage.requests >= request_limit:
@@ -590,7 +654,17 @@ class PydanticAIRuntimeAdapter:
             self._reject_model_visible_secret(result.new_messages_json())
             output = result.output
             if not isinstance(output, DeferredToolRequests):
-                validated = self._validated_output(output, output_model)
+                validated = (
+                    self._validated_output(output, FleetPatch)
+                    if fleet_patch_enabled and isinstance(output, FleetPatch)
+                    else self._validated_output(output, output_model)
+                )
+                if isinstance(validated, SpecialistReport) and validated.role != request.role:
+                    raise _runtime_error(
+                        ErrorCode.RUNTIME_OUTPUT_INVALID,
+                        "The specialist report role does not match its bound invocation.",
+                        "Return only the exact role requested by the control plane.",
+                    )
                 return AgentInvocationResult(
                     output=validated,
                     usage=_usage_record(usage, tool_call_count),
@@ -656,6 +730,12 @@ class PydanticAIRuntimeAdapter:
             for _, call in validated_calls:
                 tools.validate(call)
 
+            if accounting is not None:
+                batch_sequence += 1
+                accounting.reserve_tool_batch(
+                    batch_sequence, tuple(call.call_id for _, call in validated_calls)
+                )
+
             call_results: dict[str, object] = {}
             for definition, call in validated_calls:
                 call_id = call.call_id
@@ -705,13 +785,23 @@ class PydanticAIRuntimeAdapter:
     def _validated_output(
         self,
         output: object,
-        output_model: type[ScopeDecision] | type[ImplementationReport] | type[VerifierVerdict],
-    ) -> ScopeDecision | ImplementationReport | VerifierVerdict:
+        output_model: type[ScopeDecision]
+        | type[FleetPatch]
+        | type[ImplementationReport]
+        | type[VerifierVerdict]
+        | type[SpecialistReport],
+    ) -> ScopeDecision | FleetPatch | ImplementationReport | VerifierVerdict | SpecialistReport:
         if not isinstance(output, output_model):
             raise _runtime_error(
                 ErrorCode.RUNTIME_OUTPUT_INVALID,
                 "The model returned an unexpected output contract.",
                 "Retry with a model that supports strict tool output.",
+            )
+        if isinstance(output, FleetPatch):
+            validate_fleet_patch(
+                output,
+                current_fleet_spec_sha256=output.base_fleet_spec_sha256,
+                redactor=self._redactor,
             )
         dumped = output.model_dump(mode="json")
         if self._redactor.contains_secret_data(dumped):
@@ -921,7 +1011,7 @@ def _validated_definitions(
 ) -> tuple[RuntimeToolDefinition, ...]:
     definitions = tools.definitions
     names = [definition.name for definition in definitions]
-    if len(names) != len(set(names)) or output_tool_name in names:
+    if len(names) != len(set(names)) or output_tool_name in names or "submit_fleet_patch" in names:
         raise _runtime_error(
             ErrorCode.INTERNAL_ERROR,
             "The trusted runtime tool catalog contains conflicting tool names.",

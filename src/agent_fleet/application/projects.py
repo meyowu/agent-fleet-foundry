@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.evolution import OrganizationService
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.application.sandboxes import (
     SandboxRegistry,
@@ -73,6 +74,8 @@ class ProjectService:
         sandbox_capabilities: SandboxCapabilities,
         runtime_registry: RuntimeRegistry,
         sandboxes: SandboxRegistry | None = None,
+        *,
+        organization: OrganizationService,
     ) -> None:
         self.state_root = state_root
         self.state = state
@@ -86,6 +89,7 @@ class ProjectService:
         self.sandbox_capabilities = sandbox_capabilities
         self.runtime_registry = runtime_registry
         self.sandboxes = sandboxes
+        self.organization = organization
 
     def preview(
         self,
@@ -254,6 +258,7 @@ class ProjectService:
             bootstrap_report_sha256=report_artifact.sha256,
             bootstrap_canary_run_id=verified.canary_run_id,
             bootstrap_verified=True,
+            permission_scope_required=True,
         )
 
     def _initialize_without_canary(
@@ -277,6 +282,7 @@ class ProjectService:
         bootstrap_report_sha256: str | None = None,
         bootstrap_canary_run_id: str | None = None,
         bootstrap_verified: bool = False,
+        permission_scope_required: bool = False,
         sandbox_image_identity: str | None = None,
         sandbox_daemon_identity: str | None = None,
     ) -> dict[str, object]:
@@ -398,6 +404,8 @@ class ProjectService:
             "bootstrap_report_sha256": bootstrap_report_sha256,
             "bootstrap_canary_run_id": bootstrap_canary_run_id,
             "bootstrap_verified": bootstrap_verified,
+            "permission_scope_required": permission_scope_required
+            or (existing.permission_scope_required if existing is not None else False),
         }
         if existing is None:
             project = Project(
@@ -417,149 +425,155 @@ class ProjectService:
                     "updated_at": now,
                 }
             )
-        staging = (
-            self.state_root / "projects" / project.project_id / "staging" / f"init-{proposal_hash}"
-        )
-        self.config.stage(staging, proposed_files)
-        _, config_snapshot = self.config.load_snapshot(staging / "fleet.yaml")
-        config_snapshot_content = config_snapshot.model_dump_json(indent=2)
-        config_snapshot_hash = self.config.snapshot_hash(config_snapshot)
-        canary = (
-            self.repository.create_canary_fixture(
-                self.state_root / "projects" / project.project_id / "canaries" / "bootstrap"
+        with self.organization.initialization_guard(project, expected=existing):
+            staging = (
+                self.state_root
+                / "projects"
+                / project.project_id
+                / "staging"
+                / f"init-{proposal_hash}"
             )
-            if create_canary_fixture
-            else None
-        )
-        self.config.apply(fleet_root, proposed_files)
-        _, applied_snapshot = self.config.load_snapshot(fleet_root / "fleet.yaml")
-        applied_snapshot_hash = self.config.snapshot_hash(applied_snapshot)
-        if applied_snapshot_hash != config_snapshot_hash:
-            raise FleetError(
-                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
-                "The applied Fleet configuration differs from the validated staging snapshot.",
-                "Do not run the project; inspect or remove the .fleet tree and initialize again.",
+            self.config.stage(staging, proposed_files)
+            _, config_snapshot = self.config.load_snapshot(staging / "fleet.yaml")
+            config_snapshot_content = config_snapshot.model_dump_json(indent=2)
+            config_snapshot_hash = self.config.snapshot_hash(config_snapshot)
+            canary = (
+                self.repository.create_canary_fixture(
+                    self.state_root / "projects" / project.project_id / "canaries" / "bootstrap"
+                )
+                if create_canary_fixture
+                else None
             )
-        config_snapshot = applied_snapshot
-        config_snapshot_content = config_snapshot.model_dump_json(indent=2)
-        config_snapshot_hash = applied_snapshot_hash
-        updated_info = self.repository.inspect(Path(info.root))
-        project = Project.model_validate(
-            {
-                **project.model_dump(mode="json"),
-                "fleet_spec_hash": config_snapshot_hash,
-                "init_status_fingerprint": updated_info.status_fingerprint,
-                **runtime_fields,
-                "updated_at": self.clock.now(),
-            }
-        )
-        # From this write onward, Fleet-owned state and the active .fleet runtime/hash agree.
-        # Artifact identifiers are attached only after their rows exist.
-        self.state.save_project(project)
-        profile_artifact = self.artifacts.create_text(
-            kind=ArtifactKind.REPOSITORY_PROFILE,
-            project_id=project.project_id,
-            content=profile_result.profile.model_dump_json(indent=2),
-            producer="static-repository-profiler",
-            mime_type="application/json",
-        )
-        knowledge_artifact = self.artifacts.create_text(
-            kind=ArtifactKind.PROJECT_KNOWLEDGE,
-            project_id=project.project_id,
-            content=profile_result.project_knowledge.model_dump_json(indent=2),
-            producer="static-repository-profiler",
-            mime_type="application/json",
-        )
-        proposal_text = json.dumps(proposed_files, sort_keys=True, indent=2) + "\n"
-        proposal = self.artifacts.create_text(
-            kind=ArtifactKind.FLEET_CONFIG_PROPOSAL,
-            project_id=project.project_id,
-            content=proposal_text,
-            producer="project-service",
-            mime_type="application/json",
-        )
-        config_snapshot_artifact = self.artifacts.create_text(
-            kind=ArtifactKind.CONFIG_SNAPSHOT,
-            project_id=project.project_id,
-            content=config_snapshot_content,
-            producer="project-service",
-            mime_type="application/json",
-            redact=False,
-            reject_secret=True,
-        )
-        if config_snapshot_artifact.sha256 != config_snapshot_hash:
-            raise RuntimeError("configuration snapshot serialization is not deterministic")
-        project = Project.model_validate(
-            {
-                **project.model_dump(mode="json"),
-                "config_snapshot_artifact_id": config_snapshot_artifact.artifact_id,
-                "repository_profile_artifact_id": profile_artifact.artifact_id,
-                "repository_profile_semantic_hash": (profile_semantic_hash),
-                "project_knowledge_artifact_id": knowledge_artifact.artifact_id,
-                "project_knowledge_semantic_hash": canonical_json_hash(
-                    profile_result.project_knowledge.model_dump(mode="json")
-                ),
-                "updated_at": self.clock.now(),
-            }
-        )
-        self.state.save_project(project)
-        correlation_id = self.ids.new(IdPrefix.CORRELATION)
-        self.state.append_event(
-            FleetEvent(
-                event_id=self.ids.new(IdPrefix.EVENT),
-                event_type="project.initialized",
-                occurred_at=self.clock.now(),
+            self.config.apply(fleet_root, proposed_files)
+            _, applied_snapshot = self.config.load_snapshot(fleet_root / "fleet.yaml")
+            applied_snapshot_hash = self.config.snapshot_hash(applied_snapshot)
+            if applied_snapshot_hash != config_snapshot_hash:
+                raise FleetError(
+                    ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                    "The applied Fleet configuration differs from the validated staging snapshot.",
+                    "Do not run the project; preserve the .fleet tree and inspect "
+                    "the initialization failure.",
+                )
+            config_snapshot = applied_snapshot
+            config_snapshot_content = config_snapshot.model_dump_json(indent=2)
+            config_snapshot_hash = applied_snapshot_hash
+            updated_info = self.repository.inspect(Path(info.root))
+            project = Project.model_validate(
+                {
+                    **project.model_dump(mode="json"),
+                    "fleet_spec_hash": config_snapshot_hash,
+                    "init_status_fingerprint": updated_info.status_fingerprint,
+                    **runtime_fields,
+                    "updated_at": self.clock.now(),
+                }
+            )
+            # From this write onward, Fleet-owned state and the active .fleet runtime/hash agree.
+            # Artifact identifiers are attached only after their rows exist.
+            self.state.save_project(project)
+            profile_artifact = self.artifacts.create_text(
+                kind=ArtifactKind.REPOSITORY_PROFILE,
                 project_id=project.project_id,
-                correlation_id=correlation_id,
-                payload={
-                    "fleet_spec_hash": project.fleet_spec_hash,
-                    "config_snapshot_artifact_id": project.config_snapshot_artifact_id,
-                    "proposal_artifact_id": proposal.artifact_id,
-                    "repository_profile_artifact_id": profile_artifact.artifact_id,
-                    "project_knowledge_artifact_id": knowledge_artifact.artifact_id,
-                    "runtime": runtime_configuration.runtime_name,
-                    "provider_model": runtime_configuration.provider_model,
-                    "sandbox": sandbox_configuration.provider,
-                    "sandbox_configuration": sandbox_configuration.model_dump(mode="json"),
-                    "sandbox_capabilities": sandbox_capabilities.model_dump(mode="json"),
-                    "bootstrap_report_artifact_id": bootstrap_report_artifact_id,
-                    "bootstrap_canary_run_id": bootstrap_canary_run_id,
-                    "bootstrap_verified": bootstrap_verified,
-                },
+                content=profile_result.profile.model_dump_json(indent=2),
+                producer="static-repository-profiler",
+                mime_type="application/json",
             )
-        )
-        return {
-            "project_id": project.project_id,
-            "repository": project.canonical_root,
-            "fleet_spec_hash": project.fleet_spec_hash,
-            "config_snapshot_artifact_id": project.config_snapshot_artifact_id,
-            "proposal_artifact_id": proposal.artifact_id,
-            "proposal_sha256": proposal_hash,
-            "proposal_patch": proposal_patch,
-            "repository_profile_artifact_id": profile_artifact.artifact_id,
-            "repository_profile_semantic_sha256": (project.repository_profile_semantic_hash),
-            "repository_profile_artifact_sha256": profile_artifact.sha256,
-            "repository_profile": profile_result.profile.model_dump(mode="json"),
-            "project_knowledge_artifact_id": knowledge_artifact.artifact_id,
-            "project_knowledge_semantic_sha256": (project.project_knowledge_semantic_hash),
-            "project_knowledge_artifact_sha256": knowledge_artifact.sha256,
-            "project_knowledge": profile_result.project_knowledge.model_dump(mode="json"),
-            "canary_path": str(canary) if canary is not None else None,
-            "runtime": runtime_configuration.runtime_name,
-            "provider_model": runtime_configuration.provider_model,
-            "sandbox": sandbox_configuration.provider,
-            "security_level": sandbox_capabilities.security_level.value,
-            "sandbox_configuration": sandbox_configuration.model_dump(mode="json"),
-            "sandbox_capabilities": sandbox_capabilities.model_dump(mode="json"),
-            "bootstrap_report_artifact_id": bootstrap_report_artifact_id,
-            "bootstrap_report_sha256": bootstrap_report_sha256,
-            "bootstrap_canary_run_id": bootstrap_canary_run_id,
-            "bootstrap_verified": bootstrap_verified,
-            "warning": self._security_warning(
-                runtime_configuration.runtime_name,
-                sandbox_configuration.provider,
-            ),
-        }
+            knowledge_artifact = self.artifacts.create_text(
+                kind=ArtifactKind.PROJECT_KNOWLEDGE,
+                project_id=project.project_id,
+                content=profile_result.project_knowledge.model_dump_json(indent=2),
+                producer="static-repository-profiler",
+                mime_type="application/json",
+            )
+            proposal_text = json.dumps(proposed_files, sort_keys=True, indent=2) + "\n"
+            proposal = self.artifacts.create_text(
+                kind=ArtifactKind.FLEET_CONFIG_PROPOSAL,
+                project_id=project.project_id,
+                content=proposal_text,
+                producer="project-service",
+                mime_type="application/json",
+            )
+            config_snapshot_artifact = self.artifacts.create_text(
+                kind=ArtifactKind.CONFIG_SNAPSHOT,
+                project_id=project.project_id,
+                content=config_snapshot_content,
+                producer="project-service",
+                mime_type="application/json",
+                redact=False,
+                reject_secret=True,
+            )
+            if config_snapshot_artifact.sha256 != config_snapshot_hash:
+                raise RuntimeError("configuration snapshot serialization is not deterministic")
+            project = Project.model_validate(
+                {
+                    **project.model_dump(mode="json"),
+                    "config_snapshot_artifact_id": config_snapshot_artifact.artifact_id,
+                    "repository_profile_artifact_id": profile_artifact.artifact_id,
+                    "repository_profile_semantic_hash": (profile_semantic_hash),
+                    "project_knowledge_artifact_id": knowledge_artifact.artifact_id,
+                    "project_knowledge_semantic_hash": canonical_json_hash(
+                        profile_result.project_knowledge.model_dump(mode="json")
+                    ),
+                    "updated_at": self.clock.now(),
+                }
+            )
+            self.state.save_project(project)
+            correlation_id = self.ids.new(IdPrefix.CORRELATION)
+            self.state.append_event(
+                FleetEvent(
+                    event_id=self.ids.new(IdPrefix.EVENT),
+                    event_type="project.initialized",
+                    occurred_at=self.clock.now(),
+                    project_id=project.project_id,
+                    correlation_id=correlation_id,
+                    payload={
+                        "fleet_spec_hash": project.fleet_spec_hash,
+                        "config_snapshot_artifact_id": project.config_snapshot_artifact_id,
+                        "proposal_artifact_id": proposal.artifact_id,
+                        "repository_profile_artifact_id": profile_artifact.artifact_id,
+                        "project_knowledge_artifact_id": knowledge_artifact.artifact_id,
+                        "runtime": runtime_configuration.runtime_name,
+                        "provider_model": runtime_configuration.provider_model,
+                        "sandbox": sandbox_configuration.provider,
+                        "sandbox_configuration": sandbox_configuration.model_dump(mode="json"),
+                        "sandbox_capabilities": sandbox_capabilities.model_dump(mode="json"),
+                        "bootstrap_report_artifact_id": bootstrap_report_artifact_id,
+                        "bootstrap_canary_run_id": bootstrap_canary_run_id,
+                        "bootstrap_verified": bootstrap_verified,
+                    },
+                )
+            )
+            return {
+                "project_id": project.project_id,
+                "repository": project.canonical_root,
+                "fleet_spec_hash": project.fleet_spec_hash,
+                "config_snapshot_artifact_id": project.config_snapshot_artifact_id,
+                "proposal_artifact_id": proposal.artifact_id,
+                "proposal_sha256": proposal_hash,
+                "proposal_patch": proposal_patch,
+                "repository_profile_artifact_id": profile_artifact.artifact_id,
+                "repository_profile_semantic_sha256": (project.repository_profile_semantic_hash),
+                "repository_profile_artifact_sha256": profile_artifact.sha256,
+                "repository_profile": profile_result.profile.model_dump(mode="json"),
+                "project_knowledge_artifact_id": knowledge_artifact.artifact_id,
+                "project_knowledge_semantic_sha256": (project.project_knowledge_semantic_hash),
+                "project_knowledge_artifact_sha256": knowledge_artifact.sha256,
+                "project_knowledge": profile_result.project_knowledge.model_dump(mode="json"),
+                "canary_path": str(canary) if canary is not None else None,
+                "runtime": runtime_configuration.runtime_name,
+                "provider_model": runtime_configuration.provider_model,
+                "sandbox": sandbox_configuration.provider,
+                "security_level": sandbox_capabilities.security_level.value,
+                "sandbox_configuration": sandbox_configuration.model_dump(mode="json"),
+                "sandbox_capabilities": sandbox_capabilities.model_dump(mode="json"),
+                "bootstrap_report_artifact_id": bootstrap_report_artifact_id,
+                "bootstrap_report_sha256": bootstrap_report_sha256,
+                "bootstrap_canary_run_id": bootstrap_canary_run_id,
+                "bootstrap_verified": bootstrap_verified,
+                "warning": self._security_warning(
+                    runtime_configuration.runtime_name,
+                    sandbox_configuration.provider,
+                ),
+            }
 
     @staticmethod
     def _runtime_configuration(

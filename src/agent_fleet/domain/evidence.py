@@ -9,11 +9,14 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from agent_fleet.domain.fleet_plan import FleetStrategy
+from agent_fleet.domain.graph import GraphArtifactRef, GraphNodeStatus, GraphSnapshot, GraphStatus
 from agent_fleet.domain.models import (
     ActionId,
     AgentInstanceId,
     ArtifactId,
+    ArtifactKind,
     CriterionId,
+    CriterionResult,
     EvidenceRequirementId,
     ImageIdentity,
     LeaseId,
@@ -37,7 +40,7 @@ from agent_fleet.domain.models import (
     WorkspaceKind,
     _require_utc,
 )
-from agent_fleet.domain.security import canonical_json_hash
+from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 
 
 class EvidenceStrength(StrEnum):
@@ -95,6 +98,117 @@ class CriterionAssessment(StrictModel):
     explanation: str
 
 
+def assess_criterion_results(
+    results: list[CriterionResult],
+    *,
+    expected_criteria: set[str],
+    commands: list[CommandEvidence],
+    verifier_evidence_artifact_ids: list[str],
+    run_id: str,
+    task_id: str,
+    verifier_agent_instance_id: str | None,
+    base_revision: str,
+    config_snapshot_sha256: str,
+    patch_sha256: str | None,
+    command_hashes: dict[str, str],
+) -> tuple[list[CriterionAssessment], list[ProofGap]]:
+    """Resolve model references only against exact current control-plane records.
+
+    Each criterion selects one explicit artifact per command. Repeated execution
+    is supported, but only the uniquely latest current-patch artifact can prove a
+    command; an ambiguous timestamp or cherry-picked earlier result cannot pass.
+    """
+
+    identifiers = [result.criterion_id for result in results]
+    invalid_catalog = (
+        len(identifiers) != len(set(identifiers))
+        or set(identifiers) != expected_criteria
+        or len(commands) != len({command.evidence_id for command in commands})
+    )
+    catalog = {command.evidence_id: command for command in commands}
+    by_criterion = {result.criterion_id: result for result in results}
+    declared = set(verifier_evidence_artifact_ids)
+    assessments: list[CriterionAssessment] = []
+    gaps: list[ProofGap] = []
+    for criterion_id in sorted(expected_criteria):
+        result = by_criterion.get(criterion_id)
+        valid = not invalid_catalog and result is not None
+        selected: list[CommandEvidence] = []
+        if result is not None:
+            selected = [catalog[item] for item in result.evidence_artifact_ids if item in catalog]
+            valid = valid and (
+                bool(selected)
+                and len(selected) == len(result.evidence_artifact_ids)
+                and len(result.evidence_artifact_ids) == len(set(result.evidence_artifact_ids))
+                and len(result.command_ids) == len(set(result.command_ids))
+                and len(selected) == len(result.command_ids)
+                and {item.command_id for item in selected} == set(result.command_ids)
+                and set(result.evidence_artifact_ids).issubset(declared)
+            )
+        for command in selected:
+            matching = [
+                item
+                for item in commands
+                if item.command_id == command.command_id
+                and item.agent_instance_id == verifier_agent_instance_id
+                and item.candidate_patch_sha256 == patch_sha256
+            ]
+            latest = max((item.completed_at for item in matching), default=None)
+            valid = valid and (
+                command.run_id == run_id
+                and command.task_id == task_id
+                and command.agent_instance_id == verifier_agent_instance_id
+                and command.principal_role == "verifier"
+                and command.workflow_stage is WorkflowStage.VERIFYING
+                and command.workspace_kind is WorkspaceKind.VERIFICATION
+                and command.workspace_id is not None
+                and command.sandbox_id is not None
+                and command.workspace_base_revision == base_revision
+                and command.config_snapshot_sha256 == config_snapshot_sha256
+                and command.candidate_patch_sha256 == patch_sha256
+                and command.command_id in command_hashes
+                and command.command_spec_sha256 == command_hashes.get(command.command_id)
+                and command.strength is EvidenceStrength.INDEPENDENTLY_VERIFIED
+                and command.sandbox_security_level is SandboxSecurityLevel.ISOLATED
+                and command.sandbox_provider not in {"fake", "local-unsafe"}
+                and not command.workspace_mutated_during_execution
+                and not command.output_truncated
+                and command.completed_at >= command.started_at
+                and command.completed_at == latest
+                and sum(item.completed_at == latest for item in matching) == 1
+            )
+        if len({(item.workspace_id, item.sandbox_id) for item in selected}) > 1:
+            valid = False
+        verdict = Verdict.INCONCLUSIVE
+        if valid and result is not None:
+            verdict = result.verdict
+            if any(item.exit_code != 0 or item.timed_out for item in selected):
+                verdict = Verdict.FAIL
+        else:
+            gaps.append(
+                ProofGap(
+                    code="STRUCTURED_CRITERION_MAPPING_INVALID",
+                    description=(
+                        f"Criterion {criterion_id} lacks an exact current verifier mapping."
+                    ),
+                    required_strength=EvidenceStrength.INDEPENDENTLY_VERIFIED,
+                )
+            )
+        assessments.append(
+            CriterionAssessment(
+                criterion_id=criterion_id,
+                verdict=verdict,
+                evidence_artifact_ids=(result.evidence_artifact_ids if valid and result else []),
+                explanation=(
+                    "Exact current independent verifier command records resolve this criterion."
+                    if valid
+                    else "The criterion mapping is missing, ambiguous, or unbound."
+                ),
+            )
+        )
+    return assessments, gaps
+
+
 class RemainingRisk(StrictModel):
     code: str
     description: str
@@ -142,6 +256,15 @@ class ResourceCleanupReceipt(StrictModel):
         return self
 
 
+class GraphDeliveryEvidence(StrictModel):
+    """Control-plane graph provenance; child reports are not verification evidence."""
+
+    snapshot: GraphSnapshot
+    join_artifact: GraphArtifactRef
+    child_cleanup_receipts: tuple[ResourceCleanupReceipt, ...] = Field(min_length=1, max_length=16)
+    sequential_repair_iterations: int = Field(default=0, ge=0, le=5, strict=True)
+
+
 class EvidenceBundle(StrictModel):
     api_version: Literal["agentfleet.dev/v1alpha1"] = "agentfleet.dev/v1alpha1"
     kind: Literal["EvidenceBundle"] = "EvidenceBundle"
@@ -156,6 +279,7 @@ class EvidenceBundle(StrictModel):
     fleet_plan_artifact_id: ArtifactId
     fleet_plan_sha256: Sha256
     fleet_strategy: FleetStrategy
+    graph_delivery: GraphDeliveryEvidence | None = None
     required_evidence: list[EvidenceRequirementId] = Field(min_length=1, max_length=32)
     sandbox_provider: SandboxProviderId = "fake"
     sandbox_security_level: SandboxSecurityLevel = SandboxSecurityLevel.FAKE
@@ -191,6 +315,7 @@ class EvidenceBundle(StrictModel):
     cleanup_receipt_sha256: Sha256 | None = None
     cleanup_complete: bool = False
     criterion_assessments: list[CriterionAssessment] = Field(min_length=1, max_length=128)
+    structured_criterion_results: list[CriterionResult] | None = Field(default=None, max_length=128)
     remaining_risks: list[RemainingRisk] = Field(default_factory=list)
     proof_gaps: list[ProofGap] = Field(default_factory=list)
     completion_decision: CompletionDecision | None = None
@@ -252,6 +377,33 @@ class CompletionGate:
         authoritative_artifact_ids: set[str],
     ) -> CompletionDecision:
         reasons: list[str] = []
+        if bundle.fleet_strategy in {
+            FleetStrategy.PARALLEL_ENGINEERS,
+            FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER,
+        } and not _graph_delivery_is_valid(bundle, authoritative_artifact_ids):
+            reasons.append("GRAPH_DELIVERY_UNPROVEN")
+        if bundle.structured_criterion_results is not None:
+            mapped, mapping_gaps = assess_criterion_results(
+                bundle.structured_criterion_results,
+                expected_criteria=expected_criteria,
+                commands=bundle.command_evidence,
+                verifier_evidence_artifact_ids=bundle.verifier_evidence_artifact_ids,
+                run_id=bundle.run_id,
+                task_id=bundle.task_id,
+                verifier_agent_instance_id=bundle.verifier_agent_instance_id,
+                base_revision=bundle.base_revision,
+                config_snapshot_sha256=bundle.config_snapshot_sha256,
+                patch_sha256=bundle.patch_sha256,
+                command_hashes=bundle.verification_command_hashes,
+            )
+            if (
+                mapping_gaps
+                or sorted(bundle.criterion_assessments, key=lambda item: item.criterion_id)
+                != mapped
+            ):
+                reasons.append("STRUCTURED_CRITERION_MAPPING_INVALID")
+        elif len(expected_criteria) > 1:
+            reasons.append("STRUCTURED_CRITERION_MAPPING_UNAVAILABLE")
         if (
             not bundle.cleanup_complete
             or bundle.cleanup_receipt_artifact_id is None
@@ -549,7 +701,11 @@ class CompletionGate:
         command_failed = any(
             item.exit_code != 0 or item.timed_out for item in bundle.command_evidence
         )
-        if bundle.reported_verdict is Verdict.FAIL or command_failed:
+        if (
+            bundle.reported_verdict is Verdict.FAIL
+            or command_failed
+            or any(item.verdict is Verdict.FAIL for item in bundle.criterion_assessments)
+        ):
             effective = Verdict.FAIL
         elif verified:
             effective = Verdict.PASS
@@ -560,6 +716,113 @@ class CompletionGate:
             effective_verdict=effective,
             reason_codes=sorted(set(reasons)),
         )
+
+
+def _graph_delivery_is_valid(bundle: EvidenceBundle, authoritative_ids: set[str]) -> bool:
+    delivery = bundle.graph_delivery
+    if delivery is None:
+        return False
+    graph = delivery.snapshot
+    prepared = graph.join_preparation
+    completed = graph.join_completion
+    if prepared is None or completed is None:
+        return False
+    if (
+        graph.status is not GraphStatus.JOINED
+        or graph.driver_claim is not None
+        or graph.cancel_requested_at is not None
+        or graph.parent_run_id != bundle.run_id
+        or graph.parent_task_id != bundle.task_id
+        or graph.project_id != bundle.project_id
+        or graph.plan_artifact_id != bundle.fleet_plan_artifact_id
+        or graph.plan_sha256 != bundle.fleet_plan_sha256
+        or sha256_bytes(graph.plan.model_dump_json(indent=2).encode("utf-8"))
+        != bundle.fleet_plan_sha256
+        or graph.plan.strategy is not bundle.fleet_strategy
+        or prepared.parent_run_id != bundle.run_id
+        or prepared.parent_task_id != bundle.task_id
+        or prepared.base_revision != bundle.base_revision
+        or prepared.config_snapshot_sha256 != bundle.config_snapshot_sha256
+        or prepared.plan_sha256 != bundle.fleet_plan_sha256
+        or completed.preparation_sha256 != prepared.preparation_sha256
+        or delivery.join_artifact.kind is not ArtifactKind.GRAPH_JOIN
+        or delivery.join_artifact.run_id != bundle.run_id
+        or delivery.join_artifact.sha256
+        != sha256_bytes(prepared.model_dump_json(indent=2).encode("utf-8"))
+        or delivery.join_artifact.artifact_id not in authoritative_ids
+        or completed.parent_patch_artifact_id not in authoritative_ids
+    ):
+        return False
+    if delivery.sequential_repair_iterations == 0 and (
+        completed.parent_patch_artifact_id != bundle.patch_artifact_id
+        or completed.parent_patch_sha256 != bundle.patch_sha256
+    ):
+        return False
+    child_ids = {item.binding.child_run_id for item in graph.nodes}
+    receipts = {item.run_id: item for item in delivery.child_cleanup_receipts}
+    if (
+        len(child_ids) != len(graph.nodes)
+        or len(receipts) != len(delivery.child_cleanup_receipts)
+        or set(receipts) != child_ids
+        or any(not item.complete for item in receipts.values())
+    ):
+        return False
+    writers = sorted(
+        (item for item in graph.nodes if item.node.can_write), key=lambda item: item.node.node_id
+    )
+    declared_nodes = {
+        node.node_id: node for node in graph.plan.nodes if not node.independent_verifier
+    }
+    if set(declared_nodes) != {node.node.node_id for node in graph.nodes} or any(
+        node.node != declared_nodes[node.node.node_id] for node in graph.nodes
+    ):
+        return False
+    if [item.node.node_id for item in writers] != [
+        item.node_id for item in prepared.ordered_inputs
+    ]:
+        return False
+    for node in graph.nodes:
+        expected_kinds = {
+            ArtifactKind.RESOURCE_CLEANUP,
+            ArtifactKind.IMPLEMENTATION_REPORT
+            if node.node.can_write
+            else ArtifactKind.SPECIALIST_REPORT,
+        }
+        if node.node.can_write:
+            expected_kinds.add(ArtifactKind.PATCH)
+        if (
+            node.status is not GraphNodeStatus.SUCCEEDED
+            or {item.kind for item in node.output_artifacts} != expected_kinds
+            or len(node.output_artifacts) != len(expected_kinds)
+            or any(
+                item.run_id != node.binding.child_run_id
+                or item.artifact_id not in authoritative_ids
+                for item in node.output_artifacts
+            )
+        ):
+            return False
+        cleanup_ref = next(
+            ref for ref in node.output_artifacts if ref.kind is ArtifactKind.RESOURCE_CLEANUP
+        )
+        if cleanup_ref.sha256 != sha256_bytes(
+            receipts[node.binding.child_run_id].model_dump_json(indent=2).encode("utf-8")
+        ):
+            return False
+    for node, item in zip(writers, prepared.ordered_inputs, strict=True):
+        patch = next(ref for ref in node.output_artifacts if ref.kind is ArtifactKind.PATCH)
+        report = next(
+            ref for ref in node.output_artifacts if ref.kind is ArtifactKind.IMPLEMENTATION_REPORT
+        )
+        if (
+            item.child_run_id != node.binding.child_run_id
+            or item.child_task_id != node.binding.child_task_id
+            or item.patch_artifact_id != patch.artifact_id
+            or item.patch_sha256 != patch.sha256
+            or item.report_artifact_id != report.artifact_id
+            or item.report_sha256 != report.sha256
+        ):
+            return False
+    return True
 
 
 def _is_auxiliary_approval_evidence(

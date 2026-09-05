@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
+from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.fleet_plan import (
     FleetPlan,
@@ -12,7 +14,7 @@ from agent_fleet.domain.fleet_plan import (
     FleetStrategy,
     validate_fleet_plan,
 )
-from agent_fleet.domain.models import AcceptanceCriterion, TaskSpec
+from agent_fleet.domain.models import AcceptanceCriterion, Run, TaskSpec, WriterAssignment
 
 NOW = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
 RUN_ID = "run_11111111111111111111111111111111"
@@ -478,11 +480,18 @@ def test_valid_specialist_chain_is_representable() -> None:
     plan = _plan(
         strategy=FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER,
         nodes=[
-            FleetPlanNode(node_id="researcher", role_id="researcher"),
+            FleetPlanNode(
+                node_id="researcher",
+                role_id="researcher",
+                scope=["src/canary_calc/core.py"],
+                requires_workspace=True,
+            ),
             FleetPlanNode(
                 node_id="architect",
                 role_id="architect",
                 depends_on=["researcher"],
+                scope=["src/canary_calc/core.py"],
+                requires_workspace=True,
             ),
             FleetPlanNode(
                 node_id="engineer",
@@ -503,6 +512,167 @@ def test_valid_specialist_chain_is_representable() -> None:
         ],
     )
     validate_fleet_plan(plan, _task())
+
+
+def _planner_run() -> Run:
+    return Run(
+        run_id=RUN_ID,
+        project_id="prj_" + "4" * 32,
+        correlation_id="corr_" + "5" * 32,
+        goal="Bounded graph task",
+        base_revision="base-revision",
+        target_status_fingerprint="6" * 64,
+        task_id=TASK_ID,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def _assignments(count: int = 3) -> list[WriterAssignment]:
+    return [
+        WriterAssignment(
+            node_id=f"writer-{index}",
+            goal=f"Implement scoped component {index}.",
+            scope=[f"src/component_{index}.py"],
+            criterion_ids=["canary-behavior"],
+        )
+        for index in range(count)
+    ]
+
+
+def test_planner_queues_more_writers_than_capacity_in_stable_order() -> None:
+    plan = FleetPlanner(SystemClock(), UuidIdGenerator()).create(
+        _planner_run(),
+        _task(allowed_paths=["src"]),
+        FleetStrategy.PARALLEL_ENGINEERS,
+        known_roles={"engineer", "verifier"},
+        writer_assignments=list(reversed(_assignments())),
+        max_parallel_agents=5,
+        configured_max_parallel_agents=2,
+        role_max_steps={"engineer": 4, "verifier": 3},
+    )
+    assert plan.max_parallel_agents == 2
+    assert [node.node_id for node in plan.nodes] == ["writer-0", "writer-1", "writer-2", "verifier"]
+    assert [node.max_steps for node in plan.nodes] == [4, 4, 4, 3]
+    assert plan.nodes[-1].depends_on == ["writer-0", "writer-1", "writer-2"]
+    assert plan.nodes[-1].scope == ["src"]
+    assert all(node.criterion_ids == ["canary-behavior"] for node in plan.nodes)
+    assert all(node.goal for node in plan.nodes)
+    assert plan.nodes[-1].independent_verifier
+
+
+@pytest.mark.parametrize(
+    ("requested", "configured", "expected"), [(2, 8, 2), (8, 3, 3), (99, 99, 8)]
+)
+def test_planner_capacity_is_intersection(requested: int, configured: int, expected: int) -> None:
+    plan = FleetPlanner(SystemClock(), UuidIdGenerator()).create(
+        _planner_run(),
+        _task(allowed_paths=["src"]),
+        FleetStrategy.PARALLEL_ENGINEERS,
+        known_roles={"engineer", "verifier"},
+        writer_assignments=_assignments(),
+        max_parallel_agents=requested,
+        configured_max_parallel_agents=configured,
+    )
+    assert plan.max_parallel_agents == expected
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "one",
+        "too-many",
+        "duplicate",
+        "verifier",
+        "foreign",
+        "missing",
+        "overlap",
+        "casefold",
+        "outside",
+        "forbidden",
+        "capacity",
+        "no-verifier",
+    ],
+)
+def test_planner_rejects_invalid_parallel_proposals(variant: str) -> None:
+    assignments = _assignments()
+    task = _task(allowed_paths=["src"])
+    capacity = 2
+    if variant == "one":
+        assignments = assignments[:1]
+    elif variant == "too-many":
+        assignments = _assignments(9)
+    elif variant == "duplicate":
+        assignments[1] = assignments[0]
+    elif variant == "verifier":
+        assignments[0] = assignments[0].model_copy(update={"node_id": "verifier"})
+    elif variant == "foreign":
+        assignments[0] = assignments[0].model_copy(update={"criterion_ids": ["unknown"]})
+    elif variant == "missing":
+        task = task.model_copy(
+            update={
+                "acceptance_criteria": [
+                    *task.acceptance_criteria,
+                    AcceptanceCriterion(
+                        criterion_id="second", description="A second original criterion."
+                    ),
+                ]
+            }
+        )
+    elif variant in {"overlap", "casefold", "outside", "forbidden"}:
+        scope = {
+            "overlap": ["src"],
+            "casefold": ["SRC/component_1.py"],
+            "outside": ["other.py"],
+            "forbidden": [".fleet/config"],
+        }[variant]
+        assignments[0] = assignments[0].model_copy(update={"scope": scope})
+    elif variant == "capacity":
+        capacity = 1
+    elif variant == "no-verifier":
+        task = task.model_copy(
+            update={"required_evidence": ["canonical_patch", "command_evidence"]}
+        )
+    with pytest.raises(FleetError) as caught:
+        FleetPlanner(SystemClock(), UuidIdGenerator()).create(
+            _planner_run(),
+            task,
+            FleetStrategy.PARALLEL_ENGINEERS,
+            known_roles={"engineer", "verifier"},
+            writer_assignments=assignments,
+            configured_max_parallel_agents=capacity,
+        )
+    assert caught.value.code is ErrorCode.CONFIG_INVALID
+
+
+def test_planner_specialists_are_read_only_full_scope_and_serial() -> None:
+    plan = FleetPlanner(SystemClock(), UuidIdGenerator()).create(
+        _planner_run(),
+        _task(),
+        FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER,
+        known_roles={"engineer", "verifier", "researcher", "architect"},
+        role_max_steps={"researcher": 3, "architect": 4, "engineer": 99, "verifier": 99},
+    )
+    assert plan.max_parallel_agents == 1
+    assert [node.role_id for node in plan.nodes] == [
+        "researcher",
+        "architect",
+        "engineer",
+        "verifier",
+    ]
+    assert [node.depends_on for node in plan.nodes] == [
+        [],
+        ["researcher"],
+        ["architect"],
+        ["engineer"],
+    ]
+    assert [node.max_steps for node in plan.nodes] == [3, 4, 20, 10]
+    assert [node.can_write for node in plan.nodes] == [False, False, True, False]
+    assert all(
+        node.requires_workspace and node.scope == _task().allowed_paths for node in plan.nodes
+    )
+    with pytest.raises(FleetError, match="undeclared roles"):
+        validate_fleet_plan(plan, _task(), known_roles={"engineer", "verifier"})
 
 
 def test_specialist_chain_has_exactly_one_independent_verifier() -> None:

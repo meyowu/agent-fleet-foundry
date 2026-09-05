@@ -1,0 +1,194 @@
+{
+  "$defs": {
+    "ArtifactKind": {
+      "enum": [
+        "fleet_config_proposal",
+        "fleet_patch",
+        "fleet_patch_diff",
+        "config_snapshot",
+        "task_spec",
+        "implementation_report",
+        "specialist_report",
+        "graph_join",
+        "patch",
+        "test_report",
+        "verifier_verdict",
+        "run_summary",
+        "command_transcript",
+        "command_evidence",
+        "repository_profile",
+        "project_knowledge",
+        "fleet_plan",
+        "evidence_bundle",
+        "error_report",
+        "runtime_usage",
+        "sandbox_inspection",
+        "resource_cleanup",
+        "bootstrap_report",
+        "cos_response"
+      ],
+      "title": "ArtifactKind",
+      "type": "string"
+    },
+    "ConversationArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "sha256",
+        "run_id",
+        "kind"
+      ],
+      "title": "ConversationArtifactRef",
+      "type": "object"
+    },
+    "ConversationContextEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ConversationArtifactRef"
+          },
+          "maxItems": 8,
+          "title": "Artifact Refs",
+          "type": "array"
+        },
+        "result_summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConversationSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "run_status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "sequence": {
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "turn_id": {
+          "pattern": "^turn_[0-9a-f]{32}$",
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "user_summary": {
+          "$ref": "#/$defs/ConversationSummary"
+        }
+      },
+      "required": [
+        "turn_id",
+        "sequence",
+        "run_id",
+        "run_status",
+        "user_summary"
+      ],
+      "title": "ConversationContextEntry",
+      "type": "object"
+    },
+    "ConversationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "ConversationSummary",
+      "type": "object"
+    },
+    "RunStatus": {
+      "enum": [
+        "created",
+        "running",
+        "waiting_for_children",
+        "paused_for_approval",
+        "ready_for_review",
+        "applying",
+        "completed",
+        "failed",
+        "cancelled",
+        "rejected",
+        "abandoned"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "conversation_id": {
+      "pattern": "^conv_[0-9a-f]{32}$",
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "entries": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ConversationContextEntry"
+      },
+      "maxItems": 8,
+      "title": "Entries",
+      "type": "array"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "through_sequence": {
+      "maximum": 1000,
+      "minimum": 0,
+      "title": "Through Sequence",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "conversation_id",
+    "project_id",
+    "through_sequence"
+  ],
+  "title": "ConversationContext",
+  "type": "object"
+}

@@ -1,0 +1,833 @@
+{
+  "$defs": {
+    "ArtifactKind": {
+      "enum": [
+        "fleet_config_proposal",
+        "fleet_patch",
+        "fleet_patch_diff",
+        "config_snapshot",
+        "task_spec",
+        "implementation_report",
+        "specialist_report",
+        "graph_join",
+        "patch",
+        "test_report",
+        "verifier_verdict",
+        "run_summary",
+        "command_transcript",
+        "command_evidence",
+        "repository_profile",
+        "project_knowledge",
+        "fleet_plan",
+        "evidence_bundle",
+        "error_report",
+        "runtime_usage",
+        "sandbox_inspection",
+        "resource_cleanup",
+        "bootstrap_report",
+        "cos_response"
+      ],
+      "title": "ArtifactKind",
+      "type": "string"
+    },
+    "ErrorCode": {
+      "enum": [
+        "CONFIG_INVALID",
+        "PROJECT_NOT_GIT",
+        "PROJECT_NOT_INITIALIZED",
+        "PROJECT_DIRTY",
+        "RUNTIME_UNAVAILABLE",
+        "RUNTIME_CAPABILITY_MISSING",
+        "RUNTIME_OUTPUT_INVALID",
+        "RUNTIME_TIMEOUT",
+        "RUNTIME_RETRY_EXHAUSTED",
+        "RUNTIME_BUDGET_EXCEEDED",
+        "PROVIDER_UNSUPPORTED",
+        "PROVIDER_FAILED",
+        "CREDENTIAL_INVALID",
+        "CREDENTIAL_MISSING",
+        "SANDBOX_UNAVAILABLE",
+        "SANDBOX_CAPABILITY_MISSING",
+        "SANDBOX_CREATION_FAILED",
+        "SANDBOX_INSPECTION_FAILED",
+        "SANDBOX_EXECUTION_FAILED",
+        "SANDBOX_TIMEOUT",
+        "SANDBOX_OUTPUT_LIMIT",
+        "SANDBOX_CLEANUP_FAILED",
+        "SANDBOX_REMOTE_DAEMON_DENIED",
+        "SANDBOX_IMAGE_UNAVAILABLE",
+        "UNSAFE_LOCAL_CONFIRMATION_REQUIRED",
+        "COMMAND_NOT_REVIEWED",
+        "COMMAND_OUTCOME_AMBIGUOUS",
+        "BOOTSTRAP_CANARY_FAILED",
+        "BOOTSTRAP_REPORT_INVALID",
+        "BOOTSTRAP_TARGET_DRIFTED",
+        "COMMAND_DENIED",
+        "APPROVAL_REQUIRED",
+        "APPROVAL_DENIED",
+        "APPROVAL_INVALID",
+        "PATH_OUTSIDE_SCOPE",
+        "WORKFLOW_INVALID_TRANSITION",
+        "PATCH_TARGET_DIVERGED",
+        "ARTIFACT_INTEGRITY_FAILED",
+        "STATE_SCHEMA_INCOMPATIBLE",
+        "STATE_UNAVAILABLE",
+        "RESOURCE_NOT_FOUND",
+        "RECOVERY_REQUIRED",
+        "INTERNAL_ERROR"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "FleetPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "api_version": {
+          "const": "agentfleet.dev/v1alpha1",
+          "default": "agentfleet.dev/v1alpha1",
+          "title": "Api Version",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "kind": {
+          "const": "FleetPlan",
+          "default": "FleetPlan",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_parallel_agents": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Max Parallel Agents",
+          "type": "integer"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/FleetPlanNode"
+          },
+          "maxItems": 16,
+          "title": "Nodes",
+          "type": "array"
+        },
+        "plan_id": {
+          "pattern": "^plan_[0-9a-f]{32}$",
+          "title": "Plan Id",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "required_evidence": {
+          "items": {
+            "enum": [
+              "canonical_patch",
+              "command_evidence",
+              "control_plane_plan",
+              "independent_verifier_verdict"
+            ],
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Required Evidence",
+          "type": "array"
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "strategy": {
+          "$ref": "#/$defs/FleetStrategy"
+        },
+        "task_id": {
+          "pattern": "^task_[0-9a-f]{32}$",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "plan_id",
+        "run_id",
+        "task_id",
+        "strategy",
+        "nodes",
+        "required_evidence",
+        "rationale",
+        "created_at"
+      ],
+      "title": "FleetPlan",
+      "type": "object"
+    },
+    "FleetPlanNode": {
+      "additionalProperties": false,
+      "properties": {
+        "can_write": {
+          "default": false,
+          "title": "Can Write",
+          "type": "boolean"
+        },
+        "criterion_ids": {
+          "items": {
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Criterion Ids",
+          "type": "array"
+        },
+        "depends_on": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "maxLength": 8192,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Goal"
+        },
+        "independent_verifier": {
+          "default": false,
+          "title": "Independent Verifier",
+          "type": "boolean"
+        },
+        "max_steps": {
+          "default": 10,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Steps",
+          "type": "integer"
+        },
+        "node_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "requires_workspace": {
+          "default": false,
+          "title": "Requires Workspace",
+          "type": "boolean"
+        },
+        "role_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Role Id",
+          "type": "string"
+        },
+        "scope": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^[^/\\\\\\x00][^\\\\\\x00]*$",
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Scope",
+          "type": "array"
+        }
+      },
+      "required": [
+        "node_id",
+        "role_id"
+      ],
+      "title": "FleetPlanNode",
+      "type": "object"
+    },
+    "FleetStrategy": {
+      "enum": [
+        "direct",
+        "single_engineer",
+        "engineer_verifier",
+        "parallel_engineers",
+        "research_architect_engineer_verifier"
+      ],
+      "title": "FleetStrategy",
+      "type": "string"
+    },
+    "GraphArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "sha256",
+        "run_id",
+        "kind"
+      ],
+      "title": "GraphArtifactRef",
+      "type": "object"
+    },
+    "GraphChildBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "child_run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Child Run Id",
+          "type": "string"
+        },
+        "child_task_id": {
+          "pattern": "^task_[0-9a-f]{32}$",
+          "title": "Child Task Id",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "iteration": {
+          "const": 0,
+          "default": 0,
+          "title": "Iteration",
+          "type": "integer"
+        },
+        "node_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "node_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Node Sha256",
+          "type": "string"
+        },
+        "parent_run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Parent Run Id",
+          "type": "string"
+        },
+        "plan_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Plan Sha256",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "run_binding_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Run Binding Sha256",
+          "type": "string"
+        },
+        "task_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Task Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "parent_run_id",
+        "plan_sha256",
+        "node_id",
+        "child_run_id",
+        "child_task_id",
+        "node_sha256",
+        "task_sha256",
+        "run_binding_sha256",
+        "created_at"
+      ],
+      "title": "GraphChildBinding",
+      "type": "object"
+    },
+    "GraphDriverClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "pattern": "^corr_[0-9a-f]{32}$",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "claimed_at": {
+          "format": "date-time",
+          "title": "Claimed At",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 1,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "parent_run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Parent Run Id",
+          "type": "string"
+        },
+        "plan_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Plan Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "parent_run_id",
+        "plan_sha256",
+        "claim_id",
+        "generation",
+        "claimed_at"
+      ],
+      "title": "GraphDriverClaim",
+      "type": "object"
+    },
+    "GraphJoinCompletion": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "parent_patch_artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Parent Patch Artifact Id",
+          "type": "string"
+        },
+        "parent_patch_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Parent Patch Sha256",
+          "type": "string"
+        },
+        "preparation_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Preparation Sha256",
+          "type": "string"
+        },
+        "workspace_id": {
+          "pattern": "^ws_[0-9a-f]{32}$",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "preparation_sha256",
+        "parent_patch_artifact_id",
+        "parent_patch_sha256",
+        "workspace_id",
+        "created_at"
+      ],
+      "title": "GraphJoinCompletion",
+      "type": "object"
+    },
+    "GraphJoinInput": {
+      "additionalProperties": false,
+      "properties": {
+        "child_run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Child Run Id",
+          "type": "string"
+        },
+        "child_task_id": {
+          "pattern": "^task_[0-9a-f]{32}$",
+          "title": "Child Task Id",
+          "type": "string"
+        },
+        "node_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "patch_artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Patch Artifact Id",
+          "type": "string"
+        },
+        "patch_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Patch Sha256",
+          "type": "string"
+        },
+        "report_artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Report Artifact Id",
+          "type": "string"
+        },
+        "report_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Report Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "child_run_id",
+        "child_task_id",
+        "patch_artifact_id",
+        "patch_sha256",
+        "report_artifact_id",
+        "report_sha256"
+      ],
+      "title": "GraphJoinInput",
+      "type": "object"
+    },
+    "GraphJoinPreparation": {
+      "additionalProperties": false,
+      "properties": {
+        "base_revision": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Base Revision",
+          "type": "string"
+        },
+        "config_snapshot_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Snapshot Sha256",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "iteration": {
+          "const": 0,
+          "default": 0,
+          "title": "Iteration",
+          "type": "integer"
+        },
+        "ordered_inputs": {
+          "items": {
+            "$ref": "#/$defs/GraphJoinInput"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Ordered Inputs",
+          "type": "array"
+        },
+        "parent_run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Parent Run Id",
+          "type": "string"
+        },
+        "parent_task_id": {
+          "pattern": "^task_[0-9a-f]{32}$",
+          "title": "Parent Task Id",
+          "type": "string"
+        },
+        "plan_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Plan Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "parent_run_id",
+        "parent_task_id",
+        "config_snapshot_sha256",
+        "plan_sha256",
+        "base_revision",
+        "ordered_inputs",
+        "created_at"
+      ],
+      "title": "GraphJoinPreparation",
+      "type": "object"
+    },
+    "GraphNodeRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "binding": {
+          "$ref": "#/$defs/GraphChildBinding"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "input_artifacts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/GraphArtifactRef"
+          },
+          "maxItems": 64,
+          "title": "Input Artifacts",
+          "type": "array"
+        },
+        "node": {
+          "$ref": "#/$defs/FleetPlanNode"
+        },
+        "output_artifacts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/GraphArtifactRef"
+          },
+          "maxItems": 64,
+          "title": "Output Artifacts",
+          "type": "array"
+        },
+        "revision": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "status": {
+          "$ref": "#/$defs/GraphNodeStatus",
+          "default": "pending"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding",
+        "node",
+        "updated_at"
+      ],
+      "title": "GraphNodeRecord",
+      "type": "object"
+    },
+    "GraphNodeStatus": {
+      "enum": [
+        "pending",
+        "running",
+        "waiting_approval",
+        "succeeded",
+        "failed",
+        "blocked",
+        "cancelled"
+      ],
+      "title": "GraphNodeStatus",
+      "type": "string"
+    },
+    "GraphStatus": {
+      "enum": [
+        "ready",
+        "running",
+        "paused",
+        "joined",
+        "failed",
+        "cancelled"
+      ],
+      "title": "GraphStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "cancel_requested_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cancel Requested At"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "driver_claim": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GraphDriverClaim"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "driver_generation": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Driver Generation",
+      "type": "integer"
+    },
+    "join_completion": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GraphJoinCompletion"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "join_preparation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GraphJoinPreparation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "kind": {
+      "const": "GraphSnapshot",
+      "default": "GraphSnapshot",
+      "title": "Kind",
+      "type": "string"
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/GraphNodeRecord"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Nodes",
+      "type": "array"
+    },
+    "parent_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Parent Run Id",
+      "type": "string"
+    },
+    "parent_task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Parent Task Id",
+      "type": "string"
+    },
+    "plan": {
+      "$ref": "#/$defs/FleetPlan"
+    },
+    "plan_artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Plan Artifact Id",
+      "type": "string"
+    },
+    "plan_id": {
+      "pattern": "^plan_[0-9a-f]{32}$",
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "plan_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Plan Sha256",
+      "type": "string"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "status": {
+      "$ref": "#/$defs/GraphStatus",
+      "default": "ready"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "parent_run_id",
+    "parent_task_id",
+    "plan_id",
+    "plan_artifact_id",
+    "plan_sha256",
+    "plan",
+    "nodes",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "GraphSnapshot",
+  "type": "object"
+}

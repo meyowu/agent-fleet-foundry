@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
-
 from agent_fleet.domain.models import (
     CanonicalResource,
     CommandSpec,
@@ -15,6 +13,7 @@ from agent_fleet.domain.models import (
     ToolIntent,
     WorkflowStage,
 )
+from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import canonical_json_hash
 
 
@@ -40,7 +39,7 @@ class BaselinePermissionBroker:
             and intent.stage in {WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING}
             and task.change_kind == "code_change"
             and intent.resource.kind == "workspace_path"
-            and intent.resource.identifier in task.allowed_paths
+            and _path_in_task_scope(task, intent.resource.identifier)
             and intent.side_effect
         ):
             parameters_valid = (
@@ -80,7 +79,7 @@ class BaselinePermissionBroker:
                 "repo.search_text",
                 "workspace.get_diff",
             }
-            and intent.principal_role in {"engineer", "verifier"}
+            and intent.principal_role in {"engineer", "verifier", "researcher", "architect"}
             and _role_stage_allowed(intent.principal_role, intent.stage)
             and not intent.side_effect
         ):
@@ -208,25 +207,14 @@ def _task_command(
 
 def _role_stage_allowed(role: str, stage: WorkflowStage) -> bool:
     return (
-        role == "engineer" and stage in {WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING}
-    ) or (role == "verifier" and stage is WorkflowStage.VERIFYING)
+        (role == "engineer" and stage in {WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING})
+        or (role == "verifier" and stage is WorkflowStage.VERIFYING)
+        or (role in {"researcher", "architect"} and stage is WorkflowStage.IMPLEMENTING)
+    )
 
 
 def _path_in_task_scope(task: TaskSpec, logical_path: str) -> bool:
-    folded = tuple(part.casefold() for part in PurePosixPath(logical_path).parts)
-    forbidden = [
-        tuple(part.casefold() for part in PurePosixPath(path).parts)
-        for path in task.forbidden_paths
-    ]
-    if any(folded == item or folded[: len(item)] == item for item in forbidden):
-        return False
-    allowed = [
-        tuple(part.casefold() for part in PurePosixPath(path).parts) for path in task.allowed_paths
-    ]
-    return any(
-        folded == item or folded[: len(item)] == item or item[: len(folded)] == folded
-        for item in allowed
-    )
+    return path_is_within(logical_path, task.allowed_paths, forbidden=task.forbidden_paths)
 
 
 def _is_sha256(value: object) -> bool:

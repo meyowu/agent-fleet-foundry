@@ -380,9 +380,35 @@
     "WorkflowRequest": {
       "additionalProperties": false,
       "properties": {
+        "allowedTools": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9_.-]*$",
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowedtools"
+        },
         "definition": {
           "title": "Definition",
           "type": "string"
+        },
+        "maxParallelAgents": {
+          "default": 2,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Maxparallelagents",
+          "type": "integer"
         },
         "maxRepairIterations": {
           "maximum": 5,

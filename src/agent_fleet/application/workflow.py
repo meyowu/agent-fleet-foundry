@@ -2,39 +2,60 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 from pydantic import JsonValue, ValidationError
 
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.conversation_results import conversation_result
 from agent_fleet.application.evidence import EvidenceAssembler
+from agent_fleet.application.evolution import OrganizationService
 from agent_fleet.application.gateway import ToolGateway
+from agent_fleet.application.graph import GraphCoordinator
+from agent_fleet.application.graph_workflow import GraphWorkflowExecution
+from agent_fleet.application.inspection import InspectionService
+from agent_fleet.application.permission_policy import PermissionPolicyService
 from agent_fleet.application.planning import FleetPlanner
-from agent_fleet.application.resources import ResourceService
+from agent_fleet.application.proposal_tools import ProposalHashToolCatalog
+from agent_fleet.application.resources import CancellationService, ResourceService
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.application.runtime_tools import GatewayRuntimeToolCatalog
 from agent_fleet.application.sandboxes import (
     configuration_from_request,
     requirements_for_configuration,
 )
+from agent_fleet.domain.budgets import RunBudgetLimits, RuntimeAttemptStatus
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec
+from agent_fleet.domain.conversation import (
+    ConversationClaim,
+    ConversationSubmission,
+    ConversationTurnStatus,
+)
 from agent_fleet.domain.errors import (
     ApprovalDeniedError,
     ApprovalRequiredError,
+    ConversationOwnershipUnavailableError,
     ErrorCode,
     FleetError,
+    GraphOwnershipUnavailableError,
 )
 from agent_fleet.domain.evidence import (
     CleanupLeaseRecord,
     EvidenceBundle,
     ResourceCleanupReceipt,
 )
-from agent_fleet.domain.fleet_plan import FleetStrategy
+from agent_fleet.domain.evolution import FleetPatchProposalRecord
+from agent_fleet.domain.fleet_patch import validate_fleet_patch
+from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy
+from agent_fleet.domain.graph import GraphDriverClaim, GraphStatus
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
+    AgentExecutionCheckpoint,
     AgentInstance,
     AgentInvocation,
     AgentInvocationResult,
@@ -44,6 +65,7 @@ from agent_fleet.domain.models import (
     CommandSpec,
     FakeScenario,
     FleetEvent,
+    FleetPatch,
     ImplementationReport,
     LeaseKind,
     LeaseStatus,
@@ -56,15 +78,20 @@ from agent_fleet.domain.models import (
     SandboxSecurityLevel,
     SandboxSpec,
     ScopeDecision,
+    SpecialistReport,
     TaskSpec,
     Verdict,
+    VerificationCheckpoint,
     VerifierVerdict,
     WorkflowStage,
     WorkspaceKind,
 )
+from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import Redactor
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
+from agent_fleet.ports.conversation import ConversationStore
+from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.runtime import (
@@ -72,6 +99,7 @@ from agent_fleet.ports.runtime import (
     RuntimeAdapter,
     RuntimeInvocationServices,
 )
+from agent_fleet.ports.runtime_accounting import RuntimeAccounting, RuntimeBudgetStore
 from agent_fleet.ports.sandbox import SandboxProvider
 from agent_fleet.ports.state_store import StateStore
 
@@ -100,6 +128,12 @@ class WorkflowEngine:
         clock: Clock,
         ids: IdGenerator,
         redactor: Redactor,
+        *,
+        budgets: RuntimeBudgetStore,
+        graphs: GraphStore,
+        organization: OrganizationService,
+        permission_policy: PermissionPolicyService | None = None,
+        conversations: ConversationStore | None = None,
     ) -> None:
         self.state = state
         self.repository = repository
@@ -113,7 +147,15 @@ class WorkflowEngine:
         self.config = config
         self.clock = clock
         self.ids = ids
+        self.budgets = budgets
+        self.graphs = graphs
+        self.organization = organization
         self.redactor = redactor
+        self.permission_policy = permission_policy
+        self.conversations = conversations
+        self._conversation_claims: dict[str, ConversationClaim] = {}
+        self.graph_execution = GraphWorkflowExecution(self)
+        self.graph_coordinator = GraphCoordinator(graphs, state, self.graph_execution, clock)
 
     async def start(
         self,
@@ -126,6 +168,8 @@ class WorkflowEngine:
         provider_model: str | None = None,
         credential_ref: str | None = None,
         allow_unsafe_local: bool = False,
+        budget_limits: RunBudgetLimits | None = None,
+        conversation_submission: ConversationSubmission | None = None,
     ) -> Run:
         self._reject_untrusted_secrets(
             {
@@ -156,7 +200,8 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "Run-time sandbox differs from the reviewed project registration.",
-                "Use the registered sandbox or explicitly reinitialize the project.",
+                "Use the registered sandbox, or preserve this project/state and separately "
+                "initialize a different protected setup.",
                 details={
                     "requested_sandbox": selected_sandbox_name,
                     "registered_sandbox": project.sandbox_name,
@@ -210,8 +255,9 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "Run-time provider options differ from the reviewed project registration.",
-                "Preview the desired initialization, then move the conflicting generated "
-                ".fleet tree and re-run `fleet init` with explicit provider options.",
+                "Preserve this project and state. A different protected provider setup "
+                "requires a separate reviewed registration; headed projects cannot be "
+                "reinitialized.",
             )
         runtime_configuration = RuntimeConfiguration(
             runtime_name=selected_runtime,
@@ -230,8 +276,8 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "The active FleetSpec differs from the registered validated version.",
-                "Run `fleet init --preview`; after review, move the conflicting generated "
-                ".fleet tree and initialize again with explicit options.",
+                "Preserve the organization and inspect its history. Use reviewed FleetPatch "
+                "changes or restore the exact registered configuration; do not bypass its fence.",
             )
         if (
             spec.spec.runtime.adapter != selected_runtime
@@ -241,14 +287,21 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "The active FleetSpec runtime differs from Fleet-owned project settings.",
-                "Review the repository configuration with `fleet init --preview` before "
-                "reinitializing explicitly.",
+                "Restore the exact reviewed configuration, or preserve this project/state "
+                "and separately initialize a different protected setup.",
             )
         self.runtimes.require(
             runtime_configuration,
             required_capabilities=spec.spec.runtime.required_capabilities,
             credential_check=RuntimeCredentialCheck.NONE,
         )
+        with self.organization.admission(project) as admitted:
+            if admitted.config_snapshot_sha256 != config_hash:
+                raise FleetError(
+                    ErrorCode.CONFIG_INVALID,
+                    "The organization changed during configuration preflight.",
+                    "Inspect its exact version before starting a new Run.",
+                )
         sandbox_preflight = await self.resources.sandboxes.preflight(
             project.sandbox_configuration,
             sandbox_requirements,
@@ -290,12 +343,33 @@ class WorkflowEngine:
             sandbox_daemon_identity=sandbox_preflight.daemon_identity,
             unsafe_local_confirmed=allow_unsafe_local,
             fake_scenario=selected_fake_scenario,
+            config_snapshot_hash=config_hash,
             max_repair_iterations=spec.spec.workflows["code-change"].max_repair_iterations,
             created_at=now,
             updated_at=now,
         )
-        self.state.create_run(run)
+        conversation_claim: ConversationClaim | None = None
+        with self.organization.admission(project, expected=admitted):
+            if conversation_submission is None:
+                self.state.create_run(run, organization_admission=admitted)
+            else:
+                if self.conversations is None:
+                    raise ConversationOwnershipUnavailableError()
+                self._reject_untrusted_secrets(conversation_submission.model_dump(mode="json"))
+                registration = self.conversations.register_turn_run(
+                    conversation_submission,
+                    run,
+                    config_snapshot_sha256=config_hash,
+                    budget_limits=budget_limits or RunBudgetLimits(),
+                    organization_admission=admitted,
+                )
+                conversation_claim = registration.claim
+                if conversation_claim is None:
+                    return self.state.get_run(registration.turn.binding.run_id)
+                self._conversation_claims[run.run_id] = conversation_claim
+        orderly = False
         try:
+            self.budgets.initialize_run(run.run_id, budget_limits or RunBudgetLimits())
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.INTAKE)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.SCOPING)
             run = await self._scope(
@@ -308,14 +382,37 @@ class WorkflowEngine:
             )
             if run.fleet_strategy == FleetStrategy.DIRECT.value:
                 run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
-                return await self._continue(run)
+                result = await self._continue(run)
+                orderly = True
+                return result
+            if self._is_adaptive_graph(run):
+                if run.fleet_plan_artifact_id is None:
+                    raise RuntimeError("The accepted graph has no FleetPlan artifact")
+                plan = FleetPlan.model_validate_json(
+                    self.artifacts.read_text(run.fleet_plan_artifact_id)
+                )
+                self.graph_execution.initialize(run, plan)
+                run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
+                run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
+                result = await self._continue(run)
+                orderly = True
+                return result
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
             await self._prepare_workspace(run)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
-            return await self._continue(run)
+            result = await self._continue(run)
+            orderly = True
+            return result
         except ApprovalRequiredError:
+            orderly = True
             return self.state.get_run(run.run_id)
+        except asyncio.CancelledError:
+            if conversation_claim is not None:
+                await self._cancel_conversation_execution(conversation_claim)
+            raise
         except FleetError as error:
+            if isinstance(error, ConversationOwnershipUnavailableError):
+                raise
             latest = self.state.get_run(run.run_id)
             if latest.status is not RunStatus.PAUSED_FOR_APPROVAL:
                 latest = self._persist_failure_evidence(latest, error)
@@ -329,10 +426,82 @@ class WorkflowEngine:
                 )
                 await self.resources.cleanup_run(failed)
                 error.details.setdefault("run_id", run.run_id)
+                orderly = True
             raise
+        finally:
+            if conversation_claim is not None:
+                try:
+                    if orderly:
+                        self._settle_conversation_execution(conversation_claim)
+                finally:
+                    self._conversation_claims.pop(run.run_id, None)
 
     async def resume(self, run_id: str) -> Run:
+        # This guard deliberately precedes every terminal, approval and graph
+        # shortcut. Public fleet resume is not a conversation-ownership bypass.
+        if self.conversations is None:
+            return await self._resume_run(run_id)
+        binding = self.conversations.binding_for_run(run_id)
+        if binding is None:
+            return await self._resume_run(run_id)
+        turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+        if (
+            turn.active_claim_id is not None
+            or turn.status is ConversationTurnStatus.RECOVERY_REQUIRED
+        ):
+            raise ConversationOwnershipUnavailableError()
+        if turn.status in {
+            ConversationTurnStatus.DELIVERED,
+            ConversationTurnStatus.FAILED,
+            ConversationTurnStatus.CANCELLED,
+        }:
+            return self.state.get_run(run_id)
+        claim = self.conversations.claim_resume(run_id, expected_revision=turn.revision)
+        self._conversation_claims[run_id] = claim
+        orderly = False
+        try:
+            result = await self._resume_run(run_id)
+            orderly = True
+            return result
+        except ApprovalRequiredError:
+            orderly = True
+            raise
+        except asyncio.CancelledError:
+            await self._cancel_conversation_execution(claim)
+            raise
+        except FleetError:
+            latest = self.state.get_run(run_id)
+            orderly = latest.status in {
+                RunStatus.FAILED,
+                RunStatus.REJECTED,
+                RunStatus.CANCELLED,
+                RunStatus.ABANDONED,
+            } and not any(
+                self.state.outstanding_leases(owned_id)
+                for owned_id in (
+                    run_id,
+                    *(child.child_run_id for child in self.graphs.descendants(run_id)),
+                )
+            )
+            raise
+        finally:
+            try:
+                if orderly:
+                    self._settle_conversation_execution(claim)
+            finally:
+                self._conversation_claims.pop(run_id, None)
+
+    async def _resume_run(self, run_id: str) -> Run:
+        continuation_claim: GraphDriverClaim | None = None
         run = self.state.get_run(run_id)
+        child_binding = self.graphs.child_binding(run_id)
+        if child_binding is not None:
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "An internal child cannot be resumed outside its claimed parent coordinator.",
+                "Resume the parent run to preserve dependency and concurrency controls.",
+                details={"parent_run_id": child_binding.parent_run_id},
+            )
         if run.status in {
             RunStatus.COMPLETED,
             RunStatus.REJECTED,
@@ -342,6 +511,14 @@ class WorkflowEngine:
             RunStatus.READY_FOR_REVIEW,
         }:
             return run
+        if self._is_adaptive_graph(run) and run.status is RunStatus.RUNNING:
+            # A released child-graph claim does not mean the parent's verifier
+            # stopped. Public resume cannot take over an executing parent.
+            raise GraphOwnershipUnavailableError()
+        with self.organization.run_guard(run):
+            # Active/paused Run and retained-claim blockers keep publication
+            # fenced after this short exact-generation check is released.
+            pass
         runtime_configuration = self._runtime_configuration(run)
         self.runtimes.require(
             runtime_configuration,
@@ -349,6 +526,8 @@ class WorkflowEngine:
             credential_check=RuntimeCredentialCheck.RESOLVE,
         )
         project = self.state.get_project(run.project_id)
+        if self.permission_policy is not None:
+            self.permission_policy.validate_run_target(run)
         spec, snapshot = self.config.load_snapshot(
             Path(project.canonical_root) / ".fleet" / "fleet.yaml"
         )
@@ -357,7 +536,8 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "The Fleet configuration changed while the run was paused.",
-                "Restore the reviewed configuration or abandon this run and initialize again.",
+                "Restore the exact reviewed configuration. Preserve the existing state; "
+                "a different protected setup requires a separate registration.",
             )
         self.runtimes.require(
             runtime_configuration,
@@ -386,6 +566,64 @@ class WorkflowEngine:
                 )
                 await self.resources.cleanup_run(rejected)
                 return rejected
+            if self._is_adaptive_graph(run):
+                continuation_claim = self._claim_parent_continuation(run)
+            if run.engineer_checkpoint is None and run.stage in {
+                WorkflowStage.IMPLEMENTING,
+                WorkflowStage.REPAIRING,
+            }:
+                # Pre-Phase4 runs had no role checkpoint. Adopt only the exact
+                # persisted approved identity, never a new principal for its grant.
+                intent = self.state.get_intent(request.intent_id).intent
+                original_agent = self.state.get_agent_instance(intent.agent_instance_id)
+                if (
+                    original_agent.role != AgentRole.ENGINEER
+                    or original_agent.run_id != run.run_id
+                    or original_agent.task_id != run.task_id
+                    or original_agent.iteration != run.repair_iterations
+                ):
+                    raise FleetError(
+                        ErrorCode.RECOVERY_REQUIRED,
+                        "The legacy approval has no matching Engineer identity.",
+                        "Cancel the run; a grant cannot transfer to another principal.",
+                    )
+                workspace = self.resources.candidate_workspace(run.run_id)
+                handle = self.resources.engineer_sandbox(run.run_id)
+                checkpoint = AgentExecutionCheckpoint(
+                    agent_instance_id=original_agent.agent_instance_id,
+                    workspace_id=workspace.workspace_id,
+                    sandbox_id=handle.sandbox_id,
+                    iteration=original_agent.iteration,
+                    created_at=original_agent.created_at,
+                )
+                run = self.state.save_run(
+                    run.model_copy(update={"engineer_checkpoint": checkpoint}),
+                    "engineering.checkpoint_adopted",
+                    checkpoint.model_dump(mode="json"),
+                )
+            try:
+                await self.resources.rehydrate_paused_sandboxes(run)
+            except asyncio.CancelledError:
+                if continuation_claim is not None:
+                    await self.graph_execution.cancel_parent(run.run_id)
+                raise
+            except FleetError as error:
+                if continuation_claim is not None:
+                    latest = self.state.get_run(run_id)
+                    self.state.save_run(
+                        latest.model_copy(
+                            update={"status": RunStatus.FAILED, "updated_at": self.clock.now()}
+                        ),
+                        "run.failed",
+                        {"code": error.code.value, "reason": "parent_resume_rehydration_failed"},
+                    )
+                    try:
+                        graph = self.graphs.get(run_id)
+                        if graph is not None and graph.cancel_requested_at is None:
+                            self.graphs.request_cancel(run_id, expected_revision=graph.revision)
+                    finally:
+                        await self.resources.cleanup_run(self.state.get_run(run_id))
+                raise
             run = run.model_copy(
                 update={
                     "status": RunStatus.RUNNING,
@@ -399,7 +637,7 @@ class WorkflowEngine:
                 {"request_id": request.request_id, "stage": run.stage.value if run.stage else None},
             )
         try:
-            return await self._continue(run)
+            return await self._continue(run, continuation_claim=continuation_claim)
         except ApprovalRequiredError:
             return self.state.get_run(run_id)
         except ApprovalDeniedError as error:
@@ -415,6 +653,10 @@ class WorkflowEngine:
             await self.resources.cleanup_run(rejected)
             return rejected
         except FleetError as error:
+            if isinstance(
+                error, (GraphOwnershipUnavailableError, ConversationOwnershipUnavailableError)
+            ):
+                raise
             latest = self.state.get_run(run_id)
             if latest.status is not RunStatus.PAUSED_FOR_APPROVAL:
                 latest = self._persist_failure_evidence(latest, error)
@@ -429,6 +671,69 @@ class WorkflowEngine:
                 await self.resources.cleanup_run(failed)
                 error.details.setdefault("run_id", run_id)
             raise
+
+    def _assert_conversation_execution(self, run: Run) -> None:
+        if self.conversations is None:
+            return
+        child = self.graphs.child_binding(run.run_id)
+        root_id = child.parent_run_id if child is not None else run.run_id
+        binding = self.conversations.binding_for_run(root_id)
+        if binding is not None:
+            claim = self._conversation_claims.get(root_id)
+            if claim is None:
+                raise ConversationOwnershipUnavailableError()
+            self.conversations.assert_claim(claim)
+
+    async def _cancel_conversation_execution(self, claim: ConversationClaim) -> None:
+        if self.conversations is None:
+            raise ConversationOwnershipUnavailableError()
+        self.conversations.assert_claim(claim)
+        service = CancellationService(
+            self.state, self.resources, self.clock, self.graphs, conversations=self.conversations
+        )
+        cleanup = asyncio.create_task(service.cancel(claim.run_id, conversation_claim=claim))
+        # Strongly retain the exact cleanup until every repeated caller cancel
+        # has settled. No input loop or exiting CLI may leave a hidden worker.
+        while not cleanup.done():
+            try:
+                await asyncio.wait({cleanup})
+            except asyncio.CancelledError:
+                continue
+        cleanup.result()
+
+    def _settle_conversation_execution(self, claim: ConversationClaim) -> None:
+        if self.conversations is None:
+            raise ConversationOwnershipUnavailableError()
+        turn = self.conversations.get_turn(claim.project_id, claim.turn_id)
+        if turn.active_claim_id != claim.claim_id:
+            if turn.fenced_at is not None or turn.settled_at is not None:
+                return
+            raise ConversationOwnershipUnavailableError()
+        run = self.state.get_run(claim.run_id)
+        if run.status not in {
+            RunStatus.PAUSED_FOR_APPROVAL,
+            RunStatus.WAITING_FOR_CHILDREN,
+            RunStatus.READY_FOR_REVIEW,
+            RunStatus.COMPLETED,
+            RunStatus.REJECTED,
+            RunStatus.CANCELLED,
+            RunStatus.FAILED,
+            RunStatus.ABANDONED,
+        }:
+            # A partial registration/dispatch or uncertain state write is not
+            # an orderly pause. Retain the owner for stopped-process recovery.
+            return
+        self.conversations.assert_claim(claim)
+        summary, refs = conversation_result(
+            self.state,
+            self.artifacts,
+            InspectionService(self.state, self.artifacts, self.budgets, self.graphs),
+            run,
+        )
+        self._reject_untrusted_secrets(summary.model_dump(mode="json"))
+        self.conversations.settle(
+            claim, expected_revision=turn.revision, summary=summary, artifact_refs=refs
+        )
 
     async def _scope(
         self,
@@ -452,7 +757,25 @@ class WorkflowEngine:
             created_at=self.clock.now(),
         )
         project = self.state.get_project(run.project_id)
-        invocation_input: dict[str, JsonValue] = {"goal": run.goal}
+        invocation_input: dict[str, JsonValue] = {
+            "goal": run.goal,
+            "available_roles": cast(JsonValue, sorted(fleet_spec.spec.agents)),
+            "delegation_roles": cast(JsonValue, fleet_spec.spec.agents["cos"].may_delegate_to),
+            "max_parallel_agents": fleet_spec.spec.workflows["code-change"].max_parallel_agents,
+        }
+        organization_context = self.organization.proposal_context(run, config_snapshot)
+        invocation_input["organization_context"] = organization_context.input
+        self._assert_conversation_execution(run)
+        if self.conversations is not None:
+            binding = self.conversations.binding_for_run(run.run_id)
+            if binding is not None:
+                turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+                context = turn.context.model_dump(mode="json")
+                self._reject_untrusted_secrets(context)
+                for entry in turn.context.entries:
+                    for ref in entry.artifact_refs:
+                        self.artifacts.read_bounded_text(ref.artifact_id)
+                invocation_input["conversation_context"] = context
         if run.runtime_name == "fake":
             invocation_input["fake_scenario"] = run.fake_scenario.value
         context_artifact_ids: list[str] = []
@@ -472,7 +795,7 @@ class WorkflowEngine:
             role=AgentRole.COS,
             stage=WorkflowStage.SCOPING,
             iteration=0,
-            max_steps=10,
+            max_steps=min(10, fleet_spec.spec.agents["cos"].max_steps),
             instructions=guidance,
             context_artifact_ids=context_artifact_ids,
             input=invocation_input,
@@ -492,10 +815,47 @@ class WorkflowEngine:
             request,
             RuntimeInvocationServices(
                 configuration=runtime_configuration,
-                tools=EMPTY_RUNTIME_TOOL_CATALOG,
+                tools=(
+                    EMPTY_RUNTIME_TOOL_CATALOG
+                    if runtime_configuration.runtime_name == "fake"
+                    else ProposalHashToolCatalog(self.redactor)
+                ),
             ),
         )
-        decision = cast(ScopeDecision, result.output)
+        proposal: FleetPatchProposalRecord | None = None
+        if isinstance(result.output, FleetPatch):
+            proposal = self.organization.propose(run, result.output, organization_context)
+            proposal_id = proposal.patch.fleet_patch_id
+            decision = ScopeDecision(
+                normalized_goal="Propose a reviewable organization update.",
+                response=(
+                    f"FleetPatch {proposal_id} is proposed and not applied. "
+                    f"Inspect it with `fleet fleet-patch diff {proposal_id}`. "
+                    "Only explicit user application can activate this organization version."
+                ),
+                workflow="code-change",
+                change_kind="read_only",
+                fleet_strategy="direct",
+                allowed_paths=[],
+                forbidden_paths=[".git", ".fleet"],
+                acceptance_criteria=[
+                    {
+                        "criterion_id": "reviewable-organization-proposal",
+                        "description": "Persist an exact validated proposal without applying it.",
+                    }
+                ],
+                required_evidence=["control_plane_plan"],
+            )
+        else:
+            decision = cast(ScopeDecision, result.output)
+        if self.permission_policy is not None:
+            self.permission_policy.validate_task_paths(project, decision.allowed_paths)
+        if decision.workflow not in fleet_spec.spec.workflows:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "CoS proposed an undeclared workflow.",
+                "Select a workflow declared in the reviewed FleetSpec.",
+            )
         verification_profile = self.config.verification_profile(fleet_spec, config_snapshot)
         verification_commands = [
             CommandSpec(
@@ -523,15 +883,56 @@ class WorkflowEngine:
             max_repair_iterations=run.max_repair_iterations,
             config_snapshot_hash=config_hash,
             verification_commands=verification_commands,
-            required_verification_command_ids=(
-                verification_profile.required_for_code_change
-                if decision.change_kind == "code_change"
-                else []
+            required_verification_command_ids=list(
+                self.config.required_verification_commands(
+                    fleet_spec,
+                    config_snapshot,
+                    workflow_id=decision.workflow,
+                    allowed_paths=tuple(decision.allowed_paths),
+                    change_kind=decision.change_kind,
+                )
             ),
             created_at=self.clock.now(),
         )
         strategy = FleetStrategy(decision.fleet_strategy)
-        plan = self.planner.create(run, task, strategy, known_roles=known_roles)
+        plan = self.planner.create(
+            run,
+            task,
+            strategy,
+            known_roles=known_roles,
+            role_max_steps={
+                role: request.max_steps for role, request in fleet_spec.spec.agents.items()
+            },
+            writer_assignments=decision.writer_assignments,
+            max_parallel_agents=decision.max_parallel_agents,
+            configured_max_parallel_agents=fleet_spec.spec.workflows[
+                decision.workflow
+            ].max_parallel_agents,
+        )
+        if {node.role_id for node in plan.nodes} - set(
+            fleet_spec.spec.agents["cos"].may_delegate_to
+        ):
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "The proposed team exceeds the reviewed CoS delegation ceiling.",
+                "Select a permitted smaller team or explicitly review an organization update.",
+            )
+        if strategy is FleetStrategy.DIRECT:
+            if decision.response is None:
+                raise FleetError(
+                    ErrorCode.RUNTIME_OUTPUT_INVALID,
+                    "The direct CoS turn did not provide a bounded response.",
+                    "Return a factual response with explicit limitations, not only a task plan.",
+                )
+            self.artifacts.create_text(
+                kind=ArtifactKind.COS_RESPONSE,
+                project_id=run.project_id,
+                run_id=run.run_id,
+                task_id=task.task_id,
+                producer=f"{run.runtime_name}-runtime:cos",
+                content=decision.response,
+                metadata={"assurance": "model_response_not_execution_evidence"},
+            )
         plan_artifact = self.artifacts.create_text(
             kind=ArtifactKind.FLEET_PLAN,
             project_id=run.project_id,
@@ -604,17 +1005,20 @@ class WorkflowEngine:
                 "planned_roles": [node.role_id for node in plan.nodes],
             },
         )
+        if proposal is not None:
+            self.organization.record_proposal_artifacts(proposal, run)
+            self._emit(
+                run,
+                "fleet_patch.proposed",
+                {
+                    "fleet_patch_id": proposal.patch.fleet_patch_id,
+                    "proposal_sha256": proposal.proposal_sha256,
+                },
+            )
         return run
 
     async def _prepare_workspace(self, run: Run) -> None:
-        project = self.state.get_project(run.project_id)
-        candidate = self.repository.create_workspace(
-            Path(project.canonical_root),
-            run.run_id,
-            run.base_revision,
-            WorkspaceKind.CANDIDATE,
-        )
-        self.resources.lease_workspace(candidate)
+        candidate, _ = self.resources.create_workspace(run, WorkspaceKind.CANDIDATE)
         if run.sandbox_configuration is None or run.sandbox_requirements is None:
             raise RuntimeError("Run sandbox binding was not materialized")
         await self.resources.create_sandbox(
@@ -631,11 +1035,67 @@ class WorkflowEngine:
             ),
         )
 
-    async def _continue(self, run: Run) -> Run:
+    async def _continue(
+        self, run: Run, *, continuation_claim: GraphDriverClaim | None = None
+    ) -> Run:
+        claim = continuation_claim
+        if (
+            self._is_adaptive_graph(run)
+            and run.stage
+            in {
+                WorkflowStage.VERIFYING,
+                WorkflowStage.REPAIRING,
+                WorkflowStage.PRESENTING,
+            }
+            and claim is None
+        ):
+            claim = self._claim_parent_continuation(run)
+        try:
+            return await self._continue_steps(run, continuation_claim=claim)
+        except asyncio.CancelledError:
+            if self._is_adaptive_graph(run):
+                await self.graph_execution.cancel_parent(run.run_id)
+            raise
+        finally:
+            if claim is not None:
+                self._release_parent_continuation(claim)
+
+    def _claim_parent_continuation(self, run: Run) -> GraphDriverClaim:
+        try:
+            graph = self.graphs.get(run.run_id)
+            if graph is not None:
+                return self.graphs.claim_continuation(run.run_id, expected_revision=graph.revision)
+        except Exception:
+            pass
+        # A failed ownership CAS is not an authorization to fail or clean the
+        # winning owner's resources. Keep underlying storage details private.
+        raise GraphOwnershipUnavailableError()
+
+    def _release_parent_continuation(self, claim: GraphDriverClaim) -> None:
+        graph = self.graphs.get(claim.parent_run_id)
+        if graph is None:
+            raise GraphOwnershipUnavailableError()
+        if graph.cancel_requested_at is not None:
+            return
+        if graph.driver_claim == claim:
+            self.graphs.release_driver(
+                claim, expected_revision=graph.revision, status=GraphStatus.JOINED
+            )
+        elif graph.driver_claim is not None or graph.status is not GraphStatus.JOINED:
+            raise GraphOwnershipUnavailableError()
+
+    async def _continue_steps(
+        self, run: Run, *, continuation_claim: GraphDriverClaim | None = None
+    ) -> Run:
         while True:
             run = self.state.get_run(run.run_id)
             if run.status is RunStatus.PAUSED_FOR_APPROVAL:
                 return run
+            if self._is_adaptive_graph(run) and run.stage is WorkflowStage.IMPLEMENTING:
+                run = await self.graph_coordinator.drive(run.run_id)
+                if run.status is not RunStatus.RUNNING or run.stage is not WorkflowStage.VERIFYING:
+                    return run
+                return await self._continue(run)
             if run.stage in {WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING}:
                 await self._engineer(run)
                 run = self.state.get_run(run.run_id)
@@ -653,6 +1113,15 @@ class WorkflowEngine:
                 run = self.state.get_run(run.run_id)
                 if verifier.verdict is Verdict.FAIL:
                     if run.repair_iterations < run.max_repair_iterations:
+                        if self._is_adaptive_graph(run):
+                            self._emit(
+                                run,
+                                "graph.repair_fallback",
+                                {
+                                    "mode": "sequential_parent_engineer",
+                                    "iteration": run.repair_iterations + 1,
+                                },
+                            )
                         run = run.model_copy(
                             update={
                                 "status": RunStatus.RUNNING,
@@ -667,6 +1136,8 @@ class WorkflowEngine:
                             {"repair_iteration": run.repair_iterations},
                         )
                         continue
+                    if continuation_claim is not None:
+                        self._release_parent_continuation(continuation_claim)
                     run = self._persist_evidence(run)[0]
                     rejected = run.model_copy(
                         update={"status": RunStatus.REJECTED, "updated_at": self.clock.now()}
@@ -681,6 +1152,8 @@ class WorkflowEngine:
                 run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
                 continue
             if run.stage is WorkflowStage.PRESENTING:
+                if self._is_adaptive_graph(run):
+                    await self.graph_execution.cleanup_graph_children(run)
                 await self.resources.cleanup_run(run)
                 if self.state.outstanding_leases(run.run_id):
                     raise FleetError(
@@ -689,6 +1162,8 @@ class WorkflowEngine:
                         "Run Fleet recovery before trusting or publishing this result.",
                     )
                 run = self._persist_cleanup_receipt(run)
+                if continuation_claim is not None:
+                    self._release_parent_continuation(continuation_claim)
                 run, bundle = self._persist_evidence(run)
                 if bundle.completion_decision is None:
                     raise RuntimeError("EvidenceBundle has no completion decision")
@@ -729,6 +1204,8 @@ class WorkflowEngine:
                         f"provider_model={run.provider_model or 'none'}\n"
                         f"sandbox={run.sandbox_name}\n"
                         f"security_level={sandbox_security_level}\n"
+                        f"runtime_budget={self.budgets.snapshot(run.run_id).model_dump_json()}\n"
+                        f"delivery_evidence={self._delivery_evidence_summary(bundle)}\n"
                         f"{sandbox_notes}"
                     ),
                 )
@@ -748,6 +1225,50 @@ class WorkflowEngine:
                 return ready
             return run
 
+    @staticmethod
+    def _is_adaptive_graph(run: Run) -> bool:
+        return run.fleet_strategy in {
+            FleetStrategy.PARALLEL_ENGINEERS.value,
+            FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER.value,
+        }
+
+    @staticmethod
+    def _delivery_evidence_summary(bundle: EvidenceBundle) -> str:
+        return json.dumps(
+            {
+                "changed_files": bundle.changed_paths,
+                "patch_artifact_id": bundle.patch_artifact_id,
+                "patch_sha256": bundle.patch_sha256,
+                "commands": [
+                    {
+                        "command_id": command.command_id,
+                        "executable": command.executable,
+                        "argv": command.argv,
+                        "cwd": command.cwd,
+                        "exit_code": command.exit_code,
+                        "timed_out": command.timed_out,
+                        "output_truncated": command.output_truncated,
+                        "evidence_artifact_id": command.evidence_id,
+                        "transcript_artifact_id": command.transcript_artifact_id,
+                        "strength": command.strength.value,
+                    }
+                    for command in bundle.command_evidence
+                ],
+                "criterion_assessments": [
+                    item.model_dump(mode="json") for item in bundle.criterion_assessments
+                ],
+                "verifier_verdict_artifact_id": bundle.verifier_verdict_artifact_id,
+                "reported_verdict": (
+                    bundle.reported_verdict.value if bundle.reported_verdict is not None else None
+                ),
+                "remaining_risks": [
+                    item.model_dump(mode="json") for item in bundle.remaining_risks
+                ],
+                "proof_gaps": [item.model_dump(mode="json") for item in bundle.proof_gaps],
+            },
+            sort_keys=True,
+        )
+
     async def _engineer(self, run: Run) -> None:
         if run.task_id is None:
             raise RuntimeError("run has no task")
@@ -755,14 +1276,40 @@ class WorkflowEngine:
         guidance = self._active_role_guidance(run, AgentRole.ENGINEER)
         workspace = self.resources.candidate_workspace(run.run_id)
         handle = self.resources.engineer_sandbox(run.run_id)
+        checkpoint = run.engineer_checkpoint
+        if checkpoint is None:
+            checkpoint = AgentExecutionCheckpoint(
+                agent_instance_id=self.ids.new(IdPrefix.AGENT),
+                workspace_id=workspace.workspace_id,
+                sandbox_id=handle.sandbox_id,
+                iteration=run.repair_iterations,
+                created_at=self.clock.now(),
+            )
+            run = self.state.save_run(
+                self.state.get_run(run.run_id).model_copy(
+                    update={"engineer_checkpoint": checkpoint, "updated_at": self.clock.now()}
+                ),
+                "engineering.checkpoint_created",
+                checkpoint.model_dump(mode="json"),
+            )
+        elif (
+            checkpoint.workspace_id != workspace.workspace_id
+            or checkpoint.sandbox_id != handle.sandbox_id
+            or checkpoint.iteration != run.repair_iterations
+        ):
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "The paused Engineer identity no longer matches its candidate context.",
+                "Cancel or recover the existing run; do not transfer its intents to another agent.",
+            )
         agent = AgentInstance(
-            agent_instance_id=self.ids.new(IdPrefix.AGENT),
+            agent_instance_id=checkpoint.agent_instance_id,
             run_id=run.run_id,
             task_id=task.task_id,
             role=AgentRole.ENGINEER,
             status=AgentStatus.RUNNING,
             iteration=run.repair_iterations,
-            created_at=self.clock.now(),
+            created_at=checkpoint.created_at,
         )
         configuration = self._runtime_configuration(run)
         adapter = self.runtimes.get(configuration.runtime_name)
@@ -783,7 +1330,7 @@ class WorkflowEngine:
             role=AgentRole.ENGINEER,
             stage=run.stage or WorkflowStage.IMPLEMENTING,
             iteration=run.repair_iterations,
-            max_steps=20,
+            max_steps=self._active_role_max_steps(run, AgentRole.ENGINEER, ceiling=20),
             instructions=guidance,
             context_artifact_ids=[
                 item
@@ -791,14 +1338,18 @@ class WorkflowEngine:
                     run.task_spec_artifact_id,
                     run.fleet_plan_artifact_id,
                     run.config_snapshot_artifact_id,
+                    run.verifier_verdict_artifact_id if run.repair_iterations else None,
                 )
                 if item is not None
-            ],
+            ]
+            + self.graph_execution.context_artifact_ids(run),
             input=self._runtime_input(
                 run,
                 {
                     "task_spec": task.model_dump(mode="json"),
                     "repair_iterations": run.repair_iterations,
+                    "previous_verifier_feedback": self._repair_feedback(run),
+                    "graph_context": self.graph_execution.model_context(run),
                 },
             ),
         )
@@ -838,7 +1389,8 @@ class WorkflowEngine:
         )
         patch = self.repository.compute_patch(workspace)
         if not patch.changed_paths or any(
-            path not in task.allowed_paths for path in patch.changed_paths
+            not path_is_within(path, task.allowed_paths, forbidden=task.forbidden_paths)
+            for path in patch.changed_paths
         ):
             raise FleetError(
                 ErrorCode.COMMAND_DENIED,
@@ -861,6 +1413,7 @@ class WorkflowEngine:
         latest = self.state.get_run(run.run_id)
         updated = latest.model_copy(
             update={
+                "engineer_checkpoint": None,
                 "patch_artifact_id": artifact.artifact_id,
                 "patch_sha256": patch.sha256,
                 "command_evidence_artifact_ids": list(
@@ -880,45 +1433,84 @@ class WorkflowEngine:
             raise RuntimeError("run has no task or patch")
         task = self.state.get_task(run.task_id)
         guidance = self._active_role_guidance(run, AgentRole.VERIFIER)
-        project = self.state.get_project(run.project_id)
         patch = self.artifacts.read_text(run.patch_artifact_id).encode()
-        workspace = self.repository.create_workspace(
-            Path(project.canonical_root),
-            run.run_id,
-            run.base_revision,
-            WorkspaceKind.VERIFICATION,
-        )
-        workspace_lease = self.resources.lease_workspace(workspace)
-        self.repository.apply_patch_to_workspace(workspace, patch)
-        before = self.repository.workspace_status_fingerprint(workspace)
         if run.sandbox_configuration is None or run.sandbox_requirements is None:
             raise RuntimeError("Run sandbox binding was not materialized")
-        handle = await self.resources.create_sandbox(
-            run.run_id,
-            SandboxSpec(
-                workspace_host_path=workspace.path,
-                project_id=run.project_id,
-                configuration=run.sandbox_configuration,
-                requirements=run.sandbox_requirements,
-                environment={},
-                unsafe_local_confirmed=run.unsafe_local_confirmed,
-                image_identity=run.sandbox_image_identity,
-                daemon_identity=run.sandbox_daemon_identity,
-            ),
-        )
+        checkpoint = run.verification_checkpoint
+        if checkpoint is None:
+            workspace, workspace_lease = self.resources.create_workspace(
+                run, WorkspaceKind.VERIFICATION
+            )
+            self.repository.apply_patch_to_workspace(workspace, patch)
+            before = self.repository.workspace_status_fingerprint(workspace)
+            handle = await self.resources.create_sandbox(
+                run.run_id,
+                SandboxSpec(
+                    workspace_host_path=workspace.path,
+                    project_id=run.project_id,
+                    configuration=run.sandbox_configuration,
+                    requirements=run.sandbox_requirements,
+                    environment={},
+                    unsafe_local_confirmed=run.unsafe_local_confirmed,
+                    image_identity=run.sandbox_image_identity,
+                    daemon_identity=run.sandbox_daemon_identity,
+                ),
+            )
+            if run.patch_sha256 is None:
+                raise RuntimeError("Run patch hash is missing")
+            checkpoint = VerificationCheckpoint(
+                agent_instance_id=self.ids.new(IdPrefix.AGENT),
+                workspace_id=workspace.workspace_id,
+                sandbox_id=handle.sandbox_id,
+                patch_sha256=run.patch_sha256,
+                baseline_fingerprint=before,
+                iteration=run.repair_iterations,
+                created_at=self.clock.now(),
+            )
+            run = self.state.save_run(
+                self.state.get_run(run.run_id).model_copy(
+                    update={"verification_checkpoint": checkpoint, "updated_at": self.clock.now()}
+                ),
+                "verification.checkpoint_created",
+                checkpoint.model_dump(mode="json"),
+            )
+        else:
+            workspace = self.resources.checkpoint_workspace(run.run_id, checkpoint.workspace_id)
+            handle = self.resources.checkpoint_sandbox(run.run_id, checkpoint.sandbox_id)
+            before = checkpoint.baseline_fingerprint
+            if (
+                checkpoint.patch_sha256 != run.patch_sha256
+                or checkpoint.iteration != run.repair_iterations
+                or workspace.kind is not WorkspaceKind.VERIFICATION
+                or workspace.base_revision != run.base_revision
+                or handle.workspace_host_path != workspace.path
+                or handle.project_id != run.project_id
+                or self.repository.workspace_status_fingerprint(workspace) != before
+                or self.repository.compute_patch(workspace).sha256 != checkpoint.patch_sha256
+            ):
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "The paused verification context changed.",
+                    "Cancel or recover this run; cached command evidence cannot move contexts.",
+                )
+            workspace_lease = next(
+                lease
+                for lease in self.state.active_leases(run.run_id)
+                if lease.kind is LeaseKind.WORKTREE and lease.resource_id == workspace.workspace_id
+            )
         sandbox_lease = next(
             lease
             for lease in self.state.active_leases(run.run_id)
             if lease.kind is LeaseKind.SANDBOX and lease.resource_id == handle.sandbox_id
         )
         agent = AgentInstance(
-            agent_instance_id=self.ids.new(IdPrefix.AGENT),
+            agent_instance_id=checkpoint.agent_instance_id,
             run_id=run.run_id,
             task_id=task.task_id,
             role=AgentRole.VERIFIER,
             status=AgentStatus.RUNNING,
             iteration=run.repair_iterations,
-            created_at=self.clock.now(),
+            created_at=checkpoint.created_at,
         )
         configuration = self._runtime_configuration(run)
         adapter = self.runtimes.get(configuration.runtime_name)
@@ -939,7 +1531,7 @@ class WorkflowEngine:
             role=AgentRole.VERIFIER,
             stage=WorkflowStage.VERIFYING,
             iteration=run.repair_iterations,
-            max_steps=10,
+            max_steps=self._active_role_max_steps(run, AgentRole.VERIFIER, ceiling=10),
             instructions=guidance,
             context_artifact_ids=[
                 item
@@ -976,7 +1568,10 @@ class WorkflowEngine:
         )
         evidence_artifact_ids = self._command_evidence_ids(catalog.records)
         after = self.repository.workspace_status_fingerprint(workspace)
-        mutated = before != after
+        mutated = (
+            before != after
+            or self.repository.compute_patch(workspace).sha256 != checkpoint.patch_sha256
+        )
         run = self._persist_runtime_observation(
             run,
             task.task_id,
@@ -1008,6 +1603,7 @@ class WorkflowEngine:
                     dict.fromkeys([*latest.command_evidence_artifact_ids, *evidence_artifact_ids])
                 ),
                 "verifier_agent_instance_id": agent.agent_instance_id,
+                "verification_checkpoint": None,
                 "verifier_verdict_artifact_id": verdict_artifact.artifact_id,
                 "verifier_workspace_mutated": mutated,
                 "updated_at": self.clock.now(),
@@ -1037,16 +1633,56 @@ class WorkflowEngine:
         request: AgentInvocation,
         services: RuntimeInvocationServices,
     ) -> AgentInvocationResult:
+        self._assert_conversation_execution(run)
+        accounting: RuntimeAccounting | None = None
+        attempt_finished = False
         try:
-            result = await adapter.invoke(request, services)
-            self._reject_untrusted_secrets(result.model_dump(mode="json"))
+            accounting = self.budgets.begin_attempt(request)
+            try:
+                async with asyncio.timeout(accounting.remaining_active_seconds()):
+                    result = await adapter.invoke(request, replace(services, accounting=accounting))
+            except TimeoutError:
+                raise FleetError(
+                    ErrorCode.RUNTIME_BUDGET_EXCEEDED,
+                    "The remaining active runtime time budget was exhausted.",
+                    "Review preserved usage and artifacts; approval does not reset this limit.",
+                ) from None
+            if isinstance(result.output, FleetPatch):
+                validate_fleet_patch(
+                    result.output,
+                    current_fleet_spec_sha256=result.output.base_fleet_spec_sha256,
+                    redactor=self.redactor,
+                )
+            raw_result = result.model_dump(mode="json", warnings=False)
+            self._reject_untrusted_secrets(raw_result)
+            validated_result: AgentInvocationResult | None = None
+            with suppress(ValueError, TypeError):
+                # A harness returns data, not an already-trusted domain object.
+                # Reparse even model_copy/model_construct results at this boundary.
+                validated_result = AgentInvocationResult.model_validate(raw_result)
+            if validated_result is None:
+                raise FleetError(
+                    ErrorCode.RUNTIME_OUTPUT_INVALID,
+                    "The runtime returned data outside the bounded output contract.",
+                    "Use the exact structured output schema for the active role.",
+                ) from None
+            result = validated_result
             expected_outputs: dict[
                 str,
-                type[ScopeDecision] | type[ImplementationReport] | type[VerifierVerdict],
+                tuple[
+                    type[ScopeDecision]
+                    | type[FleetPatch]
+                    | type[ImplementationReport]
+                    | type[VerifierVerdict]
+                    | type[SpecialistReport],
+                    ...,
+                ],
             ] = {
-                AgentRole.COS.value: ScopeDecision,
-                AgentRole.ENGINEER.value: ImplementationReport,
-                AgentRole.VERIFIER.value: VerifierVerdict,
+                AgentRole.COS.value: (ScopeDecision, FleetPatch),
+                AgentRole.ENGINEER.value: (ImplementationReport,),
+                AgentRole.VERIFIER.value: (VerifierVerdict,),
+                AgentRole.RESEARCHER.value: (SpecialistReport,),
+                AgentRole.ARCHITECT.value: (SpecialistReport,),
             }
             expected_output = expected_outputs.get(str(request.role))
             if expected_output is None or not isinstance(result.output, expected_output):
@@ -1055,6 +1691,8 @@ class WorkflowEngine:
                     f"The {agent.role} runtime returned the wrong structured output type.",
                     "Use a runtime that returns the project schema for the active role.",
                 )
+            accounting.finish(RuntimeAttemptStatus.COMPLETED)
+            attempt_finished = True
             completed = agent.model_copy(
                 update={"status": AgentStatus.COMPLETED, "completed_at": self.clock.now()}
             )
@@ -1066,16 +1704,48 @@ class WorkflowEngine:
                 agent_id=agent.agent_instance_id,
             )
             return result
+        except ApprovalRequiredError:
+            if accounting is not None and not attempt_finished:
+                accounting.finish(RuntimeAttemptStatus.PAUSED)
+            self.state.save_agent_instance(agent.model_copy(update={"status": AgentStatus.PAUSED}))
+            self._emit(
+                run,
+                "agent.paused",
+                {"role": str(agent.role), "iteration": agent.iteration},
+                agent_id=agent.agent_instance_id,
+            )
+            raise
         except FleetError as error:
+            if accounting is not None and not attempt_finished:
+                accounting.finish(RuntimeAttemptStatus.FAILED, error_code=error.code)
             self._mark_agent_failed(run, agent, error.code)
             raise
+        except asyncio.CancelledError:
+            if accounting is not None and not attempt_finished:
+                accounting.finish(RuntimeAttemptStatus.CANCELLED)
+            self.state.save_agent_instance(
+                agent.model_copy(
+                    update={"status": AgentStatus.CANCELLED, "completed_at": self.clock.now()}
+                )
+            )
+            self._emit(
+                run,
+                "agent.cancelled",
+                {"role": str(agent.role), "iteration": agent.iteration},
+                agent_id=agent.agent_instance_id,
+            )
+            raise
         except Exception:
+            if accounting is not None and not attempt_finished:
+                accounting.finish(RuntimeAttemptStatus.FAILED, error_code=ErrorCode.INTERNAL_ERROR)
             self._mark_agent_failed(run, agent, ErrorCode.INTERNAL_ERROR)
-            raise FleetError(
-                ErrorCode.INTERNAL_ERROR,
-                f"The {agent.role} runtime invocation failed unexpectedly.",
-                "Inspect redacted run events and retry with a healthy runtime.",
-            ) from None
+        # Leave the exception handler before raising so even inspectable
+        # __context__ cannot retain a raw provider/harness exception.
+        raise FleetError(
+            ErrorCode.INTERNAL_ERROR,
+            f"The {agent.role} runtime invocation failed unexpectedly.",
+            "Inspect redacted run events and retry with a healthy runtime.",
+        ) from None
 
     def _mark_agent_failed(
         self,
@@ -1228,6 +1898,14 @@ class WorkflowEngine:
         return invocation
 
     def _active_role_guidance(self, run: Run, role: AgentRole) -> str:
+        spec, snapshot = self._active_role_configuration(run)
+        return self._role_guidance(spec, snapshot, role)
+
+    def _active_role_max_steps(self, run: Run, role: AgentRole, *, ceiling: int) -> int:
+        spec, _ = self._active_role_configuration(run)
+        return min(ceiling, spec.spec.agents[role.value].max_steps)
+
+    def _active_role_configuration(self, run: Run) -> tuple[FleetSpec, ConfigSnapshot]:
         project = self.state.get_project(run.project_id)
         spec, snapshot = self.config.load_snapshot(
             Path(project.canonical_root) / ".fleet" / "fleet.yaml"
@@ -1239,7 +1917,42 @@ class WorkflowEngine:
                 "The Fleet role guidance changed after the task was bound.",
                 "Restore the exact Run-bound configuration or start a new run.",
             )
-        return self._role_guidance(spec, snapshot, role)
+        return spec, snapshot
+
+    def _repair_feedback(self, run: Run) -> JsonValue:
+        if not run.repair_iterations:
+            return None
+        artifact_id = run.verifier_verdict_artifact_id
+        if artifact_id is None:
+            raise FleetError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                "Repair requires the preceding independent verifier verdict.",
+                "Recover this run instead of reconstructing feedback from model claims.",
+            )
+        metadata = self.state.get_artifact(artifact_id)
+        if (
+            metadata.kind is not ArtifactKind.VERIFIER_VERDICT
+            or metadata.run_id != run.run_id
+            or metadata.task_id != run.task_id
+            or metadata.project_id != run.project_id
+        ):
+            raise FleetError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                "Repair feedback is not bound to this task.",
+                "Do not reuse another task's verifier artifact.",
+            )
+        try:
+            verdict = VerifierVerdict.model_validate_json(self.artifacts.read_text(artifact_id))
+        except ValueError:
+            raise FleetError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                "Repair feedback does not match the verifier schema.",
+                "Inspect the redacted artifact and recover this run.",
+            ) from None
+        feedback = verdict.model_dump(mode="json")
+        self._reject_untrusted_secrets(feedback)
+        self._bounded_runtime_text(json.dumps(feedback), max_bytes=32_768)
+        return feedback
 
     @staticmethod
     def _role_guidance(spec: FleetSpec, snapshot: ConfigSnapshot, role: AgentRole) -> str:
@@ -1256,7 +1969,8 @@ class WorkflowEngine:
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "The required runtime role guidance is missing from ConfigSnapshot.",
-                "Restore the referenced role file and initialize again.",
+                "Restore the exact registered role file, or review a supported FleetPatch "
+                "before starting a new Run.",
             )
         if len(guidance.encode("utf-8")) > _MAX_ROLE_GUIDANCE_BYTES:
             raise FleetError(
@@ -1384,7 +2098,22 @@ class WorkflowEngine:
             or error.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
         ):
             return run
-        return self._persist_evidence(run)[0]
+        try:
+            return self._persist_evidence(run)[0]
+        except FleetError as evidence_error:
+            if evidence_error.code not in {
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                ErrorCode.RECOVERY_REQUIRED,
+            }:
+                raise
+            # Incomplete or corrupted provenance must not interrupt the original
+            # failed-run transition and cleanup with a second assembly error.
+            self._emit(
+                run,
+                "evidence.unavailable",
+                {"code": evidence_error.code.value, "original_failure_code": error.code.value},
+            )
+            return run
 
     def _reject_untrusted_secrets(self, value: object) -> None:
         if self.redactor.contains_secret_data(value):

@@ -10,6 +10,7 @@ import re
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
+from io import FileIO
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -61,7 +62,8 @@ class _PreparedSandbox:
     image_environment: tuple[tuple[str, str], ...]
     inspection: SandboxInspection
     workspace_identity: tuple[int, int]
-    git_shadow_identity: tuple[int, int]
+    git_shadow_identity: tuple[int, int, int, int]
+    git_shadow_file: FileIO
 
 
 @dataclass(frozen=True)
@@ -144,7 +146,7 @@ class DockerSandboxProvider:
             raise ValueError("DockerSandboxProvider requires an image-bound Docker configuration")
         self._require_worker_identity()
         recovery_scope_id = self._require_recovery_scope_id()
-        self._prepare_git_shadow()
+        self._open_git_shadow().close()
         executable = self._require_executable()
         daemon = await self._require_local_linux_daemon(executable)
         # This Docker subcommand can contact the active daemon despite formatting
@@ -242,10 +244,14 @@ class DockerSandboxProvider:
                 "Docker resolved an image different from the immutable Run binding.",
                 "Restore the reviewed local image and retry without using a mutable tag.",
             )
-        self._prepare_git_shadow()
         workspace_identity = _path_identity(workspace)
-        git_shadow_identity = _path_identity(self.git_shadow_path)
         identity = sandbox_id or self.ids.new(IdPrefix.SANDBOX)
+        if identity in self._prepared:
+            raise FleetError(
+                ErrorCode.SANDBOX_CREATION_FAILED,
+                "Docker sandbox preparation is already active for this identity.",
+                "Terminate the existing logical sandbox before preparing it again.",
+            )
         configuration_hash = canonical_json_hash(spec.configuration.model_dump(mode="json"))
         inspection = SandboxInspection(
             sandbox_id=identity,
@@ -278,17 +284,28 @@ class DockerSandboxProvider:
         )
         spec_snapshot = SandboxSpec.model_validate(spec.model_dump(mode="json"))
         handle_snapshot = SandboxHandle.model_validate(handle.model_dump(mode="json"))
-        self._prepared[identity] = _PreparedSandbox(
-            spec=spec_snapshot,
-            handle=handle_snapshot,
-            workspace=workspace,
-            image_identity=image_identity,
-            image_environment=image_environment,
-            inspection=inspection,
-            workspace_identity=workspace_identity,
-            git_shadow_identity=git_shadow_identity,
-        )
-        return SandboxHandle.model_validate(handle_snapshot.model_dump(mode="json"))
+        result_handle = SandboxHandle.model_validate(handle_snapshot.model_dump(mode="json"))
+        # Keep the validated inode alive: unlink/recreate may reuse both its number
+        # and coarse timestamps once the last descriptor has been closed.
+        shadow_file = self._open_git_shadow()
+        try:
+            prepared = _PreparedSandbox(
+                spec=spec_snapshot,
+                handle=handle_snapshot,
+                workspace=workspace,
+                image_identity=image_identity,
+                image_environment=image_environment,
+                inspection=inspection,
+                workspace_identity=workspace_identity,
+                git_shadow_identity=_shadow_identity(os.fstat(shadow_file.fileno())),
+                git_shadow_file=shadow_file,
+            )
+            self._revalidate_prepared_paths(prepared)
+            self._prepared[identity] = prepared
+        except BaseException:
+            shadow_file.close()
+            raise
+        return result_handle
 
     async def inspect(self, handle: SandboxHandle) -> SandboxInspection:
         prepared = self._prepared.get(handle.sandbox_id)
@@ -823,7 +840,9 @@ class DockerSandboxProvider:
                 "Recover each exact execution lease; Fleet did not delete unknown resources.",
                 details={"match_count": len(identities)},
             )
-        self._prepared.pop(handle.sandbox_id, None)
+        prepared = self._prepared.pop(handle.sandbox_id, None)
+        if prepared is not None:
+            prepared.git_shadow_file.close()
         return SandboxCleanupResult(
             provider="docker",
             resource_id=handle.sandbox_id,
@@ -1848,8 +1867,9 @@ class DockerSandboxProvider:
                     details={"environment_name": name},
                 )
 
-    def _prepare_git_shadow(self) -> None:
+    def _open_git_shadow(self) -> FileIO:
         parent = self.git_shadow_path.parent
+        descriptor: int | None = None
         try:
             parent.mkdir(parents=True, mode=0o700, exist_ok=True)
             parent_stat = parent.lstat()
@@ -1868,31 +1888,34 @@ class DockerSandboxProvider:
             except FileNotFoundError:
                 descriptor = os.open(
                     self.git_shadow_path,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow | cloexec,
+                    flags | os.O_CREAT | os.O_EXCL,
                     0o400,
                 )
-            try:
-                current = os.fstat(descriptor)
-            finally:
-                os.close(descriptor)
+            current = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(current.st_mode)
+                or current.st_uid != os.geteuid()
+                or current.st_nlink != 1
+                or stat.S_IMODE(current.st_mode) != 0o400
+                or current.st_size != 0
+            ):
+                raise FleetError(
+                    ErrorCode.SANDBOX_UNAVAILABLE,
+                    "The Fleet-owned .git shadow is not a private empty regular file.",
+                    "Repair the private Fleet sandbox state directory before retrying.",
+                )
+            shadow_file = FileIO(descriptor, mode="rb", closefd=True)
+            descriptor = None  # FileIO now owns deterministic closure and finalization.
+            return shadow_file
         except OSError:
             raise FleetError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
                 "The Fleet-owned .git shadow boundary is unavailable or unsafe.",
                 "Repair the private Fleet sandbox state directory before retrying.",
             ) from None
-        if (
-            not stat.S_ISREG(current.st_mode)
-            or current.st_uid != os.geteuid()
-            or current.st_nlink != 1
-            or stat.S_IMODE(current.st_mode) != 0o400
-            or current.st_size != 0
-        ):
-            raise FleetError(
-                ErrorCode.SANDBOX_UNAVAILABLE,
-                "The Fleet-owned .git shadow is not a private empty regular file.",
-                "Repair the private Fleet sandbox state directory before retrying.",
-            )
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
 
     def _require_worker_identity(self) -> None:
         if self.uid <= 0 or self.gid <= 0:
@@ -1930,11 +1953,15 @@ class DockerSandboxProvider:
 
     def _revalidate_prepared_paths(self, prepared: _PreparedSandbox) -> None:
         workspace = _validated_workspace(str(prepared.workspace))
-        self._prepare_git_shadow()
+        with self._open_git_shadow() as current_shadow:
+            shadow_identity = _shadow_identity(os.fstat(current_shadow.fileno()))
+        current_path = _bind_path_stat(self.git_shadow_path)
         if (
             workspace != prepared.workspace
             or _path_identity(workspace) != prepared.workspace_identity
-            or _path_identity(self.git_shadow_path) != prepared.git_shadow_identity
+            or prepared.git_shadow_file.closed
+            or shadow_identity != prepared.git_shadow_identity
+            or _shadow_identity(current_path) != prepared.git_shadow_identity
         ):
             raise FleetError(
                 ErrorCode.SANDBOX_CREATION_FAILED,
@@ -1985,15 +2012,23 @@ def _validated_workspace(value: str) -> Path:
 
 
 def _path_identity(path: Path) -> tuple[int, int]:
+    file_stat = _bind_path_stat(path)
+    return file_stat.st_dev, file_stat.st_ino
+
+
+def _shadow_identity(file_stat: os.stat_result) -> tuple[int, int, int, int]:
+    return file_stat.st_dev, file_stat.st_ino, file_stat.st_mtime_ns, file_stat.st_ctime_ns
+
+
+def _bind_path_stat(path: Path) -> os.stat_result:
     try:
-        file_stat = path.lstat()
+        return path.lstat()
     except OSError as error:
         raise FleetError(
             ErrorCode.SANDBOX_CREATION_FAILED,
             "A Docker bind-mount path is unavailable.",
             "Recreate the sandbox from stable Fleet-owned paths.",
         ) from error
-    return file_stat.st_dev, file_stat.st_ino
 
 
 def _reject_mount_delimiters(path: Path) -> None:

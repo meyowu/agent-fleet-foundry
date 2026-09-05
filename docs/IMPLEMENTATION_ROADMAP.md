@@ -4,7 +4,7 @@
 
 Implement phases in order. Every phase must leave a runnable, tested repository and produce an updated ExecPlan outcome. Do not begin a later phase by creating empty placeholder abstractions across the whole system. Add only the contracts required by the current vertical slice, while preserving the specified architectural boundaries.
 
-Current boundary as of 2026-09-04: Phase 0/1, the Phase 1.5 North-Star foundation, the Phase 2 BYOK PydanticAI vertical slice, and the Phase 3 local Docker sandbox/evidence-gated bootstrap slice are implemented. Phase 3 release acceptance and delivery evidence are governed by its living ExecPlan. Phase 4–7 remain roadmap; no later-phase implementation begins until the Phase 3 acceptance gates pass.
+Current boundary as of 2026-09-05: Phase0–6 is implemented and accepted under E4–E6 of `docs/MVP_ACCEPTANCE.md`; Phase7's guide, packaged runner/learning project, installation/upgrade/scale tests, security tooling and platform CI are implemented. The repaired release candidate and final GitHub delivery are tracked by E7, the release ExecPlan and PR #5. Whole-phase metadata remains6 because the Phase7 public-release gate still requires an explicitly authorized real-provider canary and an owner-selected license. Automated local/CI acceptance, a GitHub merge and a public release are separate outcomes.
 
 For each phase:
 
@@ -222,7 +222,7 @@ Prerequisite: Phase 1.5 is complete. The adapter consumes validated RepositoryPr
 - Usage metadata mapping when available, without assuming every provider exposes price.
 - Provider failures, invalid structured output, timeouts, and retry behavior mapped to typed errors.
 - `fleet init` interactive/provider flags and credential preflight.
-- Fail-closed reinitialization: differing generated `.fleet/` content is never merged or overwritten and fails before Project/artifact state mutation; credential-reference-only updates remain possible in Fleet-owned state.
+- Fail-closed reinitialization: differing generated `.fleet/` content is never merged or overwritten and fails before Project/artifact state mutation. The original reference-only update support applies only before organization admission; Phase 6 rejects all headed reinitialization, including reference-only changes. A protected setup change requires separate registration with old state preserved.
 - `fleet run` exact registration matching and provider preflight; explicit mismatched overrides fail before Run creation.
 - `fleet doctor` inspect-only credential status. A successfully emitted report uses `healthy`/required checks for readiness even when the command exit is zero.
 - Optional manual live-model smoke test excluded from normal CI.
@@ -309,6 +309,10 @@ A manual canary with a real or fake runtime modifies and tests code inside Docke
 
 ## Phase 4 — PermissionBroker, approvals, and exact always-allow
 
+**Status: accepted, 2026-09-05.** Final gates: default suite `1001 passed, 10 skipped in 431.79s` (nine opt-in Docker and one live-provider skip); unit `510/53.30s`, contract `281/4.47s`, marked integration `156 passed, 49 deselected/311.72s`, E2E `4/44.40s`; Ruff formatting/lint (165 files), mypy (141 source files), schema/diff checks; real Docker `9 passed in 42.32s` with zero managed-container residue; offline wheel/sdist inspection of 129 package files, 37 schemas, four migrations and three prompts each. These are local working-tree results, not a frozen Git commit or installed-user release proof.
+
+Accepted hardening includes exact current-policy revalidation, reviewed init paths/revision, prepared→publish→completion audit, dormant always-rule activation, reset cutoff, source-rule receipts without fabricated approvals, permanent single-winner dispatch, exact Engineer/Verifier checkpoints and legacy once-agent restoration. Logical retries preserve original explanatory prose without relaxing execution-bearing identity checks. Safe prompts supported commands; Balanced and Autonomous Sandbox deliberately share the supported reviewed-command ceiling, without arbitrary command/network expansion. Aggregate usage/budgets across pauses and bounded conversation context were subsequently accepted under Phase 5; raw provider history is not persisted and no live provider was run. The deliverables below remain the contract for regression, not unfinished Phase 4 work.
+
 ### Goal
 
 Implement the full three-state authorization system and user-controlled persistent scoped trust rules.
@@ -371,6 +375,8 @@ A user can approve a test command once, for the run, or persist an exact project
 
 Deliver the core user experience with a persistent CoS interface and bounded specialist execution.
 
+Acceptance status: the complete Phase 5 passed on 2026-09-05 and was committed/pushed as `a46b688`. M3 adds atomic conversation/Run registration, bounded summaries and references, shared resume ownership, event progress, exact approval controls and responsive cancellation. The proving surface is `tests/unit/test_chat_cli.py`, `tests/unit/test_conversation_models.py`, `tests/unit/test_conversation_state.py`, `tests/contract/test_conversation_store.py`, `tests/integration/test_conversations.py`, `tests/integration/test_conversation_safety.py`, `tests/e2e/test_persistent_chat_cli.py` and the separately gated `tests/docker/test_conversation_journey.py`. E5.3 and the persistent-chat plan retain exact full/focused/static results and failed attempts. Whole-phase metadata is 5; acceptance does not extend to Phase 6/7 or release prerequisites.
+
 ### Deliverables
 
 - `fleet chat` line-oriented REPL with durable thread/run references.
@@ -413,6 +419,8 @@ A user can initialize a small real repository, ask CoS for a code change, let th
 
 ## Phase 6 — FleetPatch: versioned organizational updates
 
+Status: local behavioral acceptance passed on 2026-09-05:1973 default passes15 explicit skips, fourteen separately enabled real-Docker passes,57 focused compatibility tests and independent integration/delta PASS. The living plan is `.agent/plans/2026-09-05-versioned-fleet-evolution.md`. Normal offline CoS hashing/output, immutable proposals and semantic/text diffs, strict workflow/skill requirements, native whole-tree publication, exact admission/fencing, CLI recovery and current-head inverse rollback are connected. Native cut-point tests and fresh CLI process exits exercise recovery; the real-Docker journey proves newly mandatory integration evidence from Engineer and independent Verifier. This does not change protected FleetSpec, trust or credentials. Metadata6 and archive/checkpoint refresh follow the successful behavioral freeze. Linux, fresh-installed-user, live-provider and public-release gates remain separate. See ADR 0006 and E6 for exact limitations/results.
+
 ### Goal
 
 Allow the user to ask CoS to change agent roles/workflows/skills while maintaining a protected policy boundary.
@@ -436,8 +444,10 @@ This phase turns the Phase 1.5 FleetPatch schema/path/base-hash validator into a
 - CLI:
   - `fleet fleet-patch list`;
   - `show`;
+  - `diff`;
   - `apply`;
-  - `rollback`.
+  - `rollback`;
+  - `operation` and explicit `recover --owner-stopped`.
 - Atomic application with before/after hashes and conflict detection.
 - Rollback produces a new auditable operation rather than erasing history.
 - Example: add required integration-test command for backend changes.
@@ -458,6 +468,8 @@ This phase turns the Phase 1.5 FleetPatch schema/path/base-hash validator into a
 A natural-language organizational request produces a reviewable FleetPatch; nothing changes until the user applies it; protected policy remains unchanged.
 
 ## Phase 7 — Hardening, packaging, documentation, and release candidate
+
+Status on2026-09-05: local release candidate implemented under `.agent/plans/2026-09-05-release-candidate.md`, following accepted Phase6 checkpoint b42cdf9. Repaired runtime3293244 passed complete macOS/Linux default, six selected platform combinations, standalone security, real Docker and fresh installed journeys. The final help/doc/package refresh and GitHub delivery are recorded by exact identity in E7/the release plan/PR #5. The owner-license and live-provider requirements below remain separate unperformed public-release gates, not waived acceptance; whole-phase metadata stays6.
 
 ### Goal
 

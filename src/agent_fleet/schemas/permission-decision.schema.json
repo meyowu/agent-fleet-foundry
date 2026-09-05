@@ -1,0 +1,117 @@
+{
+  "$defs": {
+    "ApprovalChoice": {
+      "enum": [
+        "deny",
+        "allow_once",
+        "allow_run",
+        "allow_always"
+      ],
+      "title": "ApprovalChoice",
+      "type": "string"
+    },
+    "JsonValue": {},
+    "PermissionOutcome": {
+      "enum": [
+        "allow",
+        "deny",
+        "require_approval"
+      ],
+      "title": "PermissionOutcome",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "available_choices": {
+      "items": {
+        "$ref": "#/$defs/ApprovalChoice"
+      },
+      "maxItems": 4,
+      "title": "Available Choices",
+      "type": "array"
+    },
+    "decision_code": {
+      "title": "Decision Code",
+      "type": "string"
+    },
+    "effective_scope": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Effective Scope"
+    },
+    "explanation": {
+      "title": "Explanation",
+      "type": "string"
+    },
+    "grant_id": {
+      "anyOf": [
+        {
+          "pattern": "^grant_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Grant Id"
+    },
+    "matched_rule_ids": {
+      "items": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 128,
+      "title": "Matched Rule Ids",
+      "type": "array"
+    },
+    "outcome": {
+      "$ref": "#/$defs/PermissionOutcome"
+    },
+    "protected": {
+      "default": false,
+      "title": "Protected",
+      "type": "boolean"
+    },
+    "risk": {
+      "default": "unknown",
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Risk",
+      "type": "string"
+    },
+    "source_rule_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Rule Id"
+    }
+  },
+  "required": [
+    "outcome",
+    "decision_code",
+    "explanation"
+  ],
+  "title": "PermissionDecision",
+  "type": "object"
+}

@@ -10,6 +10,7 @@ from agent_fleet.domain.models import (
     AgentInvocation,
     AgentInvocationResult,
     AgentRole,
+    CriterionResult,
     FakeScenario,
     ImplementationReport,
     RuntimeCapability,
@@ -19,17 +20,24 @@ from agent_fleet.domain.models import (
     RuntimePreflight,
     RuntimeToolCall,
     RuntimeToolOutcome,
+    RuntimeToolResult,
     ScopeDecision,
+    SpecialistReport,
+    TaskSpec,
     Verdict,
     VerifierVerdict,
     WorkflowStage,
+    WriterAssignment,
 )
 from agent_fleet.domain.offline_canary import FIXED_CANARY, INCORRECT_CANARY
+from agent_fleet.domain.paths import path_is_within
 from agent_fleet.ports.runtime import RuntimeInvocationServices
 
 _WORKSPACE_WRITE_TOOL = "workspace_write_file"
 _RUN_VERIFICATION_TOOL = "run_verification"
 _APPROVAL_PROBE_TOOL = "record_approval_probe"
+_METADATA_PATH = "src/canary_calc/metadata.py"
+_METADATA_CONTENT = "MESSAGE = 'verified new module'\n"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +98,8 @@ class FakeRuntimeAdapter:
     ) -> AgentInvocationResult:
         if services.configuration.runtime_name != "fake":
             raise ValueError("FakeRuntimeAdapter requires runtime_name='fake'")
+        if services.accounting is not None:
+            services.accounting.record_simulated_step()
         scenario = FakeScenario(str(request.input["fake_scenario"]))
         if request.role == AgentRole.COS:
             if services.tools.definitions:
@@ -101,8 +111,40 @@ class FakeRuntimeAdapter:
             return AgentInvocationResult(output=engineer_script.report)
         if request.role == AgentRole.VERIFIER:
             verifier_script = self._verifier_script(request, scenario)
-            await self._execute_actions(verifier_script.actions, services)
-            return AgentInvocationResult(output=verifier_script.verdict)
+            results = await self._execute_actions(verifier_script.actions, services)
+            verdict = verifier_script.verdict
+            if scenario is FakeScenario.PARALLEL_ENGINEERS:
+                verdict = self._map_verifier_claims(request, verdict, results)
+            return AgentInvocationResult(output=verdict)
+        if request.role in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}:
+            await self._execute_actions(
+                (
+                    _ScriptedAction(
+                        call_id=f"fake_{request.role}_read_{request.iteration}",
+                        tool_name="repo_list_files",
+                        arguments={
+                            "reason": "Observe the bounded repository scope without side effects."
+                        },
+                    ),
+                ),
+                services,
+            )
+            return AgentInvocationResult(
+                output=SpecialistReport(
+                    role="researcher" if request.role == AgentRole.RESEARCHER else "architect",
+                    summary="Read-only scripted repository analysis; not execution evidence.",
+                    findings=[
+                        "The bounded repository listing was returned by the read-only catalog."
+                    ],
+                    recommendations=[
+                        "Make the smallest scoped change and verify the joined candidate "
+                        "independently."
+                    ],
+                    proof_gaps=[
+                        "Read-only analysis did not execute project code or establish correctness."
+                    ],
+                )
+            )
         raise ValueError(f"FakeRuntimeAdapter does not implement role {request.role!r}")
 
     @staticmethod
@@ -112,8 +154,15 @@ class FakeRuntimeAdapter:
             raise ValueError("fake goal must be a string")
         direct = scenario is FakeScenario.DIRECT
         single_engineer = scenario is FakeScenario.SINGLE_ENGINEER
+        parallel = scenario is FakeScenario.PARALLEL_ENGINEERS
         return ScopeDecision(
             normalized_goal=goal,
+            response=(
+                "Offline fixture response: this read-only request was scoped without creating "
+                "specialists or executing project code."
+                if direct
+                else None
+            ),
             workflow="code-change",
             change_kind="read_only" if direct else "code_change",
             fleet_strategy=(
@@ -121,9 +170,35 @@ class FakeRuntimeAdapter:
                 if direct
                 else "single_engineer"
                 if single_engineer
+                else "parallel_engineers"
+                if parallel
+                else "research_architect_engineer_verifier"
+                if scenario is FakeScenario.SPECIALIST
                 else "engineer_verifier"
             ),
-            allowed_paths=[] if direct else ["src/canary_calc/core.py"],
+            writer_assignments=(
+                [
+                    WriterAssignment(
+                        node_id="core",
+                        goal="Add stable zero-division validation.",
+                        scope=["src/canary_calc/core.py"],
+                        criterion_ids=["canary-zero-division"],
+                    ),
+                    WriterAssignment(
+                        node_id="metadata",
+                        goal="Add the verified metadata message module.",
+                        scope=[_METADATA_PATH],
+                        criterion_ids=["canary-metadata"],
+                    ),
+                ]
+                if parallel
+                else []
+            ),
+            allowed_paths=[]
+            if direct
+            else ["src/canary_calc"]
+            if parallel
+            else ["src/canary_calc/core.py"],
             forbidden_paths=[".git", ".fleet"],
             acceptance_criteria=[
                 {
@@ -134,7 +209,18 @@ class FakeRuntimeAdapter:
                         else "divide(1, 0) raises ValueError with the stable message"
                     ),
                 }
-            ],
+            ]
+            + (
+                [
+                    {
+                        "criterion_id": "canary-metadata",
+                        "description": "The new metadata module exports "
+                        "MESSAGE = 'verified new module'.",
+                    }
+                ]
+                if parallel
+                else []
+            ),
             required_evidence=(
                 ["control_plane_plan"]
                 if direct
@@ -147,21 +233,30 @@ class FakeRuntimeAdapter:
     async def _execute_actions(
         actions: tuple[_ScriptedAction, ...],
         services: RuntimeInvocationServices,
-    ) -> None:
-        for action in actions:
-            result = await services.tools.execute(
-                RuntimeToolCall(
-                    call_id=action.call_id,
-                    name=action.tool_name,
-                    arguments=action.arguments,
-                )
+    ) -> tuple[RuntimeToolResult, ...]:
+        calls = tuple(
+            RuntimeToolCall(
+                call_id=action.call_id,
+                name=action.tool_name,
+                arguments=action.arguments,
             )
+            for action in actions
+        )
+        for call in calls:
+            services.tools.validate(call)
+        if services.accounting is not None and calls:
+            services.accounting.reserve_tool_batch(1, tuple(call.call_id for call in calls))
+        results: list[RuntimeToolResult] = []
+        for action, call in zip(actions, calls, strict=True):
+            result = await services.tools.execute(call)
             if result.call_id != action.call_id or result.name != action.tool_name:
                 raise RuntimeError("runtime tool result identity does not match its call")
             if result.outcome is not RuntimeToolOutcome.SUCCEEDED:
                 raise RuntimeError(
                     f"fake runtime tool {result.name!r} did not succeed: {result.outcome.value}"
                 )
+            results.append(result)
+        return tuple(results)
 
     @staticmethod
     def _engineer_script(request: AgentInvocation, scenario: FakeScenario) -> _EngineerScript:
@@ -184,16 +279,39 @@ class FakeRuntimeAdapter:
                     },
                 )
             )
-        actions.append(
+        changed = {"src/canary_calc/core.py": content}
+        criterion_results = ["canary-zero-division: scripted candidate produced"]
+        if scenario is FakeScenario.PARALLEL_ENGINEERS:
+            task = TaskSpec.model_validate(request.input["task_spec"])
+            criterion_results = [
+                f"{criterion.criterion_id}: scripted candidate produced"
+                for criterion in task.acceptance_criteria
+            ]
+            changed = {
+                path: value
+                for path, value in {**changed, _METADATA_PATH: _METADATA_CONTENT}.items()
+                if path_is_within(path, task.allowed_paths, forbidden=task.forbidden_paths)
+            }
+            if not changed:
+                raise ValueError("parallel fake fixture task has no supported scoped file")
+            summary = (
+                "Produced only the assigned fixture files for independent joined verification."
+            )
+        actions.extend(
             _ScriptedAction(
-                call_id=f"fake_write_{request.iteration}",
+                call_id=(
+                    f"fake_write_{request.iteration}_{index}"
+                    if scenario is FakeScenario.PARALLEL_ENGINEERS
+                    else f"fake_write_{request.iteration}"
+                ),
                 tool_name=_WORKSPACE_WRITE_TOOL,
                 arguments={
-                    "path": "src/canary_calc/core.py",
-                    "content": content,
+                    "path": path,
+                    "content": value,
                     "reason": "Repair the bounded canary implementation.",
                 },
             )
+            for index, (path, value) in enumerate(changed.items())
         )
         actions.extend(
             _ScriptedAction(
@@ -210,9 +328,9 @@ class FakeRuntimeAdapter:
             actions=tuple(actions),
             report=ImplementationReport(
                 summary=summary,
-                intended_changed_paths=["src/canary_calc/core.py"],
+                intended_changed_paths=list(changed),
                 tests_added_or_changed=[],
-                criterion_results=["canary-zero-division: scripted candidate produced"],
+                criterion_results=criterion_results,
                 evidence_artifact_ids=[],
                 unresolved_limitations=(
                     []
@@ -221,6 +339,39 @@ class FakeRuntimeAdapter:
                 ),
                 verifier_focus=["Validate exact exception type and message independently."],
             ),
+        )
+
+    @staticmethod
+    def _map_verifier_claims(
+        request: AgentInvocation,
+        verdict: VerifierVerdict,
+        results: tuple[RuntimeToolResult, ...],
+    ) -> VerifierVerdict:
+        task = TaskSpec.model_validate(request.input["task_spec"])
+        command_ids: list[str] = []
+        artifact_ids: list[str] = []
+        for command_id, result in zip(_verification_command_ids(request), results, strict=True):
+            artifact_id = result.content.get("command_evidence_artifact_id")
+            if result.name != _RUN_VERIFICATION_TOOL or not isinstance(artifact_id, str):
+                raise ValueError("parallel fixture requires actual command receipt references")
+            command_ids.append(command_id)
+            artifact_ids.append(artifact_id)
+        return VerifierVerdict.model_validate(
+            {
+                **verdict.model_dump(),
+                "evidence_artifact_ids": artifact_ids,
+                "structured_criterion_results": [
+                    CriterionResult(
+                        criterion_id=criterion.criterion_id,
+                        verdict=verdict.verdict,
+                        evidence_artifact_ids=artifact_ids,
+                        command_ids=command_ids,
+                        explanation="Scripted runtime claim bound to returned verification "
+                        "receipts; the control plane determines evidence assurance.",
+                    )
+                    for criterion in task.acceptance_criteria
+                ],
+            }
         )
 
     @staticmethod

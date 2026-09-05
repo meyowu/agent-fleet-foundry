@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
+from pydantic import JsonValue
 
 from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.runtime_tools import GatewayRuntimeToolCatalog
@@ -135,14 +136,58 @@ def test_tool_definitions_are_role_specific_and_identity_free() -> None:
         "run_verification",
     ]
     serialized = str([item.model_dump(mode="json") for item in engineer.definitions])
-    for forbidden in (
-        "run_id",
-        "task_id",
-        "agent_instance_id",
-        "sandbox_handle",
-        "host_path",
-    ):
+    for forbidden in ("run_id", "task_id", "agent_instance_id", "sandbox_handle", "host_path"):
         assert forbidden not in serialized
+
+
+@pytest.mark.parametrize("role", [AgentRole.RESEARCHER, AgentRole.ARCHITECT])
+async def test_specialist_catalog_has_only_reads_and_rejects_hidden_side_effects(
+    role: AgentRole,
+) -> None:
+    catalog, gateway = _catalog(role, scenario=FakeScenario.APPROVAL)
+    assert [item.name for item in catalog.definitions] == [
+        "repo_list_files",
+        "repo_read_file",
+        "repo_search_text",
+        "workspace_get_diff",
+    ]
+    assert all(not item.side_effect for item in catalog.definitions)
+    forbidden_calls: list[tuple[str, dict[str, JsonValue]]] = [
+        ("workspace_write_file", {"path": "src/canary_calc/core.py", "content": "changed"}),
+        (
+            "workspace_apply_edit",
+            {
+                "path": "src/canary_calc/core.py",
+                "expected_sha256": "a" * 64,
+                "old": "old",
+                "new": "new",
+                "expected_matches": 1,
+            },
+        ),
+        ("workspace_delete_file", {"path": "src/canary_calc/core.py", "expected_sha256": "a" * 64}),
+        ("run_verification", {"command_id": "offline-canary"}),
+        ("record_approval_probe", {"record": "forbidden"}),
+    ]
+    for name, arguments in forbidden_calls:
+        call = RuntimeToolCall(
+            call_id=f"forbidden-{name}",
+            name=name,
+            arguments={**arguments, "reason": "Forbidden specialist escalation."},
+        )
+        with pytest.raises(FleetError) as caught:
+            await catalog.execute(call)
+        assert caught.value.code is ErrorCode.COMMAND_DENIED
+    assert gateway.calls == []
+    assert catalog.records == ()
+    await catalog.execute(
+        RuntimeToolCall(
+            call_id="read",
+            name="repo_read_file",
+            arguments={"path": "src/canary_calc/core.py", "reason": "Read assigned context."},
+        )
+    )
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0]["scripted"].side_effect is False
 
 
 def test_tool_validation_is_schema_specific_and_side_effect_free() -> None:

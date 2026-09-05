@@ -1,0 +1,59 @@
+{
+  "additionalProperties": false,
+  "description": "Untrusted read-only analysis, never execution or verification authority.",
+  "properties": {
+    "findings": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Findings",
+      "type": "array"
+    },
+    "proof_gaps": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Proof Gaps",
+      "type": "array"
+    },
+    "recommendations": {
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Recommendations",
+      "type": "array"
+    },
+    "role": {
+      "enum": [
+        "researcher",
+        "architect"
+      ],
+      "title": "Role",
+      "type": "string"
+    },
+    "summary": {
+      "maxLength": 8192,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "role",
+    "summary",
+    "findings",
+    "recommendations",
+    "proof_gaps"
+  ],
+  "title": "SpecialistReport",
+  "type": "object"
+}

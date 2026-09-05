@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import cast
 
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.graph_evidence import assemble_graph_delivery
 from agent_fleet.domain.config import ConfigSnapshot
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evidence import (
@@ -18,19 +19,24 @@ from agent_fleet.domain.evidence import (
     ProofGap,
     RemainingRisk,
     ResourceCleanupReceipt,
+    assess_criterion_results,
 )
 from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy
 from agent_fleet.domain.models import (
     ArtifactKind,
     ArtifactMetadata,
+    CommandSpec,
     Run,
     SandboxInspection,
     TaskSpec,
     Verdict,
     VerifierVerdict,
 )
+from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 from agent_fleet.ports.clock import Clock
+from agent_fleet.ports.config import ConfigurationPort
+from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.state_store import StateStore
 
 
@@ -40,10 +46,14 @@ class EvidenceAssembler:
         state: StateStore,
         artifacts: ArtifactService,
         clock: Clock,
+        config: ConfigurationPort,
+        graphs: GraphStore | None = None,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
         self.clock = clock
+        self.config = config
+        self.graphs = graphs
 
     def assemble(
         self,
@@ -67,9 +77,10 @@ class EvidenceAssembler:
         ):
             raise _integrity_error("Configuration snapshot hash is not bound to the task and run.")
         try:
-            ConfigSnapshot.model_validate_json(config_content)
+            config_snapshot = ConfigSnapshot.model_validate_json(config_content)
         except ValueError as error:
             raise _integrity_error("Configuration snapshot artifact is invalid.") from error
+        self._validate_configuration_requirements(config_snapshot, task)
         if run.task_spec_artifact_id is None or run.task_spec_hash is None:
             raise _integrity_error("Run has no content-addressed TaskSpec binding.")
         task_metadata, task_content = self._read_bound_artifact(
@@ -282,7 +293,10 @@ class EvidenceAssembler:
                 changed_paths = sorted(path for path in encoded_paths.split(",") if path)
             else:
                 raise _integrity_error("Patch changed-path metadata is malformed.")
-            if not changed_paths or any(path not in task.allowed_paths for path in changed_paths):
+            if not changed_paths or any(
+                not path_is_within(path, task.allowed_paths, forbidden=task.forbidden_paths)
+                for path in changed_paths
+            ):
                 raise _integrity_error(
                     "Patch changed-path metadata is empty or outside the TaskSpec scope."
                 )
@@ -310,16 +324,45 @@ class EvidenceAssembler:
             command_evidence,
             verifier_proof_gaps=(verifier_verdict.proof_gaps if verifier_verdict else []),
         )
-        if len(task.acceptance_criteria) > 1:
+        structured_results = (
+            verifier_verdict.structured_criterion_results if verifier_verdict else None
+        )
+        if structured_results is not None:
+            assessments, mapping_gaps = assess_criterion_results(
+                structured_results,
+                expected_criteria={item.criterion_id for item in task.acceptance_criteria},
+                commands=command_evidence,
+                verifier_evidence_artifact_ids=verifier_evidence_artifact_ids,
+                run_id=run.run_id,
+                task_id=task.task_id,
+                verifier_agent_instance_id=run.verifier_agent_instance_id,
+                base_revision=run.base_revision,
+                config_snapshot_sha256=task.config_snapshot_hash,
+                patch_sha256=run.patch_sha256,
+                command_hashes=command_hashes,
+            )
+            proof_gaps.extend(mapping_gaps)
+        elif len(task.acceptance_criteria) > 1:
             proof_gaps.append(
                 ProofGap(
                     code="STRUCTURED_CRITERION_MAPPING_UNAVAILABLE",
                     description=(
-                        "The Phase 1 verifier contract does not bind evidence independently "
-                        "to multiple acceptance criteria."
+                        "The verifier did not provide a complete structured evidence mapping "
+                        "for multiple acceptance criteria."
                     ),
                     required_strength=EvidenceStrength.INDEPENDENTLY_VERIFIED,
                 )
+            )
+        graph_delivery = None
+        graph_artifact_ids: set[str] = set()
+        if plan.strategy in {
+            FleetStrategy.PARALLEL_ENGINEERS,
+            FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER,
+        }:
+            if self.graphs is None:
+                raise _integrity_error("Adaptive graph provenance store is unavailable.")
+            graph_delivery, graph_artifact_ids = assemble_graph_delivery(
+                self.state, self.artifacts, self.graphs, run, task, plan
             )
         bundle = EvidenceBundle(
             run_id=run.run_id,
@@ -333,6 +376,7 @@ class EvidenceAssembler:
             fleet_plan_artifact_id=run.fleet_plan_artifact_id,
             fleet_plan_sha256=run.fleet_plan_hash,
             fleet_strategy=plan.strategy,
+            graph_delivery=graph_delivery,
             required_evidence=plan.required_evidence,
             sandbox_provider=run.sandbox_name,
             sandbox_security_level=capabilities.security_level,
@@ -362,6 +406,7 @@ class EvidenceAssembler:
             cleanup_receipt_sha256=run.cleanup_receipt_sha256,
             cleanup_complete=cleanup_complete,
             criterion_assessments=assessments,
+            structured_criterion_results=structured_results,
             remaining_risks=self._remaining_risks(run),
             proof_gaps=proof_gaps,
             assembled_at=assembled_at or self.clock.now(),
@@ -371,9 +416,47 @@ class EvidenceAssembler:
             expected_criteria={item.criterion_id for item in task.acceptance_criteria},
             authoritative_artifact_ids={
                 artifact.artifact_id for artifact in self.state.list_artifacts(run.run_id)
-            },
+            }
+            | graph_artifact_ids,
         )
         return bundle.model_copy(update={"completion_decision": decision})
+
+    def _validate_configuration_requirements(
+        self, snapshot: ConfigSnapshot, task: TaskSpec
+    ) -> None:
+        """Re-derive requirements from immutable configuration, never task/model claims."""
+        spec, rebuilt = self.config.snapshot_from_files(
+            {item.path: item.content for item in snapshot.files}
+        )
+        if rebuilt != snapshot:
+            raise _integrity_error("Configuration snapshot reference closure is inconsistent.")
+        required = self.config.required_verification_commands(
+            spec,
+            snapshot,
+            workflow_id=task.workflow,
+            allowed_paths=tuple(task.allowed_paths),
+            change_kind=task.change_kind,
+        )
+        if set(task.required_verification_command_ids) != set(required):
+            raise _integrity_error(
+                "TaskSpec verification requirements differ from its reviewed configuration."
+            )
+        profile = self.config.verification_profile(spec, snapshot)
+        commands = [
+            CommandSpec(
+                command_id=command_id,
+                executable=command.executable,
+                argv=tuple(command.argv),
+                logical_cwd=command.cwd,
+                timeout_seconds=command.timeout_seconds,
+                network_requirement="required" if command.network_required else "none",
+            )
+            for command_id, command in sorted(profile.commands.items())
+        ]
+        if task.verification_commands != commands:
+            raise _integrity_error(
+                "TaskSpec verification commands differ from its reviewed configuration."
+            )
 
     @staticmethod
     def _criterion_verdict(

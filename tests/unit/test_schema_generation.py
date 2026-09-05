@@ -14,7 +14,7 @@ from agent_fleet.domain.models import (
     ToolIntent,
     UsageRecord,
 )
-from agent_fleet.schemas.generate import generate
+from agent_fleet.schemas.generate import SCHEMAS, generate
 
 
 def test_schema_regeneration_has_no_diff() -> None:
@@ -83,3 +83,137 @@ def test_generated_wire_schemas_expose_representable_security_constraints() -> N
     bundle = EvidenceBundle.model_json_schema()
     assert bundle["properties"]["project_id"]["pattern"] == r"^prj_[0-9a-f]{32}$"
     assert bundle["properties"]["config_snapshot_artifact_id"]["pattern"] == (r"^art_[0-9a-f]{32}$")
+
+
+def test_adaptive_graph_public_schema_catalog_is_complete_and_bounded() -> None:
+    expected = {
+        "writer-assignment.schema.json",
+        "specialist-report.schema.json",
+        "graph-snapshot.schema.json",
+        "graph-child-seed.schema.json",
+        "graph-child-binding.schema.json",
+        "graph-driver-claim.schema.json",
+        "graph-artifact-ref.schema.json",
+        "graph-node-record.schema.json",
+        "graph-join-input.schema.json",
+        "graph-join-preparation.schema.json",
+        "graph-join-completion.schema.json",
+        "graph-delivery-evidence.schema.json",
+    }
+    assert expected <= SCHEMAS.keys()
+    for name in expected:
+        assert SCHEMAS[name].model_json_schema()["additionalProperties"] is False
+    graph = SCHEMAS["graph-snapshot.schema.json"].model_json_schema()
+    assert graph["properties"]["nodes"]["maxItems"] == 16
+    assert graph["properties"]["parent_run_id"]["pattern"] == r"^run_[0-9a-f]{32}$"
+    assert set(graph["$defs"]["GraphStatus"]["enum"]) == {
+        "ready",
+        "running",
+        "paused",
+        "joined",
+        "failed",
+        "cancelled",
+    }
+    node = SCHEMAS["graph-node-record.schema.json"].model_json_schema()
+    assert node["properties"]["revision"]["minimum"] == 0
+    assert node["properties"]["input_artifacts"]["maxItems"] == 64
+    seed = SCHEMAS["graph-child-seed.schema.json"].model_json_schema()
+    assert seed["properties"]["iteration"]["const"] == 0
+    assert {"parent_run_id", "parent_plan_sha256", "parent_node_id", "parent_iteration"} <= (
+        seed["$defs"]["Run"]["properties"].keys()
+    )
+    specialist = SCHEMAS["specialist-report.schema.json"].model_json_schema()
+    assert specialist["properties"]["role"]["enum"] == ["researcher", "architect"]
+    assert specialist["properties"]["findings"]["maxItems"] == 32
+    delivery = SCHEMAS["graph-delivery-evidence.schema.json"].model_json_schema()
+    assert delivery["properties"]["child_cleanup_receipts"]["maxItems"] == 16
+    assert delivery["properties"]["sequential_repair_iterations"]["maximum"] == 5
+
+
+def test_conversation_public_schemas_keep_context_and_ownership_bounded() -> None:
+    expected = {
+        "conversation.schema.json",
+        "conversation-summary.schema.json",
+        "conversation-artifact-ref.schema.json",
+        "conversation-context-entry.schema.json",
+        "conversation-context.schema.json",
+        "conversation-submission.schema.json",
+        "conversation-run-binding.schema.json",
+        "conversation-claim.schema.json",
+        "conversation-turn.schema.json",
+        "conversation-registration.schema.json",
+    }
+    assert expected <= SCHEMAS.keys()
+    for name in expected:
+        assert SCHEMAS[name].model_json_schema()["additionalProperties"] is False
+    conversation = SCHEMAS["conversation.schema.json"].model_json_schema()["properties"]
+    assert conversation["conversation_id"]["pattern"] == r"^conv_[0-9a-f]{32}$"
+    assert conversation["project_id"]["pattern"] == r"^prj_[0-9a-f]{32}$"
+    assert conversation["next_turn_sequence"]["maximum"] == 1001
+    assert conversation["created_at"]["format"] == "date-time"
+    context = SCHEMAS["conversation-context.schema.json"].model_json_schema()
+    assert context["properties"]["entries"]["maxItems"] == 8
+    assert context["properties"]["through_sequence"]["maximum"] == 1000
+    entry = context["$defs"]["ConversationContextEntry"]["properties"]
+    assert entry["turn_id"]["pattern"] == r"^turn_[0-9a-f]{32}$"
+    assert entry["artifact_refs"]["maxItems"] == 8
+    submission = SCHEMAS["conversation-submission.schema.json"].model_json_schema()["properties"]
+    assert submission["submission_key"]["pattern"] == r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    assert not {"run_id", "provider_model", "credential_ref", "grant"}.intersection(submission)
+    turn = SCHEMAS["conversation-turn.schema.json"].model_json_schema()
+    assert turn["properties"]["artifact_refs"]["maxItems"] == 8
+    assert set(turn["$defs"]["ConversationTurnStatus"]["enum"]) == {
+        "running",
+        "waiting",
+        "delivered",
+        "failed",
+        "cancelled",
+        "recovery_required",
+    }
+    binding = SCHEMAS["conversation-run-binding.schema.json"].model_json_schema()["properties"]
+    assert {
+        "budget_limits",
+        "context_sha256",
+        "run_binding_sha256",
+        "submission_sha256",
+    } <= binding.keys()
+    claim = SCHEMAS["conversation-claim.schema.json"].model_json_schema()["properties"]
+    assert claim["claim_id"]["pattern"] == r"^corr_[0-9a-f]{32}$"
+    assert claim["generation"]["minimum"] == 1
+    # UTF-8 byte totals, UTC-only offsets and cross-record identity are runtime
+    # validators; JSON Schema's representable bounds do not replace those checks.
+
+
+def test_organization_evolution_schemas_are_exact_bounded_and_non_authorizing() -> None:
+    expected = {
+        "workflow-definition.schema.json",
+        "verification-skill.schema.json",
+        "organization-xattr.schema.json",
+        "organization-file.schema.json",
+        "organization-directory.schema.json",
+        "organization-tree.schema.json",
+        "directory-identity.schema.json",
+        "prepared-publication.schema.json",
+        "publication-observation.schema.json",
+        "organization-admission.schema.json",
+        "organization-head.schema.json",
+        "organization-version.schema.json",
+        "fleet-patch-semantic-change.schema.json",
+        "fleet-patch-proposal-record.schema.json",
+        "organization-operation.schema.json",
+        "organization-publication-result.schema.json",
+        "organization-repository-boundary.schema.json",
+    }
+    assert expected <= SCHEMAS.keys()
+    for name in expected:
+        assert SCHEMAS[name].model_json_schema()["additionalProperties"] is False
+    tree = SCHEMAS["organization-tree.schema.json"].model_json_schema()["properties"]
+    assert tree["files"]["maxItems"] == 256 and tree["directories"]["maxItems"] == 256
+    admission = SCHEMAS["organization-admission.schema.json"].model_json_schema()["properties"]
+    assert admission["revision"]["minimum"] == 0
+    operation = SCHEMAS["organization-operation.schema.json"].model_json_schema()["properties"]
+    assert operation["authorization"]["enum"] == ["apply", "rollback"]
+    assert "repository_before" in operation
+    skill = SCHEMAS["verification-skill.schema.json"].model_json_schema()["properties"]
+    assert set(skill) == {"apiVersion", "kind", "metadata", "appliesToPaths", "requiredCommandIds"}
+    assert skill["requiredCommandIds"]["maxItems"] == 128

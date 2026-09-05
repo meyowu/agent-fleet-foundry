@@ -81,11 +81,17 @@ def test_version_and_doctor_json_envelopes(tmp_path: Path) -> None:
     assert version.exit_code == 0, version.output
     version_data = json.loads(version.stdout)
     assert version_data["api_version"] == "agentfleet.dev/v1alpha1"
-    assert version_data["data"]["phase"] == "3"
+    assert version_data["data"]["phase"] == "6"
     assert version_data["data"]["sandboxes"] == ["docker", "fake", "local-unsafe"]
     assert version_data["data"]["runtime"] == "fake"
     assert version_data["data"]["runtimes"] == ["fake", "pydantic-ai"]
     assert version_data["data"]["sandbox"] == "fake"
+
+    resume_help = runner.invoke(app, ["resume", "--help"], env=environment)
+    assert resume_help.exit_code == 0, resume_help.output
+    assert "Resume an approved workflow" in " ".join(resume_help.stdout.split())
+    assert "fake workflow" not in resume_help.stdout
+    assert not (tmp_path / "state").exists()
 
     doctor = runner.invoke(app, ["doctor", "--json", "--path", str(tmp_path)], env=environment)
     assert doctor.exit_code == 0, doctor.output

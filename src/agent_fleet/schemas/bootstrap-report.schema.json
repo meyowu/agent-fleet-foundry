@@ -3,9 +3,13 @@
     "ArtifactKind": {
       "enum": [
         "fleet_config_proposal",
+        "fleet_patch",
+        "fleet_patch_diff",
         "config_snapshot",
         "task_spec",
         "implementation_report",
+        "specialist_report",
+        "graph_join",
         "patch",
         "test_report",
         "verifier_verdict",
@@ -20,7 +24,8 @@
         "runtime_usage",
         "sandbox_inspection",
         "resource_cleanup",
-        "bootstrap_report"
+        "bootstrap_report",
+        "cos_response"
       ],
       "title": "ArtifactKind",
       "type": "string"
@@ -89,6 +94,7 @@
       "enum": [
         "created",
         "running",
+        "waiting_for_children",
         "paused_for_approval",
         "ready_for_review",
         "applying",

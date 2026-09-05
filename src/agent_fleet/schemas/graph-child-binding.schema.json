@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "child_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Child Run Id",
+      "type": "string"
+    },
+    "child_task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Child Task Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "iteration": {
+      "const": 0,
+      "default": 0,
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "node_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Node Id",
+      "type": "string"
+    },
+    "node_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Node Sha256",
+      "type": "string"
+    },
+    "parent_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Parent Run Id",
+      "type": "string"
+    },
+    "plan_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Plan Sha256",
+      "type": "string"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "run_binding_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Run Binding Sha256",
+      "type": "string"
+    },
+    "task_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Task Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "parent_run_id",
+    "plan_sha256",
+    "node_id",
+    "child_run_id",
+    "child_task_id",
+    "node_sha256",
+    "task_sha256",
+    "run_binding_sha256",
+    "created_at"
+  ],
+  "title": "GraphChildBinding",
+  "type": "object"
+}

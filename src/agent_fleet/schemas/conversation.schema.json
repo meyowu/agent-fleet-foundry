@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "active_turn_id": {
+      "anyOf": [
+        {
+          "pattern": "^turn_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Active Turn Id"
+    },
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "conversation_id": {
+      "pattern": "^conv_[0-9a-f]{32}$",
+      "title": "Conversation Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Conversation",
+      "default": "Conversation",
+      "title": "Kind",
+      "type": "string"
+    },
+    "next_turn_sequence": {
+      "default": 1,
+      "maximum": 1001,
+      "minimum": 1,
+      "title": "Next Turn Sequence",
+      "type": "integer"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "repository_identity": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repository Identity",
+      "type": "string"
+    },
+    "revision": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "conversation_id",
+    "project_id",
+    "repository_identity",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "Conversation",
+  "type": "object"
+}

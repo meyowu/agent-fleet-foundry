@@ -1,0 +1,214 @@
+{
+  "$defs": {
+    "ApprovalChoice": {
+      "enum": [
+        "deny",
+        "allow_once",
+        "allow_run",
+        "allow_always"
+      ],
+      "title": "ApprovalChoice",
+      "type": "string"
+    },
+    "CanonicalResource": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "title": "Identifier",
+          "type": "string"
+        },
+        "kind": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "identifier"
+      ],
+      "title": "CanonicalResource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_.-]*$",
+      "title": "Action",
+      "type": "string"
+    },
+    "agent_instance_id": {
+      "pattern": "^agent_[0-9a-f]{32}$",
+      "title": "Agent Instance Id",
+      "type": "string"
+    },
+    "choice": {
+      "$ref": "#/$defs/ApprovalChoice",
+      "default": "allow_once"
+    },
+    "consumed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Consumed At"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expires At"
+    },
+    "grant_id": {
+      "pattern": "^grant_[0-9a-f]{32}$",
+      "title": "Grant Id",
+      "type": "string"
+    },
+    "intent_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Intent Hash",
+      "type": "string"
+    },
+    "intent_id": {
+      "pattern": "^intent_[0-9a-f]{32}$",
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "title": "Issued At",
+      "type": "string"
+    },
+    "issued_by": {
+      "const": "user",
+      "default": "user",
+      "title": "Issued By",
+      "type": "string"
+    },
+    "principal_role": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Principal Role",
+      "type": "string"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "remaining_uses": {
+      "anyOf": [
+        {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": 1,
+      "title": "Remaining Uses"
+    },
+    "request_id": {
+      "anyOf": [
+        {
+          "pattern": "^perm_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Request Id"
+    },
+    "resource": {
+      "$ref": "#/$defs/CanonicalResource"
+    },
+    "revoked_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revoked At"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "scope_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Scope Sha256"
+    },
+    "source_rule_id": {
+      "anyOf": [
+        {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Rule Id"
+    },
+    "task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Task Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "grant_id",
+    "intent_id",
+    "project_id",
+    "run_id",
+    "task_id",
+    "agent_instance_id",
+    "principal_role",
+    "action",
+    "resource",
+    "intent_hash",
+    "issued_at"
+  ],
+  "title": "CapabilityGrant",
+  "type": "object"
+}

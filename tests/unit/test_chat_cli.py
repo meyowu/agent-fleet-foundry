@@ -1,0 +1,460 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from collections.abc import Callable
+from contextlib import suppress
+from pathlib import Path
+
+import pytest
+import typer
+from typer.testing import CliRunner
+
+from agent_fleet.application.conversations import ChatExecutionOptions
+from agent_fleet.cli.app import _present_error, _present_with_warnings
+from agent_fleet.cli.chat import PosixLineInput, View, register_chat_command, run_session
+from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.models import ApprovalChoice, FakeScenario
+from agent_fleet.domain.security import Redactor
+
+
+class QueuedInput:
+    def __init__(self) -> None:
+        self.lines: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def read_line(self) -> str | None:
+        return await self.lines.get()
+
+    def send(self, line: str | None) -> None:
+        self.lines.put_nowait(line)
+
+
+class StrictService:
+    """Only the frozen CLI contract; owns its cancellable execution task."""
+
+    def __init__(self, *, immediate: bool = False) -> None:
+        self.immediate = immediate
+        self.calls: list[tuple[object, ...]] = []
+        self.entered = asyncio.Event()
+        self.cleanup_started = asyncio.Event()
+        self.cleanup_release = asyncio.Event()
+        self.cleanup_release.set()
+        self.release = asyncio.Event()
+        self.worker: asyncio.Task[bool] | None = None
+        self.run_status: str | None = None
+        self.progress_count = 0
+        self.cancelled = 0
+        self.selected = False
+
+    def _view(self) -> View:
+        return {
+            "conversation_id": "conv_" + "a" * 32,
+            "project_id": "prj_" + "b" * 32,
+            "revision": 0,
+            "active_turn_id": None,
+            "turn_id": None,
+            "run_id": "run_" + "c" * 32 if self.run_status else None,
+            "turn_status": self.run_status,
+            "run": (
+                {"status": self.run_status, "stage": "scoping", "verified_complete": False}
+                if self.run_status
+                else None
+            ),
+            "user_summary": None,
+            "result_summary": None,
+            "summary_truncated": False,
+            "recovery_required": False,
+            "warnings": ["Fake sandbox did not execute code."],
+        }
+
+    def select(
+        self, project_path: Path, *, conversation_id: str | None = None, create_new: bool = False
+    ) -> View:
+        self.selected = True
+        self.calls.append(("select", project_path, conversation_id, create_new))
+        return self._view()
+
+    def status(self, conversation_id: str) -> View:
+        assert self.selected
+        self.calls.append(("status", conversation_id))
+        return self._view()
+
+    async def submit(
+        self,
+        conversation_id: str,
+        *,
+        message: str,
+        submission_id: str | None,
+        options: ChatExecutionOptions,
+    ) -> View:
+        assert self.selected
+        self.calls.append(("submit", conversation_id, message, submission_id, options))
+        self.run_status = "running"
+        self.entered.set()
+        if self.immediate:
+            self.run_status = "ready_for_review"
+            return self._view()
+        self.worker = asyncio.create_task(self.release.wait())
+        try:
+            await self.worker
+        except asyncio.CancelledError:
+            return self._view()
+        self.run_status = "ready_for_review"
+        return self._view()
+
+    async def resume(self, conversation_id: str, *, allow_unsafe_local: bool = False) -> View:
+        self.calls.append(("resume", conversation_id, allow_unsafe_local))
+        self.run_status = "ready_for_review"
+        return self._view()
+
+    async def cancel(self, conversation_id: str) -> View:
+        self.calls.append(("cancel", conversation_id))
+        self.cancelled += 1
+        if self.worker is not None and not self.worker.done():
+            self.worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await self.worker
+        self.cleanup_started.set()
+        await self.cleanup_release.wait()
+        self.run_status = "cancelled"
+        return self._view()
+
+    def artifacts(self, conversation_id: str) -> View:
+        self.calls.append(("artifacts", conversation_id))
+        return {"artifact_id": "art_" + "d" * 32}
+
+    def permissions(self, conversation_id: str, *, identifier: str | None = None) -> View:
+        self.calls.append(("permissions", conversation_id, identifier))
+        return {"rules": []}
+
+    def approve(self, conversation_id: str, request_id: str, *, choice: ApprovalChoice) -> View:
+        self.calls.append(("approve", conversation_id, request_id, choice))
+        return {"request_id": request_id, "choice": choice.value}
+
+    def deny(self, conversation_id: str, request_id: str, *, reason: str | None = None) -> View:
+        self.calls.append(("deny", conversation_id, request_id, reason))
+        return {"request_id": request_id, "resolution": "denied"}
+
+    def progress(self, conversation_id: str, *, cursor: str | None = None, limit: int = 50) -> View:
+        assert limit <= 100
+        self.progress_count += 1
+        return {
+            "cursor": "cursor1",
+            "has_more": False,
+            "events": []
+            if cursor
+            else [
+                {
+                    "event_id": "evt_1",
+                    "sequence": 1,
+                    "run_id": None,
+                    "event_type": "run.started",
+                    "summary": "Started [untrusted] \x1b[31mSECRET",
+                    "request_ids": ["perm_pending"],
+                },
+                {
+                    "event_id": "evt_2",
+                    "sequence": 2,
+                    "run_id": None,
+                    "event_type": "agent.started",
+                    "summary": "Agent started",
+                    "request_ids": ["perm_pending"],
+                },
+            ],
+        }
+
+
+def _session(
+    service: StrictService,
+    reader: QueuedInput,
+    output: list[str],
+    errors: list[FleetError],
+    *,
+    interrupt: asyncio.Event | None = None,
+) -> asyncio.Task[View]:
+    selected = service.select(Path("."))
+    return asyncio.create_task(
+        run_session(
+            service,
+            selected,
+            ChatExecutionOptions(allow_unsafe_local=True),
+            reader,
+            emit=output.append,
+            show_error=errors.append,
+            redactor=Redactor(["SECRET"]),
+            interrupt=interrupt,
+        )
+    )
+
+
+async def _wait_for(predicate: Callable[[], bool]) -> None:
+    async with asyncio.timeout(3):
+        while not predicate():  # noqa: ASYNC110 - bounded observation of terminal output
+            await asyncio.sleep(0.005)
+
+
+@pytest.mark.asyncio
+async def test_session_keeps_status_cancel_responsive_and_never_queues_second_goal() -> None:
+    service, reader = StrictService(), QueuedInput()
+    output: list[str] = []
+    errors: list[FleetError] = []
+    task = _session(service, reader, output, errors)
+    reader.send("first goal")
+    await asyncio.wait_for(service.entered.wait(), 3)
+    reader.send("second goal")
+    reader.send("/status")
+    await _wait_for(lambda: any("running / scoping" in text for text in output))
+    assert len([call for call in service.calls if call[0] == "submit"]) == 1
+    assert errors and errors[0].code is ErrorCode.RECOVERY_REQUIRED
+    reader.send("/cancel")
+    await asyncio.wait_for(service.cleanup_started.wait(), 3)
+    await _wait_for(lambda: service.run_status == "cancelled")
+    reader.send("/exit")
+    view = await asyncio.wait_for(task, 3)
+    assert view["turn_status"] == "cancelled"
+    assert service.cancelled == 1 and service.worker is not None and service.worker.done()
+    rendered = "\n".join(output)
+    assert "SECRET" not in rendered and "\x1b" not in rendered and "\\x1b" in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", [None, "/exit", "interrupt"])
+async def test_exit_eof_and_interrupt_await_service_cleanup(ending: str | None) -> None:
+    service, reader = StrictService(), QueuedInput()
+    service.cleanup_release.clear()
+    interrupt = asyncio.Event()
+    task = _session(service, reader, [], [], interrupt=interrupt)
+    reader.send("goal")
+    await asyncio.wait_for(service.entered.wait(), 3)
+    if ending == "interrupt":
+        interrupt.set()
+    else:
+        reader.send(ending)
+    await asyncio.wait_for(service.cleanup_started.wait(), 3)
+    assert not task.done()
+    # Repeated task cancellation cannot tear down retained cleanup.
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    service.cleanup_release.set()
+    await asyncio.wait_for(task, 3)
+    assert service.run_status == "cancelled" and service.cancelled == 1
+
+
+@pytest.mark.asyncio
+async def test_slash_commands_are_exact_and_never_implicitly_resume_or_submit() -> None:
+    service, reader = StrictService(), QueuedInput()
+    errors: list[FleetError] = []
+    task = _session(service, reader, [], errors)
+    for line in [
+        "/help",
+        "/status",
+        "/artifacts",
+        "/permissions",
+        "/permissions perm_1",
+        "/approve perm_1 --once",
+        "/approve perm_2 --run",
+        "/approve perm_3 --always --scope project",
+        "/deny perm_4 --reason 'not needed'",
+        "/approve perm_1 --once --run",
+        "/approve perm_1 --always",
+        "/approve perm_1",
+        "/unknown SECRET",
+        "/deny",
+        "/status --extra",
+        "/approve 'unterminated",
+        "/exit",
+    ]:
+        reader.send(line)
+    await asyncio.wait_for(task, 3)
+    assert not any(call[0] in {"submit", "resume", "cancel"} for call in service.calls)
+    assert [call[-1] for call in service.calls if call[0] == "approve"] == [
+        ApprovalChoice.ALLOW_ONCE,
+        ApprovalChoice.ALLOW_RUN,
+        ApprovalChoice.ALLOW_ALWAYS,
+    ]
+    assert next(call[-1] for call in service.calls if call[0] == "deny") == "not needed"
+    assert len(errors) == 7 and all("SECRET" not in error.message for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_resume_passes_explicit_unsafe_confirmation_and_progress_is_not_repeated() -> None:
+    service, reader = StrictService(), QueuedInput()
+    output: list[str] = []
+    task = _session(service, reader, output, [])
+    reader.send("/resume")
+    await _wait_for(lambda: any(call[0] == "resume" for call in service.calls))
+    await _wait_for(lambda: service.progress_count >= 2)
+    reader.send("/exit")
+    await asyncio.wait_for(task, 3)
+    assert next(call[-1] for call in service.calls if call[0] == "resume") is True
+    assert sum("Started" in item for item in output) == 1
+    assert sum("Pending approval: perm_pending" in item for item in output) == 1
+
+
+@pytest.mark.asyncio
+async def test_pipe_input_crlf_partial_eof_backpressure_and_descriptor_restoration() -> None:
+    read_fd, write_fd = os.pipe()
+    stream = os.fdopen(read_fd, "r", encoding="utf-8")
+    try:
+        async with PosixLineInput(stream) as reader:
+            assert not os.get_blocking(read_fd)
+            payload = "".join(f"line {index}\r\n" for index in range(200)) + "last é"
+            os.write(write_fd, payload.encode())
+            os.close(write_fd)
+            write_fd = -1
+            for index in range(200):
+                assert await asyncio.wait_for(reader.read_line(), 3) == f"line {index}"
+            assert await reader.read_line() == "last é"
+            assert await reader.read_line() is None
+        assert os.get_blocking(read_fd)
+        assert not stream.closed
+    finally:
+        stream.close()
+        if write_fd >= 0:
+            os.close(write_fd)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [b"\xffSECRET\n", b"a\x00SECRET\n", b"a" * 16_385])
+async def test_invalid_input_is_cause_free_and_never_decoded_as_more_commands(
+    payload: bytes,
+) -> None:
+    read_fd, write_fd = os.pipe()
+    stream = os.fdopen(read_fd, "r", encoding="utf-8")
+    try:
+        async with PosixLineInput(stream) as reader:
+            os.set_blocking(write_fd, False)
+            for start in range(0, len(payload), 4096):
+                os.write(write_fd, payload[start : start + 4096])
+                await asyncio.sleep(0.005)
+            with pytest.raises(FleetError) as caught:
+                await asyncio.wait_for(reader.read_line(), 3)
+            assert "SECRET" not in str(caught.value)
+            assert caught.value.__cause__ is None and caught.value.__context__ is None
+    finally:
+        stream.close()
+        os.close(write_fd)
+
+
+@pytest.mark.asyncio
+async def test_real_tty_input_reads_a_line_without_input_thread() -> None:
+    import pty
+
+    master, slave = pty.openpty()
+    stream = os.fdopen(slave, "r", encoding="utf-8")
+    try:
+        async with PosixLineInput(stream) as reader:
+            os.write(master, b"/status\n")
+            assert await asyncio.wait_for(reader.read_line(), 3) == "/status"
+        assert os.get_blocking(slave)
+    finally:
+        stream.close()
+        os.close(master)
+
+
+@pytest.mark.asyncio
+async def test_unsupported_input_fails_clearly(tmp_path: Path) -> None:
+    source = tmp_path / "input.txt"
+    source.write_text("/status\n", encoding="utf-8")
+    with source.open(encoding="utf-8") as stream, pytest.raises(FleetError):
+        async with PosixLineInput(stream):
+            pytest.fail("regular files are not the supported interactive input boundary")
+
+
+def _app(service: StrictService) -> typer.Typer:
+    app = typer.Typer()
+    register_chat_command(
+        app,
+        service_factory=lambda _: service,
+        redactor_factory=lambda: Redactor(["SECRET"]),
+        presenter=_present_with_warnings,
+        error_presenter=_present_error,
+    )
+
+    # Match the real multi-command app so invocation requires the `chat` name.
+    @app.command()
+    def noop() -> None:
+        pass
+
+    return app
+
+
+def test_message_json_is_one_envelope_with_exact_options_and_no_progress() -> None:
+    service = StrictService(immediate=True)
+    result = CliRunner().invoke(
+        _app(service),
+        [
+            "chat",
+            "project",
+            "--new",
+            "--message",
+            "one goal",
+            "--submission-id",
+            "retry-1",
+            "--json",
+            "--runtime",
+            "fake",
+            "--sandbox",
+            "fake",
+            "--fake-scenario",
+            "direct",
+            "--provider-model",
+            "openai:model",
+            "--credential-ref",
+            "env:TEST_KEY",
+            "--allow-unsafe-local",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    assert envelope["ok"] is True and envelope["command"] == "fleet chat"
+    assert envelope["warnings"] == ["Fake sandbox did not execute code."]
+    assert "warnings" not in envelope["data"] and service.progress_count == 0
+    call = next(call for call in service.calls if call[0] == "submit")
+    assert call[2:4] == ("one goal", "retry-1")
+    assert call[-1] == ChatExecutionOptions(
+        runtime_name="fake",
+        sandbox_name="fake",
+        provider_model="openai:model",
+        credential_ref="env:TEST_KEY",
+        fake_scenario=FakeScenario.DIRECT,
+        allow_unsafe_local=True,
+    )
+
+
+def test_human_final_overview_does_not_interpret_summary_terminal_controls() -> None:
+    class DisplayService(StrictService):
+        def _view(self) -> View:
+            return {**super()._view(), "result_summary": "[red]SECRET\x1b[2J[end]"}
+
+    result = CliRunner().invoke(_app(DisplayService(immediate=True)), ["chat", "--message", "goal"])
+    assert result.exit_code == 0, result.output
+    assert "SECRET" not in result.output and "\x1b" not in result.output
+    assert "[red]" in result.output and "[end]" in result.output and "\\x1b" in result.output
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--json"],
+        ["--message", "/status", "--json"],
+        ["--message", "goal", "--new", "--conversation", "SECRET", "--json"],
+        ["--message", "goal", "--fake-scenario", "SECRET", "--json"],
+        ["--message", "goal", "--unknown-SECRET", "--json"],
+        ["--json", "--message"],
+        ["--submission-id", "SECRET"],
+    ],
+)
+def test_invalid_arguments_are_redacted_local_failures(arguments: list[str]) -> None:
+    service = StrictService(immediate=True)
+    result = CliRunner().invoke(_app(service), ["chat", *arguments])
+    assert result.exit_code == 2, result.output
+    assert "SECRET" not in result.output and not service.calls
+    assert "Traceback" not in result.output
+    if "--json" in arguments:
+        envelope = json.loads(result.stdout)
+        assert envelope["ok"] is False and envelope["error"]["code"] == "CONFIG_INVALID"

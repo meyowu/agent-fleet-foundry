@@ -15,6 +15,7 @@ from agent_fleet.domain.models import (
     RuntimeToolExecutionRecord,
     RuntimeToolResult,
 )
+from agent_fleet.ports.runtime_accounting import RuntimeAccounting
 
 
 class RuntimeToolCatalog(Protocol):
@@ -58,6 +59,7 @@ class RuntimeInvocationServices:
 
     configuration: RuntimeConfiguration
     tools: RuntimeToolCatalog
+    accounting: RuntimeAccounting | None = None
 
 
 class RuntimeAdapter(Protocol):

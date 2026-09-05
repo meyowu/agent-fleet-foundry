@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "text": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "title": "ConversationSummary",
+  "type": "object"
+}

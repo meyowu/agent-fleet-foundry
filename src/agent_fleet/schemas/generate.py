@@ -9,14 +9,69 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from agent_fleet.domain.bootstrap import BootstrapReport
-from agent_fleet.domain.config import ConfigSnapshot, FleetSpec, VerificationProfile
-from agent_fleet.domain.evidence import CommandEvidence, EvidenceBundle, ResourceCleanupReceipt
+from agent_fleet.domain.budgets import (
+    ModelRequestAccounting,
+    ModelRequestReservation,
+    RunBudgetLimits,
+    RunBudgetSnapshot,
+    RuntimeAttempt,
+)
+from agent_fleet.domain.config import (
+    ConfigSnapshot,
+    FleetSpec,
+    VerificationProfile,
+    VerificationSkill,
+    WorkflowDefinition,
+)
+from agent_fleet.domain.conversation import (
+    Conversation,
+    ConversationArtifactRef,
+    ConversationClaim,
+    ConversationContext,
+    ConversationContextEntry,
+    ConversationRegistration,
+    ConversationRunBinding,
+    ConversationSubmission,
+    ConversationSummary,
+    ConversationTurn,
+)
+from agent_fleet.domain.evidence import (
+    CommandEvidence,
+    EvidenceBundle,
+    GraphDeliveryEvidence,
+    ResourceCleanupReceipt,
+)
+from agent_fleet.domain.evolution import (
+    FleetPatchProposalRecord,
+    FleetPatchSemanticChange,
+    OrganizationAdmission,
+    OrganizationHead,
+    OrganizationOperation,
+    OrganizationPublicationResult,
+    OrganizationVersion,
+)
 from agent_fleet.domain.fleet_patch import FleetPatch
 from agent_fleet.domain.fleet_plan import FleetPlan
+from agent_fleet.domain.graph import (
+    GraphArtifactRef,
+    GraphChildBinding,
+    GraphChildSeed,
+    GraphDriverClaim,
+    GraphJoinCompletion,
+    GraphJoinInput,
+    GraphJoinPreparation,
+    GraphNodeRecord,
+    GraphSnapshot,
+)
 from agent_fleet.domain.models import (
+    AgentExecutionCheckpoint,
+    ApprovalRequest,
+    CapabilityGrant,
     CommandSpec,
+    CriterionResult,
     ImplementationReport,
     JsonEnvelope,
+    PermissionDecision,
     SandboxCapabilities,
     SandboxCleanupResult,
     SandboxConfiguration,
@@ -27,12 +82,31 @@ from agent_fleet.domain.models import (
     SandboxPreflight,
     SandboxRequirements,
     ScopeDecision,
+    SpecialistReport,
     TaskSpec,
     ToolIntent,
     UsageRecord,
+    VerificationCheckpoint,
     VerifierVerdict,
+    WriterAssignment,
 )
+from agent_fleet.domain.organization_tree import (
+    DirectoryIdentity,
+    OrganizationDirectory,
+    OrganizationFile,
+    OrganizationTree,
+    OrganizationXattr,
+    PreparedPublication,
+    PublicationObservation,
+)
+from agent_fleet.domain.repository_boundary import OrganizationRepositoryBoundary
 from agent_fleet.domain.repository_profile import ProjectKnowledge, RepositoryProfile
+from agent_fleet.domain.trust import (
+    ExactPermissionScope,
+    ProjectTrustSettings,
+    UserTrustPolicy,
+    UserTrustRule,
+)
 
 SCHEMAS: dict[str, type[BaseModel]] = {
     "fleet.schema.json": FleetSpec,
@@ -41,13 +115,50 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "cli-envelope.schema.json": JsonEnvelope,
     "task-spec.schema.json": TaskSpec,
     "scope-decision.schema.json": ScopeDecision,
+    "writer-assignment.schema.json": WriterAssignment,
+    "specialist-report.schema.json": SpecialistReport,
     "implementation-report.schema.json": ImplementationReport,
     "usage-record.schema.json": UsageRecord,
+    "run-budget-limits.schema.json": RunBudgetLimits,
+    "run-budget-snapshot.schema.json": RunBudgetSnapshot,
+    "runtime-attempt.schema.json": RuntimeAttempt,
+    "model-request-reservation.schema.json": ModelRequestReservation,
+    "model-request-accounting.schema.json": ModelRequestAccounting,
+    "criterion-result.schema.json": CriterionResult,
     "tool-intent.schema.json": ToolIntent,
+    "approval-request.schema.json": ApprovalRequest,
+    "capability-grant.schema.json": CapabilityGrant,
+    "permission-decision.schema.json": PermissionDecision,
+    "verification-checkpoint.schema.json": VerificationCheckpoint,
+    "agent-execution-checkpoint.schema.json": AgentExecutionCheckpoint,
+    "exact-permission-scope.schema.json": ExactPermissionScope,
+    "project-trust-settings.schema.json": ProjectTrustSettings,
+    "user-trust-policy.schema.json": UserTrustPolicy,
+    "user-trust-rule.schema.json": UserTrustRule,
     "verifier-verdict.schema.json": VerifierVerdict,
     "repository-profile.schema.json": RepositoryProfile,
     "project-knowledge.schema.json": ProjectKnowledge,
     "fleet-plan.schema.json": FleetPlan,
+    "graph-snapshot.schema.json": GraphSnapshot,
+    "graph-child-seed.schema.json": GraphChildSeed,
+    "graph-child-binding.schema.json": GraphChildBinding,
+    "graph-driver-claim.schema.json": GraphDriverClaim,
+    "graph-artifact-ref.schema.json": GraphArtifactRef,
+    "graph-node-record.schema.json": GraphNodeRecord,
+    "graph-join-input.schema.json": GraphJoinInput,
+    "graph-join-preparation.schema.json": GraphJoinPreparation,
+    "graph-join-completion.schema.json": GraphJoinCompletion,
+    "graph-delivery-evidence.schema.json": GraphDeliveryEvidence,
+    "conversation.schema.json": Conversation,
+    "conversation-summary.schema.json": ConversationSummary,
+    "conversation-artifact-ref.schema.json": ConversationArtifactRef,
+    "conversation-context-entry.schema.json": ConversationContextEntry,
+    "conversation-context.schema.json": ConversationContext,
+    "conversation-submission.schema.json": ConversationSubmission,
+    "conversation-run-binding.schema.json": ConversationRunBinding,
+    "conversation-claim.schema.json": ConversationClaim,
+    "conversation-turn.schema.json": ConversationTurn,
+    "conversation-registration.schema.json": ConversationRegistration,
     "sandbox-capabilities.schema.json": SandboxCapabilities,
     "sandbox-configuration.schema.json": SandboxConfiguration,
     "sandbox-requirements.schema.json": SandboxRequirements,
@@ -63,6 +174,23 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "resource-cleanup-receipt.schema.json": ResourceCleanupReceipt,
     "bootstrap-report.schema.json": BootstrapReport,
     "fleet-patch.schema.json": FleetPatch,
+    "workflow-definition.schema.json": WorkflowDefinition,
+    "verification-skill.schema.json": VerificationSkill,
+    "organization-xattr.schema.json": OrganizationXattr,
+    "organization-file.schema.json": OrganizationFile,
+    "organization-directory.schema.json": OrganizationDirectory,
+    "organization-tree.schema.json": OrganizationTree,
+    "directory-identity.schema.json": DirectoryIdentity,
+    "prepared-publication.schema.json": PreparedPublication,
+    "publication-observation.schema.json": PublicationObservation,
+    "organization-admission.schema.json": OrganizationAdmission,
+    "organization-head.schema.json": OrganizationHead,
+    "organization-version.schema.json": OrganizationVersion,
+    "fleet-patch-semantic-change.schema.json": FleetPatchSemanticChange,
+    "fleet-patch-proposal-record.schema.json": FleetPatchProposalRecord,
+    "organization-operation.schema.json": OrganizationOperation,
+    "organization-publication-result.schema.json": OrganizationPublicationResult,
+    "organization-repository-boundary.schema.json": OrganizationRepositoryBoundary,
 }
 
 

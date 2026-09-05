@@ -6,9 +6,11 @@ import asyncio
 from pathlib import Path
 
 from agent_fleet.application.sandboxes import SandboxRegistry
-from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.conversation import ConversationClaim, ConversationTurnStatus
+from agent_fleet.domain.errors import ConversationOwnershipUnavailableError, ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
+    FleetEvent,
     LeaseKind,
     LeaseStatus,
     ResourceLease,
@@ -25,6 +27,8 @@ from agent_fleet.domain.models import (
 from agent_fleet.domain.security import canonical_json_hash
 from agent_fleet.domain.workflow import is_terminal
 from agent_fleet.ports.clock import Clock
+from agent_fleet.ports.conversation import ConversationStore
+from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.state_store import StateStore
@@ -65,6 +69,40 @@ class ResourceService:
         )
         self.state.save_lease(lease)
         return lease
+
+    def create_workspace(self, run: Run, kind: WorkspaceKind) -> tuple[Workspace, ResourceLease]:
+        """Persist the recoverable exact identity before Git can create a worktree."""
+        project = self.state.get_project(run.project_id)
+        workspace = self.repository.prepare_workspace(run.run_id, run.base_revision, kind)
+        now = self.clock.now()
+        lease = ResourceLease(
+            lease_id=self.ids.new(IdPrefix.LEASE),
+            run_id=run.run_id,
+            kind=LeaseKind.WORKTREE,
+            resource_id=workspace.workspace_id,
+            path=workspace.path,
+            status=LeaseStatus.CREATING,
+            created_at=now,
+            updated_at=now,
+            metadata={
+                "workspace_kind": workspace.kind.value,
+                "base_revision": workspace.base_revision,
+            },
+        )
+        self.state.save_lease(lease)
+        try:
+            created = self.repository.materialize_workspace(Path(project.canonical_root), workspace)
+            if created != workspace:
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "Git returned a workspace identity different from its prepared lease.",
+                    "Recover the exact recorded workspace; no replacement is accepted.",
+                )
+            self.state.update_lease_status(lease.lease_id, LeaseStatus.ACTIVE.value)
+        except BaseException:
+            self.state.update_lease_status(lease.lease_id, LeaseStatus.FAILED.value)
+            raise
+        return created, self.state.get_lease(lease.lease_id)
 
     def lease_sandbox(self, handle: SandboxHandle) -> ResourceLease:
         now = self.clock.now()
@@ -189,6 +227,114 @@ class ResourceService:
             f"Active engineer sandbox lease is missing for run {run_id}.",
             "Inspect resource leases and resume from a valid checkpoint.",
         )
+
+    def checkpoint_workspace(self, run_id: str, workspace_id: str) -> Workspace:
+        for lease in self.state.active_leases(run_id):
+            if lease.kind is LeaseKind.WORKTREE and lease.resource_id == workspace_id:
+                return _workspace_from_lease(lease)
+        raise FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "The exact checkpoint workspace lease is no longer active.",
+            "Recover or cancel this run; do not substitute another workspace.",
+        )
+
+    def checkpoint_sandbox(self, run_id: str, sandbox_id: str) -> SandboxHandle:
+        for lease in self.state.active_leases(run_id):
+            if lease.kind is LeaseKind.SANDBOX and lease.resource_id == sandbox_id:
+                return _sandbox_handle_from_lease(lease)
+        raise FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "The exact checkpoint sandbox lease is no longer active.",
+            "Recover or cancel this run; do not substitute another sandbox.",
+        )
+
+    async def rehydrate_paused_sandboxes(self, run: Run) -> None:
+        """Revalidate logical sandboxes after CLI restart, never replay an execution."""
+        leases = self.state.outstanding_leases(run.run_id)
+        if run.status is not RunStatus.PAUSED_FOR_APPROVAL or any(
+            lease.kind is LeaseKind.EXECUTION or lease.status is not LeaseStatus.ACTIVE
+            for lease in leases
+        ):
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "Paused sandbox restoration requires only known active parent leases.",
+                "Cancel the run or reconcile its interrupted execution before retrying.",
+            )
+        if run.sandbox_configuration is None or run.sandbox_requirements is None:
+            raise RuntimeError("Run sandbox binding is missing")
+        for lease in leases:
+            if lease.kind is not LeaseKind.SANDBOX:
+                continue
+            handle = _sandbox_handle_from_lease(lease)
+            workspaces = [
+                _workspace_from_lease(item)
+                for item in leases
+                if item.kind is LeaseKind.WORKTREE and item.path == handle.workspace_host_path
+            ]
+            if (
+                len(workspaces) != 1
+                or workspaces[0].base_revision != run.base_revision
+                or handle.run_id != run.run_id
+                or handle.project_id != run.project_id
+                or handle.configuration_hash != run.sandbox_configuration_hash
+                or handle.capabilities != run.sandbox_capabilities_snapshot
+                or handle.image_identity != run.sandbox_image_identity
+                or handle.daemon_identity != run.sandbox_daemon_identity
+            ):
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "Paused sandbox bindings do not match their exact run and workspace.",
+                    "Cancel this run; Fleet will not substitute execution boundaries.",
+                )
+            provider = self.sandboxes.require(run.sandbox_configuration, run.sandbox_requirements)
+            # Current providers create only a logical context here. Commands use
+            # separately journaled execution resources and are never recreated.
+            restored = await provider.create(
+                run.run_id,
+                SandboxSpec(
+                    workspace_host_path=handle.workspace_host_path,
+                    project_id=run.project_id,
+                    configuration=run.sandbox_configuration,
+                    requirements=run.sandbox_requirements,
+                    environment={},
+                    unsafe_local_confirmed=run.unsafe_local_confirmed,
+                    image_identity=run.sandbox_image_identity,
+                    daemon_identity=run.sandbox_daemon_identity,
+                ),
+                sandbox_id=handle.sandbox_id,
+            )
+            inspection = await provider.inspect(restored)
+            if (
+                restored != handle
+                or not inspection.ready
+                or inspection.sandbox_id != handle.sandbox_id
+                or inspection.provider != handle.provider
+                or inspection.configuration_hash != handle.configuration_hash
+                or inspection.capabilities != handle.capabilities
+                or inspection.image_identity != handle.image_identity
+                or inspection.daemon_identity != handle.daemon_identity
+                or inspection.effective_network_mode != run.sandbox_configuration.network_mode
+                or inspection.missing_requirements(run.sandbox_requirements)
+            ):
+                raise FleetError(
+                    ErrorCode.SANDBOX_INSPECTION_FAILED,
+                    "Restored sandbox failed its exact effective-boundary inspection.",
+                    "Cancel or recover this run; no command was replayed.",
+                )
+            self.state.append_event(
+                FleetEvent(
+                    event_id=self.ids.new(IdPrefix.EVENT),
+                    event_type="sandbox.rehydrated",
+                    project_id=run.project_id,
+                    run_id=run.run_id,
+                    correlation_id=run.correlation_id,
+                    occurred_at=self.clock.now(),
+                    payload={
+                        "sandbox_id": handle.sandbox_id,
+                        "workspace_id": workspaces[0].workspace_id,
+                    },
+                )
+            )
 
     async def cleanup_run(self, run: Run, *, recovered: bool = False) -> None:
         target_status = LeaseStatus.RECOVERED if recovered else LeaseStatus.RELEASED
@@ -387,9 +533,23 @@ class ResourceService:
 
 
 class RecoveryService:
-    def __init__(self, state: StateStore, resources: ResourceService) -> None:
+    def __init__(
+        self,
+        state: StateStore,
+        resources: ResourceService,
+        graphs: GraphStore,
+        *,
+        conversations: ConversationStore | None = None,
+    ) -> None:
         self.state = state
         self.resources = resources
+        self.graphs = graphs
+        self.conversations = conversations
+
+    def owned_run_ids(self, run_id: str) -> tuple[str, ...]:
+        """Return exact recovery ownership for user-visible lease accounting."""
+        self.state.get_run(run_id)
+        return (run_id, *(item.child_run_id for item in self.graphs.descendants(run_id)))
 
     async def recover_run(self, run_id: str) -> Run:
         """Recover one explicitly selected run after its prior owner has stopped.
@@ -400,7 +560,35 @@ class RecoveryService:
         """
 
         run = self.state.get_run(run_id)
-        if run.status in {RunStatus.RUNNING, RunStatus.APPLYING}:
+        conversation_fenced = False
+        if self.conversations is not None:
+            binding = self.conversations.binding_for_run(run_id)
+            if binding is not None:
+                turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+                if (
+                    turn.active_claim_id is not None
+                    or turn.status is ConversationTurnStatus.RECOVERY_REQUIRED
+                ):
+                    if turn.fenced_at is None:
+                        self.conversations.fence(
+                            run_id, expected_revision=turn.revision, reason="recovery"
+                        )
+                    conversation_fenced = True
+                    run = self.state.get_run(run_id)
+        child = self.graphs.child_binding(run_id)
+        if child is not None:
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "An internal child must be recovered through its stopped parent owner.",
+                "Recover the parent run so all dependency and dispatch claims remain fenced.",
+                details={"parent_run_id": child.parent_run_id},
+            )
+        graph = self.graphs.get(run_id)
+        interrupted_claim = graph is not None and graph.driver_claim is not None
+        if run.status in {RunStatus.RUNNING, RunStatus.APPLYING} or (
+            interrupted_claim
+            and run.status in {RunStatus.PAUSED_FOR_APPROVAL, RunStatus.WAITING_FOR_CHILDREN}
+        ):
             run = run.model_copy(
                 update={"status": RunStatus.FAILED, "updated_at": self.resources.clock.now()}
             )
@@ -417,22 +605,85 @@ class RecoveryService:
                 details={"run_id": run_id, "status": run.status.value},
             )
 
+        await _cleanup_graph_descendants(
+            self.graphs, self.state, self.resources, run, recovered=True
+        )
         if self.state.outstanding_leases(run_id):
             await self.resources.cleanup_run(run, recovered=True)
+        if conversation_fenced and self.conversations is not None:
+            binding = self.conversations.binding_for_run(run_id)
+            if binding is None:
+                raise ConversationOwnershipUnavailableError()
+            turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+            self.conversations.reconcile_fenced(run_id, expected_revision=turn.revision)
         return self.state.get_run(run_id)
 
 
 class CancellationService:
-    def __init__(self, state: StateStore, resources: ResourceService, clock: Clock) -> None:
+    def __init__(
+        self,
+        state: StateStore,
+        resources: ResourceService,
+        clock: Clock,
+        graphs: GraphStore,
+        *,
+        conversations: ConversationStore | None = None,
+    ) -> None:
         self.state = state
         self.resources = resources
         self.clock = clock
+        self.graphs = graphs
+        self.conversations = conversations
 
-    async def cancel(self, run_id: str) -> Run:
+    async def cancel(
+        self, run_id: str, *, conversation_claim: ConversationClaim | None = None
+    ) -> Run:
         run = self.state.get_run(run_id)
+        child = self.graphs.child_binding(run_id)
+        if child is not None:
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "Cancel the parent graph rather than one internally scheduled child.",
+                "Use the parent run ID to stop every dependent node safely.",
+                details={"parent_run_id": child.parent_run_id},
+            )
+        conversation_fenced = False
+        if self.conversations is not None:
+            binding = self.conversations.binding_for_run(run_id)
+            if binding is not None:
+                turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+                if turn.status is ConversationTurnStatus.RECOVERY_REQUIRED:
+                    raise ConversationOwnershipUnavailableError()
+                if (
+                    turn.active_claim_id is not None
+                    or turn.status is ConversationTurnStatus.WAITING
+                ):
+                    self.conversations.fence(
+                        run_id,
+                        expected_revision=turn.revision,
+                        reason="cancel",
+                        claim=conversation_claim,
+                    )
+                    conversation_fenced = True
+                    run = self.state.get_run(run_id)
         outstanding = bool(self.state.outstanding_leases(run_id))
-        if is_terminal(run.status) and (run.status is not RunStatus.CANCELLED or not outstanding):
-            return run
+        child_outstanding = any(
+            self.state.outstanding_leases(binding.child_run_id)
+            for binding in self.graphs.descendants(run_id)
+        )
+        if is_terminal(run.status):
+            if run.status is not RunStatus.CANCELLED:
+                if outstanding or child_outstanding:
+                    raise FleetError(
+                        ErrorCode.RECOVERY_REQUIRED,
+                        "A terminal run still has owned resources requiring recovery.",
+                        "Confirm its previous owner stopped and recover the parent run.",
+                    )
+                if conversation_fenced:
+                    self._reconcile_conversation_fence(run_id)
+                return run
+            if not outstanding and not child_outstanding and not conversation_fenced:
+                return run
         if run.status is not RunStatus.CANCELLED:
             run = run.model_copy(
                 update={"status": RunStatus.CANCELLED, "updated_at": self.clock.now()}
@@ -440,9 +691,44 @@ class CancellationService:
             self.state.save_run(
                 run, "run.cancelled", {"stage": run.stage.value if run.stage else None}
             )
+        await _cleanup_graph_descendants(self.graphs, self.state, self.resources, run)
         if outstanding:
             await self.resources.cleanup_run(run)
+        if conversation_fenced:
+            self._reconcile_conversation_fence(run_id)
         return self.state.get_run(run_id)
+
+    def _reconcile_conversation_fence(self, run_id: str) -> None:
+        if self.conversations is None:
+            raise ConversationOwnershipUnavailableError()
+        binding = self.conversations.binding_for_run(run_id)
+        if binding is None:
+            raise ConversationOwnershipUnavailableError()
+        turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
+        self.conversations.reconcile_fenced(run_id, expected_revision=turn.revision)
+
+
+async def _cleanup_graph_descendants(
+    graphs: GraphStore,
+    state: StateStore,
+    resources: ResourceService,
+    parent: Run,
+    *,
+    recovered: bool = False,
+) -> None:
+    graph = graphs.get(parent.run_id)
+    if graph is None:
+        return
+    if graph.cancel_requested_at is None:
+        graphs.request_cancel(parent.run_id, expected_revision=graph.revision)
+    failures: list[BaseException] = []
+    for binding in graphs.descendants(parent.run_id):
+        try:
+            await resources.cleanup_run(state.get_run(binding.child_run_id), recovered=recovered)
+        except BaseException as error:
+            failures.append(error)
+    if failures:
+        raise failures[0]
 
 
 async def _await_sandbox_cleanup_task(

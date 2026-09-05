@@ -35,12 +35,30 @@ class LocalArtifactStore:
         self._verify(destination, digest)
         return content_ref, digest, len(content)
 
-    def get(self, content_ref: str, expected_sha256: str) -> bytes:
+    def get(self, content_ref: str, expected_sha256: str, *, max_bytes: int | None = None) -> bytes:
+        if max_bytes is not None and (
+            type(max_bytes) is not int or not 1 <= max_bytes <= 16_777_216
+        ):
+            raise _integrity_error(content_ref)
         if not self.root.exists():
             raise _integrity_error(content_ref)
-        path = resolve_logical_path(self.root, content_ref, allow_missing=False)
-        content = path.read_bytes()
-        if sha256_bytes(content) != expected_sha256:
+        content: bytes | None = None
+        try:
+            path = resolve_logical_path(self.root, content_ref, allow_missing=False)
+            if max_bytes is None:
+                content = path.read_bytes()
+            else:
+                with path.open("rb") as stream:
+                    content = stream.read(max_bytes + 1)
+        except (OSError, ValueError):
+            pass
+        if content is None:
+            # Preserve a typed cause-free boundary for missing/raced/corrupt
+            # storage, without exposing an OS exception's absolute state path.
+            raise _integrity_error(content_ref)
+        if (max_bytes is not None and len(content) > max_bytes) or sha256_bytes(
+            content
+        ) != expected_sha256:
             raise _integrity_error(content_ref)
         return content
 
