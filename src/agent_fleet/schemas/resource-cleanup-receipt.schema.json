@@ -1,0 +1,98 @@
+{
+  "$defs": {
+    "CleanupLeaseRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/LeaseKind"
+        },
+        "lease_id": {
+          "pattern": "^lease_[0-9a-f]{32}$",
+          "title": "Lease Id",
+          "type": "string"
+        },
+        "resource_id": {
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/LeaseStatus"
+        }
+      },
+      "required": [
+        "lease_id",
+        "kind",
+        "resource_id",
+        "status"
+      ],
+      "title": "CleanupLeaseRecord",
+      "type": "object"
+    },
+    "LeaseKind": {
+      "enum": [
+        "worktree",
+        "sandbox",
+        "execution"
+      ],
+      "title": "LeaseKind",
+      "type": "string"
+    },
+    "LeaseStatus": {
+      "enum": [
+        "creating",
+        "active",
+        "releasing",
+        "released",
+        "recovered",
+        "failed"
+      ],
+      "title": "LeaseStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "kind": {
+      "const": "ResourceCleanupReceipt",
+      "default": "ResourceCleanupReceipt",
+      "title": "Kind",
+      "type": "string"
+    },
+    "leases": {
+      "items": {
+        "$ref": "#/$defs/CleanupLeaseRecord"
+      },
+      "maxItems": 1024,
+      "title": "Leases",
+      "type": "array"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "leases",
+    "complete",
+    "completed_at"
+  ],
+  "title": "ResourceCleanupReceipt",
+  "type": "object"
+}

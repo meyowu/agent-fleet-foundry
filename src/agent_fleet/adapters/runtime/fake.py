@@ -184,25 +184,27 @@ class FakeRuntimeAdapter:
                     },
                 )
             )
+        actions.append(
+            _ScriptedAction(
+                call_id=f"fake_write_{request.iteration}",
+                tool_name=_WORKSPACE_WRITE_TOOL,
+                arguments={
+                    "path": "src/canary_calc/core.py",
+                    "content": content,
+                    "reason": "Repair the bounded canary implementation.",
+                },
+            )
+        )
         actions.extend(
-            [
-                _ScriptedAction(
-                    call_id=f"fake_write_{request.iteration}",
-                    tool_name=_WORKSPACE_WRITE_TOOL,
-                    arguments={
-                        "path": "src/canary_calc/core.py",
-                        "content": content,
-                        "reason": "Repair the bounded canary implementation.",
-                    },
-                ),
-                _ScriptedAction(
-                    call_id=f"fake_engineer_check_{request.iteration}",
-                    tool_name=_RUN_VERIFICATION_TOOL,
-                    arguments={
-                        "reason": "Record deterministic fake command evidence.",
-                    },
-                ),
-            ]
+            _ScriptedAction(
+                call_id=(f"fake_engineer_check_{request.iteration}_{command_id.replace('.', '_')}"),
+                tool_name=_RUN_VERIFICATION_TOOL,
+                arguments={
+                    "command_id": command_id,
+                    "reason": "Record deterministic fake command evidence.",
+                },
+            )
+            for command_id in _verification_command_ids(request)
         )
         return _EngineerScript(
             actions=tuple(actions),
@@ -212,7 +214,11 @@ class FakeRuntimeAdapter:
                 tests_added_or_changed=[],
                 criterion_results=["canary-zero-division: scripted candidate produced"],
                 evidence_artifact_ids=[],
-                unresolved_limitations=["Fake sandbox did not execute project code."],
+                unresolved_limitations=(
+                    []
+                    if _sandbox_executes_code(request)
+                    else ["Configured sandbox did not execute project code."]
+                ),
                 verifier_focus=["Validate exact exception type and message independently."],
             ),
         )
@@ -243,14 +249,16 @@ class FakeRuntimeAdapter:
                     },
                 )
             )
-        actions.append(
+        actions.extend(
             _ScriptedAction(
-                call_id=f"fake_verifier_check_{repair_iterations}",
+                call_id=(f"fake_verifier_check_{repair_iterations}_{command_id.replace('.', '_')}"),
                 tool_name=_RUN_VERIFICATION_TOOL,
                 arguments={
+                    "command_id": command_id,
                     "reason": "Record independent deterministic fake verifier evidence.",
                 },
             )
+            for command_id in _verification_command_ids(request)
         )
         return _VerifierScript(
             actions=tuple(actions),
@@ -265,7 +273,11 @@ class FakeRuntimeAdapter:
                 required_repairs=["Use the required stable ValueError message."]
                 if should_fail
                 else [],
-                proof_gaps=["No project code was executed because sandbox=fake."],
+                proof_gaps=(
+                    []
+                    if _sandbox_executes_code(request)
+                    else ["No project code was executed by the configured sandbox."]
+                ),
                 rationale=(
                     "Scripted verifier requested repair."
                     if should_fail
@@ -277,3 +289,28 @@ class FakeRuntimeAdapter:
                 ),
             ),
         )
+
+
+def _verification_command_ids(request: AgentInvocation) -> tuple[str, ...]:
+    task = request.input.get("task_spec")
+    if isinstance(task, dict):
+        required = task.get("required_verification_command_ids")
+        if (
+            isinstance(required, list)
+            and required
+            and all(isinstance(command_id, str) for command_id in required)
+        ):
+            return tuple(command_id for command_id in required if isinstance(command_id, str))
+        commands = task.get("verification_commands")
+        if isinstance(commands, list) and commands:
+            first = commands[0]
+            if isinstance(first, dict):
+                command_id = first.get("command_id")
+                if isinstance(command_id, str):
+                    return (command_id,)
+    return ("offline-canary",)
+
+
+def _sandbox_executes_code(request: AgentInvocation) -> bool:
+    capabilities = request.input.get("sandbox_capabilities")
+    return isinstance(capabilities, dict) and capabilities.get("executes_code") is True

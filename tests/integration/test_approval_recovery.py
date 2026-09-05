@@ -94,9 +94,8 @@ async def test_recovery_fails_interrupted_run_and_cleans_orphaned_resource_lease
     assert harness.container.state.active_leases(paused.run_id)
 
     reconstructed = build_container(harness.state_root)
-    recovered = await reconstructed.recovery.recover_orphaned()
-    assert recovered == [paused.run_id]
-    assert reconstructed.state.get_run(paused.run_id).status is RunStatus.FAILED
+    recovered = await reconstructed.recovery.recover_run(paused.run_id)
+    assert recovered.status is RunStatus.FAILED
     assert reconstructed.state.active_leases(paused.run_id) == []
     with reconstructed.state._connect() as connection:
         statuses = {
@@ -106,6 +105,75 @@ async def test_recovery_fails_interrupted_run_and_cleans_orphaned_resource_lease
             )
         }
     assert statuses == {"recovered"}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_exact_recovery_fails_interrupted_run_even_without_a_lease(
+    harness: FleetHarness,
+) -> None:
+    paused = await harness.start(FakeScenario.APPROVAL)
+    await harness.container.recovery.resources.cleanup_run(paused)
+    assert harness.container.state.outstanding_leases(paused.run_id) == []
+    interrupted = paused.model_copy(
+        update={
+            "status": RunStatus.RUNNING,
+            "pending_approval_id": None,
+            "updated_at": harness.container.state.clock.now(),
+        }
+    )
+    harness.container.state.save_run(
+        interrupted, "run.resumed", {"reason": "simulated lease-free process loss"}
+    )
+
+    recovered = await build_container(harness.state_root).recovery.recover_run(paused.run_id)
+
+    assert recovered.status is RunStatus.FAILED
+    assert recovered.run_id == paused.run_id
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_exact_recovery_refuses_durable_approval_pause(
+    harness: FleetHarness,
+) -> None:
+    paused = await harness.start(FakeScenario.APPROVAL)
+    before = list(harness.container.state.outstanding_leases(paused.run_id))
+
+    with pytest.raises(FleetError) as captured:
+        await build_container(harness.state_root).recovery.recover_run(paused.run_id)
+
+    assert captured.value.code is ErrorCode.RECOVERY_REQUIRED
+    assert list(harness.container.state.outstanding_leases(paused.run_id)) == before
+    assert harness.container.state.get_run(paused.run_id).status is RunStatus.PAUSED_FOR_APPROVAL
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_exact_recovery_does_not_touch_another_runs_leases(
+    harness: FleetHarness,
+) -> None:
+    interrupted = await harness.start(FakeScenario.APPROVAL)
+    unrelated = await harness.start(FakeScenario.APPROVAL)
+    unrelated_before = list(harness.container.state.outstanding_leases(unrelated.run_id))
+    assert unrelated_before
+    resumed = interrupted.model_copy(
+        update={
+            "status": RunStatus.RUNNING,
+            "pending_approval_id": None,
+            "updated_at": harness.container.state.clock.now(),
+        }
+    )
+    harness.container.state.save_run(
+        resumed, "run.resumed", {"reason": "simulated scoped process loss"}
+    )
+
+    recovered = await build_container(harness.state_root).recovery.recover_run(interrupted.run_id)
+
+    assert recovered.status is RunStatus.FAILED
+    assert harness.container.state.outstanding_leases(interrupted.run_id) == []
+    assert list(harness.container.state.outstanding_leases(unrelated.run_id)) == unrelated_before
+    assert harness.container.state.get_run(unrelated.run_id).status is RunStatus.PAUSED_FOR_APPROVAL
 
 
 @pytest.mark.integration

@@ -197,7 +197,7 @@ def test_project_preview_and_initialize_do_not_execute_repository_local_fsmonito
     assert preview["repository"] == str(repository.resolve())
     assert not sentinel.exists()
 
-    initialized = container.projects.initialize(
+    initialized = container.projects._initialize_without_canary(
         repository,
         runtime_name="fake",
         sandbox_name="fake",
@@ -376,7 +376,9 @@ def test_repository_local_core_worktree_cannot_switch_project_boundary(tmp_path:
 
     container = build_container(tmp_path / "identity-app-state")
     with pytest.raises(FleetError) as init_error:
-        container.projects.initialize(nested, runtime_name="fake", sandbox_name="fake")
+        container.projects._initialize_without_canary(
+            nested, runtime_name="fake", sandbox_name="fake"
+        )
     assert init_error.value.code is ErrorCode.PROJECT_NOT_GIT
     assert not (outer / ".fleet").exists()
 

@@ -23,6 +23,81 @@
       ],
       "title": "AcceptanceCriterion",
       "type": "object"
+    },
+    "CommandSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Argv",
+          "type": "array"
+        },
+        "command_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "environment": {
+          "maxProperties": 32,
+          "patternProperties": {
+            "^[A-Z][A-Z0-9_]{0,63}$": {
+              "maxLength": 4096,
+              "type": "string"
+            }
+          },
+          "title": "Environment",
+          "type": "object"
+        },
+        "executable": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^(?:[A-Za-z0-9._+-]+|\\./[A-Za-z0-9._+-]+)$",
+          "title": "Executable",
+          "type": "string"
+        },
+        "logical_cwd": {
+          "default": ".",
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Logical Cwd",
+          "type": "string"
+        },
+        "max_output_bytes": {
+          "default": 64000,
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Max Output Bytes",
+          "type": "integer"
+        },
+        "network_requirement": {
+          "default": "none",
+          "enum": [
+            "none",
+            "required"
+          ],
+          "title": "Network Requirement",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command_id",
+        "executable"
+      ],
+      "title": "CommandSpec",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -102,6 +177,17 @@
       "title": "Required Evidence",
       "type": "array"
     },
+    "required_verification_command_ids": {
+      "items": {
+        "maxLength": 100,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_.-]*$",
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Required Verification Command Ids",
+      "type": "array"
+    },
     "run_id": {
       "pattern": "^run_[0-9a-f]{32}$",
       "title": "Run Id",
@@ -111,6 +197,14 @@
       "pattern": "^task_[0-9a-f]{32}$",
       "title": "Task Id",
       "type": "string"
+    },
+    "verification_commands": {
+      "items": {
+        "$ref": "#/$defs/CommandSpec"
+      },
+      "maxItems": 32,
+      "title": "Verification Commands",
+      "type": "array"
     },
     "workflow": {
       "default": "code-change",

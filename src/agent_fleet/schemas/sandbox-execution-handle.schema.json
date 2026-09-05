@@ -1,0 +1,59 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "execution_id": {
+      "pattern": "^exec_[0-9a-f]{32}$",
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "labels": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "maxProperties": 16,
+      "minProperties": 1,
+      "title": "Labels",
+      "type": "object"
+    },
+    "labels_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Labels Sha256",
+      "type": "string"
+    },
+    "native_resource_id": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Native Resource Id",
+      "type": "string"
+    },
+    "provider": {
+      "enum": [
+        "fake",
+        "docker",
+        "local-unsafe"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "sandbox_id": {
+      "pattern": "^sandbox_[0-9a-f]{32}$",
+      "title": "Sandbox Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "execution_id",
+    "sandbox_id",
+    "run_id",
+    "provider",
+    "native_resource_id",
+    "labels_sha256"
+  ],
+  "title": "SandboxExecutionHandle",
+  "type": "object"
+}

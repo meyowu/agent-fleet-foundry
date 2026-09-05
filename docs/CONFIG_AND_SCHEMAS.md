@@ -1,6 +1,6 @@
 # Configuration and canonical schemas — Agent Fleet
 
-This document distinguishes target public contracts from the implementation boundary. Phase 0–2 now enforces extensible role/workflow identifiers, one-use approval, bounded RepositoryProfile/ProjectKnowledge generation, exact ConfigSnapshot and TaskSpec bindings, FleetPlan, SandboxCapabilities, EvidenceBundle/CompletionDecision, FleetPatch validation, and shared fake/PydanticAI runtime contracts. Phase 2 adds explicit BYOK provider configuration; Docker enforcement, persistent trust, parallel scheduling, and operational FleetPatch remain later phases.
+This document distinguishes target public contracts from the implementation boundary. Phase 0–3 now enforces extensible role/workflow identifiers, one-use approval, bounded RepositoryProfile/ProjectKnowledge generation, exact ConfigSnapshot and TaskSpec bindings, FleetPlan, strict sandbox requirements/configuration/capabilities, command and cleanup evidence, EvidenceBundle/CompletionDecision, a hash-linked BootstrapReport, FleetPatch validation, and shared fake/PydanticAI runtime contracts. Phase 2 added explicit BYOK provider configuration; Phase 3 adds exact fake/Docker/local-unsafe selection, immutable Docker image/daemon binding, bounded command execution and recovery, and canary-before-publication bootstrap. Persistent trust, parallel scheduling, and operational FleetPatch remain later phases.
 
 ## 1. Configuration ownership
 
@@ -31,9 +31,9 @@ Not stored in the repository. It selects defaults and grants/revokes bounded per
 
 Phase 2 resolves only strict `env:NAME` references. The reference originates in an explicit user command and is persisted only in Fleet-owned Project/Run state. Repository `.fleet/` configuration may contain the runtime and opaque provider/model identifier but never the credential reference or value. The raw value remains in trusted control-plane memory. OS keyring and other backends are future work.
 
-## 2. Current FleetSpec runtime fields and later extensions
+## 2. Current Phase 3 FleetSpec fields and later extensions
 
-The checked-in Phase 2 `fleet.schema.json` accepts `runtime.adapter` as `fake` or `pydantic-ai`. `pydantic-ai` requires `runtime.providerModel`; `fake` forbids it. Both require the `structured_output` and `tool_calling` capabilities. The only accepted sandbox is `fake` with `networkMode: none`. A current real-runtime fragment is:
+The checked-in Phase 3 `fleet.schema.json` accepts `runtime.adapter` as `fake` or `pydantic-ai`. `pydantic-ai` requires `runtime.providerModel`; `fake` forbids it. Both require the `structured_output` and `tool_calling` capabilities. Sandbox `provider` is exactly `fake`, `docker`, or `local-unsafe`: fake and Docker require `networkMode: none`, Docker additionally requires an already-local image reference and bounded CPU/memory/PID/shm/tmpfs values, while local-unsafe must honestly declare `approved-unrestricted`. A current real-runtime/isolated-worker fragment is:
 
 ```yaml
 spec:
@@ -44,15 +44,21 @@ spec:
       - structured_output
       - tool_calling
   sandbox:
-    provider: fake
+    provider: docker
+    image: "agent-fleet-runner:phase3"
     networkMode: none
+    cpuLimit: 1.0
+    memoryMb: 512
+    pidsLimit: 128
+    shmMb: 64
+    tmpfsMb: 128
 ```
 
 The adapter-level live allowlist is narrower than the generic `providerModel` grammar: only `openai:<model>` and `openai-chat:<model>` are wired. Unknown prefixes fail closed before credential resolution or network. `credentialRef` is deliberately absent from FleetSpec.
 
-Phase 2 init accepts an identical generated `.fleet/` tree but does not merge or overwrite a differing one. A runtime/provider-model proposal that changes repository files fails before Project/artifact state or repository mutation. After reviewing `--preview`, the user moves the complete conflicting generated tree aside and reruns explicit init. Changing only `credential_ref` can succeed without `.fleet/` changes because it belongs exclusively to Fleet-owned state. General atomic configuration evolution remains the Phase 6 FleetPatch workflow.
+Phase 3 init accepts an identical generated `.fleet/` tree but does not merge or overwrite a differing one. A runtime/provider-model/sandbox proposal that changes repository files fails before Project/artifact state or repository mutation. For a new Docker registration, the proposal remains staged until a disposable canary reaches independently verified completion, cleanup is proven, and its BootstrapReport validates; only then is `.fleet/` published. After reviewing `--preview`, the user moves any complete conflicting generated tree aside and reruns explicit init. Changing only `credential_ref` can succeed without `.fleet/` changes because it belongs exclusively to Fleet-owned state. General atomic configuration evolution remains the Phase 6 FleetPatch workflow.
 
-The richer example below is a Phase 4/5 target and is **not** accepted as a whole by the Phase 2 parser. In particular, current FleetSpec has no `models`, image/resources, agent model selection, workflow parallelism, permission conditions, resource section, or budget section. `fleet init --preview --json` is the authoritative way to see a current parseable proposal.
+The richer example below is a Phase 4/5 target and is **not** accepted as a whole by the Phase 3 parser. In particular, current FleetSpec has no `models`, agent model selection, workflow parallelism, permission conditions, nested resource section, or budget section. Docker image and flat bounded resource fields are accepted only in the exact current sandbox shape shown above. `fleet init --preview --json` is the authoritative way to see a current parseable proposal.
 
 ```yaml
 apiVersion: agentfleet.dev/v1alpha1
@@ -321,7 +327,7 @@ This file and the `fleet permissions` command family do not exist through Phase 
 
 ## 6. Target semantic models and current contracts
 
-The checked-in generated JSON Schemas are authoritative for the Phase 2 serialized wire shape. Mandatory Python and application validators enforce cross-field, graph, filesystem, current-state, registered-secret, permission, runtime, and evidence-integrity rules that JSON Schema cannot express. Some conceptual snippets below describe richer later-phase contracts and are labeled as targets; implemented sections describe the current models.
+The checked-in generated JSON Schemas are authoritative for the Phase 3 serialized wire shape. Mandatory Python and application validators enforce cross-field, graph, filesystem, current-state, registered-secret, permission, runtime, sandbox-lifecycle, and evidence-integrity rules that JSON Schema cannot express. Some conceptual snippets below describe richer later-phase contracts and are labeled as targets; implemented sections describe the current models.
 
 ### 6.1 ScopeDecision
 
@@ -657,7 +663,7 @@ class SandboxCapabilities(BaseModel):
     supports_recovery: bool
 ```
 
-Capability models reject incoherent provider/security/isolation/execution/network/resource-limit combinations. Init and workflow startup accept only the exact Phase 2 FakeSandbox descriptor, report it, and every command record binds its provider and security level. FakeSandbox declares `isolation_enforced=false`, `executes_code=false`, no resource-limit support, and only `network=none`; ToolGateway consequently labels its command records `simulated`. Selecting PydanticAI changes the model boundary, not this execution classification. Per-plan `SandboxRequirements` matching and a complete capability snapshot in each run bundle remain Phase 3 hardening.
+Capability models reject incoherent provider/security/isolation/execution/network/resource-limit combinations. Phase 3 init and workflow startup resolve the exact persisted provider through `SandboxRegistry`, match immutable `SandboxRequirements`, and bind the complete configuration, capabilities, image identity where applicable, daemon identity where applicable, and their hashes into Project, Run, command evidence, and reports. FakeSandbox declares `isolation_enforced=false`, `executes_code=false`, no resource-limit support, and only `network=none`; ToolGateway labels its command records `simulated`. Docker is the only current `isolated` provider and can produce `observed` or, for a fresh non-mutating Verifier, `independently_verified` evidence. Local-unsafe reports `unsafe_host` and cannot satisfy isolation or verified-bootstrap requirements. Runtime selection never upgrades sandbox evidence strength.
 
 ### 6.13 EvidenceBundle and CompletionDecision
 
@@ -714,11 +720,11 @@ class EvidenceBundle(BaseModel):
     assembled_at: datetime
 ```
 
-EvidenceAssembler derives provenance and strength from trusted state, executor/sandbox capabilities, and artifact integrity. Agent-provided IDs and claims are never sufficient by themselves. It validates the exact ConfigSnapshot and TaskSpec artifact identities/content before considering plan, patch, commands, or verdict. It preserves Verifier-reported proof gaps, repairs, and regressions instead of dropping negative findings. CompletionGate requires authoritative artifact references, exact task/run/config/base/patch identities, successful non-truncated commands, complete criterion mappings, and—when required—Verifier-owned command evidence bound to the final patch. A contradictory PASS with repairs/regressions or a detected Verifier-workspace mutation receives stable reason codes and cannot verify completion. Phase 2 cannot map one overall verdict independently to multiple acceptance criteria; such tasks remain inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. Run lifecycle status and `verified_complete` are separate values. PydanticAI output cannot upgrade FakeSandbox command evidence, so Phase 2 remains `verified_complete=false`. `fleet run/status --json` exposes a bounded evidence summary including changed paths, criterion assessments, command results, verdicts, repairs/regressions, risks, proof gaps, runtime usage artifact IDs, and completion reason codes; a mismatched bundle binding is an integrity error rather than a partial status response.
+EvidenceAssembler derives provenance and strength from trusted state, executor/sandbox capabilities, and artifact integrity. Agent-provided IDs and claims are never sufficient by themselves. It validates the exact ConfigSnapshot and TaskSpec artifact identities/content before considering plan, patch, commands, or verdict. It preserves Verifier-reported proof gaps, repairs, and regressions instead of dropping negative findings. CompletionGate requires authoritative artifact references, exact task/run/config/base/patch identities, successful non-truncated commands, complete criterion mappings, and—when required—Verifier-owned command evidence bound to the final patch. A contradictory PASS with repairs/regressions or a detected Verifier-workspace mutation receives stable reason codes and cannot verify completion. Phase 3 still cannot map one overall verdict independently to multiple acceptance criteria; such tasks remain inconclusive with `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. Run lifecycle status and `verified_complete` are separate values. PydanticAI output cannot upgrade FakeSandbox or local-unsafe command evidence; only correctly bound, cleaned-up Docker execution can satisfy the isolated evidence gate. `fleet run/status --json` exposes a bounded evidence summary including changed paths, criterion assessments, command results, verdicts, repairs/regressions, risks, proof gaps, runtime usage artifact IDs, and completion reason codes; a mismatched bundle binding is an integrity error rather than a partial status response.
 
 ## 7. Event payload examples
 
-### Current Phase 2 permission request
+### Current baseline permission request
 
 ```json
 {
@@ -732,7 +738,7 @@ EvidenceAssembler derives provenance and strength from trusted state, executor/s
 }
 ```
 
-### Current Phase 2 verification result
+### Simulated verification result example
 
 ```json
 {

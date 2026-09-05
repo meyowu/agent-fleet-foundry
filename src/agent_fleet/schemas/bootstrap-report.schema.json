@@ -1,0 +1,827 @@
+{
+  "$defs": {
+    "ArtifactKind": {
+      "enum": [
+        "fleet_config_proposal",
+        "config_snapshot",
+        "task_spec",
+        "implementation_report",
+        "patch",
+        "test_report",
+        "verifier_verdict",
+        "run_summary",
+        "command_transcript",
+        "command_evidence",
+        "repository_profile",
+        "project_knowledge",
+        "fleet_plan",
+        "evidence_bundle",
+        "error_report",
+        "runtime_usage",
+        "sandbox_inspection",
+        "resource_cleanup",
+        "bootstrap_report"
+      ],
+      "title": "ArtifactKind",
+      "type": "string"
+    },
+    "ArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ArtifactKind"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "kind",
+        "sha256"
+      ],
+      "title": "ArtifactReference",
+      "type": "object"
+    },
+    "BootstrapPolicyMode": {
+      "enum": [
+        "verified",
+        "degraded_simulation",
+        "unsafe_host_development"
+      ],
+      "title": "BootstrapPolicyMode",
+      "type": "string"
+    },
+    "CompletionDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "effective_verdict": {
+          "$ref": "#/$defs/Verdict"
+        },
+        "reason_codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reason Codes",
+          "type": "array"
+        },
+        "verified_complete": {
+          "title": "Verified Complete",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "verified_complete",
+        "effective_verdict",
+        "reason_codes"
+      ],
+      "title": "CompletionDecision",
+      "type": "object"
+    },
+    "RunStatus": {
+      "enum": [
+        "created",
+        "running",
+        "paused_for_approval",
+        "ready_for_review",
+        "applying",
+        "completed",
+        "failed",
+        "cancelled",
+        "rejected",
+        "abandoned"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    },
+    "RuntimeConfiguration": {
+      "additionalProperties": false,
+      "description": "Provider-neutral, trusted runtime selection and invocation ceilings.",
+      "properties": {
+        "credential_ref": {
+          "anyOf": [
+            {
+              "maxLength": 132,
+              "minLength": 5,
+              "pattern": "^env:[A-Za-z_][A-Za-z0-9_]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credential Ref"
+        },
+        "max_requests": {
+          "default": 8,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Requests",
+          "type": "integer"
+        },
+        "max_retries": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 32,
+          "maximum": 256,
+          "minimum": 0,
+          "title": "Max Tool Calls",
+          "type": "integer"
+        },
+        "max_total_tokens": {
+          "default": 32768,
+          "maximum": 2000000,
+          "minimum": 1,
+          "title": "Max Total Tokens",
+          "type": "integer"
+        },
+        "provider_model": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Model"
+        },
+        "runtime_name": {
+          "default": "fake",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "title": "Runtime Name",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 120,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "RuntimeConfiguration",
+      "type": "object"
+    },
+    "SandboxCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "executes_code": {
+          "title": "Executes Code",
+          "type": "boolean"
+        },
+        "isolation_enforced": {
+          "title": "Isolation Enforced",
+          "type": "boolean"
+        },
+        "provider": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "security_level": {
+          "$ref": "#/$defs/SandboxSecurityLevel"
+        },
+        "supported_network_modes": {
+          "items": {
+            "enum": [
+              "none",
+              "approved-unrestricted"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Supported Network Modes",
+          "type": "array"
+        },
+        "supports_capability_drop": {
+          "default": false,
+          "title": "Supports Capability Drop",
+          "type": "boolean"
+        },
+        "supports_no_new_privileges": {
+          "default": false,
+          "title": "Supports No New Privileges",
+          "type": "boolean"
+        },
+        "supports_non_root": {
+          "default": false,
+          "title": "Supports Non Root",
+          "type": "boolean"
+        },
+        "supports_read_only_root": {
+          "default": false,
+          "title": "Supports Read Only Root",
+          "type": "boolean"
+        },
+        "supports_recovery": {
+          "title": "Supports Recovery",
+          "type": "boolean"
+        },
+        "supports_resource_limits": {
+          "title": "Supports Resource Limits",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider",
+        "security_level",
+        "isolation_enforced",
+        "executes_code",
+        "supported_network_modes",
+        "supports_resource_limits",
+        "supports_recovery"
+      ],
+      "title": "SandboxCapabilities",
+      "type": "object"
+    },
+    "SandboxConfiguration": {
+      "additionalProperties": false,
+      "properties": {
+        "cpu_limit": {
+          "default": 1.0,
+          "maximum": 16,
+          "minimum": 0.001,
+          "multipleOf": 0.001,
+          "title": "Cpu Limit",
+          "type": "number"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image"
+        },
+        "memory_mb": {
+          "default": 512,
+          "maximum": 32768,
+          "minimum": 64,
+          "title": "Memory Mb",
+          "type": "integer"
+        },
+        "network_mode": {
+          "default": "none",
+          "enum": [
+            "none",
+            "approved-unrestricted"
+          ],
+          "title": "Network Mode",
+          "type": "string"
+        },
+        "pids_limit": {
+          "default": 128,
+          "maximum": 4096,
+          "minimum": 16,
+          "title": "Pids Limit",
+          "type": "integer"
+        },
+        "provider": {
+          "default": "fake",
+          "enum": [
+            "fake",
+            "docker",
+            "local-unsafe"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "shm_mb": {
+          "default": 64,
+          "maximum": 1024,
+          "minimum": 16,
+          "title": "Shm Mb",
+          "type": "integer"
+        },
+        "tmpfs_mb": {
+          "default": 128,
+          "maximum": 4096,
+          "minimum": 16,
+          "title": "Tmpfs Mb",
+          "type": "integer"
+        }
+      },
+      "title": "SandboxConfiguration",
+      "type": "object"
+    },
+    "SandboxPreflight": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/SandboxCapabilities"
+        },
+        "checked_at": {
+          "format": "date-time",
+          "title": "Checked At",
+          "type": "string"
+        },
+        "cli_version": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cli Version"
+        },
+        "configuration_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Configuration Hash",
+          "type": "string"
+        },
+        "daemon_architecture": {
+          "anyOf": [
+            {
+              "enum": [
+                "amd64",
+                "arm64"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Daemon Architecture"
+        },
+        "daemon_identity": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Daemon Identity"
+        },
+        "daemon_os": {
+          "anyOf": [
+            {
+              "const": "linux",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Daemon Os"
+        },
+        "daemon_server_version": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Daemon Server Version"
+        },
+        "diagnostic": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Diagnostic",
+          "type": "string"
+        },
+        "endpoint_kind": {
+          "enum": [
+            "none",
+            "local-unix",
+            "host"
+          ],
+          "title": "Endpoint Kind",
+          "type": "string"
+        },
+        "executable_path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executable Path"
+        },
+        "image_identity": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Identity"
+        },
+        "provider": {
+          "enum": [
+            "fake",
+            "docker",
+            "local-unsafe"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "ready": {
+          "title": "Ready",
+          "type": "boolean"
+        },
+        "recovery_scope_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recovery Scope Id"
+        },
+        "requirements_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Requirements Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "ready",
+        "capabilities",
+        "configuration_hash",
+        "requirements_hash",
+        "endpoint_kind",
+        "diagnostic",
+        "checked_at"
+      ],
+      "title": "SandboxPreflight",
+      "type": "object"
+    },
+    "SandboxRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "capability_drop_required": {
+          "default": false,
+          "title": "Capability Drop Required",
+          "type": "boolean"
+        },
+        "code_execution_required": {
+          "default": false,
+          "title": "Code Execution Required",
+          "type": "boolean"
+        },
+        "isolation_required": {
+          "default": false,
+          "title": "Isolation Required",
+          "type": "boolean"
+        },
+        "network_mode": {
+          "default": "none",
+          "enum": [
+            "none",
+            "approved-unrestricted"
+          ],
+          "title": "Network Mode",
+          "type": "string"
+        },
+        "no_new_privileges_required": {
+          "default": false,
+          "title": "No New Privileges Required",
+          "type": "boolean"
+        },
+        "non_root_required": {
+          "default": false,
+          "title": "Non Root Required",
+          "type": "boolean"
+        },
+        "read_only_root_required": {
+          "default": false,
+          "title": "Read Only Root Required",
+          "type": "boolean"
+        },
+        "resource_limits_required": {
+          "default": false,
+          "title": "Resource Limits Required",
+          "type": "boolean"
+        }
+      },
+      "title": "SandboxRequirements",
+      "type": "object"
+    },
+    "SandboxSecurityLevel": {
+      "enum": [
+        "fake",
+        "isolated",
+        "unsafe_host"
+      ],
+      "title": "SandboxSecurityLevel",
+      "type": "string"
+    },
+    "Verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "canary_project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Canary Project Id",
+      "type": "string"
+    },
+    "canary_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Canary Run Id",
+      "type": "string"
+    },
+    "canary_status": {
+      "$ref": "#/$defs/RunStatus"
+    },
+    "canary_task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Canary Task Id",
+      "type": "string"
+    },
+    "cleanup_complete": {
+      "title": "Cleanup Complete",
+      "type": "boolean"
+    },
+    "cleanup_receipt": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "command_evidence": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Command Evidence",
+      "type": "array"
+    },
+    "command_transcripts": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Command Transcripts",
+      "type": "array"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "completion_decision": {
+      "$ref": "#/$defs/CompletionDecision"
+    },
+    "config_snapshot": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "evidence_bundle": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "fleet_plan": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "kind": {
+      "const": "BootstrapReport",
+      "default": "BootstrapReport",
+      "title": "Kind",
+      "type": "string"
+    },
+    "outstanding_lease_count": {
+      "maximum": 1024,
+      "minimum": 0,
+      "title": "Outstanding Lease Count",
+      "type": "integer"
+    },
+    "patch": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "policy_mode": {
+      "$ref": "#/$defs/BootstrapPolicyMode"
+    },
+    "project_knowledge": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "project_knowledge_semantic_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Project Knowledge Semantic Sha256",
+      "type": "string"
+    },
+    "proof_gaps": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Proof Gaps",
+      "type": "array"
+    },
+    "proposal": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "proposal_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Proposal Sha256",
+      "type": "string"
+    },
+    "publish_allowed": {
+      "title": "Publish Allowed",
+      "type": "boolean"
+    },
+    "remaining_risks": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Remaining Risks",
+      "type": "array"
+    },
+    "repository_profile": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "repository_profile_semantic_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repository Profile Semantic Sha256",
+      "type": "string"
+    },
+    "sandbox_capabilities": {
+      "$ref": "#/$defs/SandboxCapabilities"
+    },
+    "sandbox_capabilities_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sandbox Capabilities Sha256",
+      "type": "string"
+    },
+    "sandbox_configuration": {
+      "$ref": "#/$defs/SandboxConfiguration"
+    },
+    "sandbox_configuration_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sandbox Configuration Sha256",
+      "type": "string"
+    },
+    "sandbox_inspections": {
+      "items": {
+        "$ref": "#/$defs/ArtifactReference"
+      },
+      "maxItems": 64,
+      "title": "Sandbox Inspections",
+      "type": "array"
+    },
+    "sandbox_preflight": {
+      "$ref": "#/$defs/SandboxPreflight"
+    },
+    "sandbox_preflight_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sandbox Preflight Sha256",
+      "type": "string"
+    },
+    "sandbox_requirements": {
+      "$ref": "#/$defs/SandboxRequirements"
+    },
+    "sandbox_requirements_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sandbox Requirements Sha256",
+      "type": "string"
+    },
+    "target_head_revision": {
+      "title": "Target Head Revision",
+      "type": "string"
+    },
+    "target_identity_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Target Identity Hash",
+      "type": "string"
+    },
+    "target_runtime_configuration": {
+      "$ref": "#/$defs/RuntimeConfiguration"
+    },
+    "target_runtime_configuration_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Target Runtime Configuration Sha256",
+      "type": "string"
+    },
+    "target_status_fingerprint": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Target Status Fingerprint",
+      "type": "string"
+    },
+    "task_spec": {
+      "$ref": "#/$defs/ArtifactReference"
+    },
+    "verifier_verdict": {
+      "$ref": "#/$defs/ArtifactReference"
+    }
+  },
+  "required": [
+    "target_identity_hash",
+    "target_head_revision",
+    "target_status_fingerprint",
+    "target_runtime_configuration",
+    "target_runtime_configuration_sha256",
+    "proposal_sha256",
+    "proposal",
+    "repository_profile",
+    "repository_profile_semantic_sha256",
+    "project_knowledge",
+    "project_knowledge_semantic_sha256",
+    "config_snapshot",
+    "sandbox_configuration",
+    "sandbox_configuration_sha256",
+    "sandbox_capabilities",
+    "sandbox_capabilities_sha256",
+    "sandbox_requirements",
+    "sandbox_requirements_sha256",
+    "sandbox_preflight",
+    "sandbox_preflight_sha256",
+    "canary_project_id",
+    "canary_run_id",
+    "canary_task_id",
+    "canary_status",
+    "task_spec",
+    "fleet_plan",
+    "patch",
+    "command_evidence",
+    "command_transcripts",
+    "verifier_verdict",
+    "evidence_bundle",
+    "cleanup_receipt",
+    "completion_decision",
+    "cleanup_complete",
+    "outstanding_lease_count",
+    "policy_mode",
+    "publish_allowed",
+    "created_at",
+    "completed_at"
+  ],
+  "title": "BootstrapReport",
+  "type": "object"
+}

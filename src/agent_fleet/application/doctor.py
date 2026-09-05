@@ -6,16 +6,23 @@ from pathlib import Path
 
 from agent_fleet import __version__
 from agent_fleet.application.runtime import RuntimeRegistry
-from agent_fleet.domain.errors import FleetError
+from agent_fleet.application.sandboxes import (
+    SandboxRegistry,
+    requirements_for_configuration,
+)
+from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import (
     DoctorCheck,
     DoctorReport,
+    Project,
     RuntimeCapability,
     RuntimeConfiguration,
     RuntimeCredentialCheck,
     RuntimeCredentialStatus,
+    SandboxConfiguration,
+    SandboxPreflight,
 )
-from agent_fleet.domain.security import MINIMUM_GIT_VERSION, git_version_is_supported
+from agent_fleet.domain.security import MINIMUM_GIT_VERSION, Redactor, git_version_is_supported
 from agent_fleet.ports.diagnostics import SystemDiagnostics
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.state_store import StateStore
@@ -36,14 +43,24 @@ class DoctorService:
         repository: RepositoryPort,
         system: SystemDiagnostics,
         runtime_registry: RuntimeRegistry,
+        sandboxes: SandboxRegistry | None = None,
+        redactor: Redactor | None = None,
     ) -> None:
         self.state_root = state_root
         self.state = state
         self.repository = repository
         self.system = system
         self.runtime_registry = runtime_registry
+        self.sandboxes = sandboxes
+        self.redactor = redactor or Redactor()
 
-    def inspect(self, current_path: Path) -> DoctorReport:
+    async def inspect(
+        self,
+        current_path: Path,
+        *,
+        sandbox_name: str | None = None,
+        docker_image: str | None = None,
+    ) -> DoctorReport:
         checks: list[DoctorCheck] = []
         python_ok, python_version = self.system.python_version()
         checks.append(
@@ -99,7 +116,9 @@ class DoctorService:
             sqlite_ok = False
         checks.append(DoctorCheck(name="sqlite", ok=sqlite_ok, required=True, detail=sqlite_detail))
         runtime_configuration = RuntimeConfiguration()
+        sandbox_configuration = SandboxConfiguration()
         runtime_selection_valid = True
+        project: Project | None = None
         if sqlite_ok and repository_root is not None:
             try:
                 project = self.state.get_project_by_root(repository_root)
@@ -109,20 +128,59 @@ class DoctorService:
                         provider_model=project.provider_model,
                         credential_ref=project.credential_ref,
                     )
+                    if project.sandbox_configuration is None:
+                        raise ValueError("Project sandbox configuration was not materialized")
+                    sandbox_configuration = project.sandbox_configuration
             except (FleetError, ValueError):
                 runtime_selection_valid = False
         checks.append(
             self._provider_credential_check(runtime_configuration, runtime_selection_valid)
         )
-        docker_version = self.system.docker_version(current_path)
-        docker_detail = "Docker CLI not found; optional until Phase 3."
-        if docker_version:
-            docker_detail = docker_version
+        sandbox_configuration = self._selected_sandbox_configuration(
+            project,
+            current=sandbox_configuration,
+            sandbox_name=sandbox_name,
+            docker_image=docker_image,
+        )
+        uses_registered_sandbox = (
+            project is not None and sandbox_configuration == project.sandbox_configuration
+        )
+        expected_image_identity = (
+            project.sandbox_image_identity
+            if project is not None and uses_registered_sandbox
+            else None
+        )
+        expected_daemon_identity = (
+            project.sandbox_daemon_identity
+            if project is not None and uses_registered_sandbox
+            else None
+        )
+        sandbox_check, sandbox_preflight = await self._sandbox_preflight_check(
+            sandbox_configuration,
+            expected_image_identity=expected_image_identity,
+            expected_daemon_identity=expected_daemon_identity,
+        )
+        checks.append(sandbox_check)
+        docker_selected = sandbox_configuration.provider == "docker"
+        docker_ok = sandbox_preflight is not None if docker_selected else False
+        docker_detail = "Docker was not inspected because a non-Docker sandbox is selected."
+        if docker_selected and sandbox_preflight is not None:
+            docker_detail = (
+                f"trusted_cli={sandbox_preflight.executable_path}; "
+                f"client={sandbox_preflight.cli_version}; "
+                f"server={sandbox_preflight.daemon_server_version}; "
+                f"platform={sandbox_preflight.daemon_os}/{sandbox_preflight.daemon_architecture}; "
+                "endpoint=local-unix."
+            )
+        elif docker_selected:
+            docker_detail = (
+                "Trusted Docker CLI/daemon/image preflight failed; no container created."
+            )
         checks.append(
             DoctorCheck(
                 name="docker",
-                ok=docker_version is not None,
-                required=False,
+                ok=docker_ok,
+                required=docker_selected,
                 detail=docker_detail,
             )
         )
@@ -131,10 +189,143 @@ class DoctorService:
                 "Provider diagnostics inspect local credential presence and validity only; "
                 "they do not reveal values or contact a model."
             ),
-            "security_level=fake provides no OS isolation and executes no project code.",
+            self._sandbox_warning(sandbox_configuration),
         ]
         healthy = all(check.ok for check in checks if check.required)
-        return DoctorReport(healthy=healthy, checks=checks, warnings=warnings)
+        report = DoctorReport(healthy=healthy, checks=checks, warnings=warnings)
+        safe_report, _ = self.redactor.redact_data(report.model_dump(mode="json"))
+        return DoctorReport.model_validate(safe_report)
+
+    @staticmethod
+    def _selected_sandbox_configuration(
+        project: Project | None,
+        *,
+        current: SandboxConfiguration,
+        sandbox_name: str | None,
+        docker_image: str | None,
+    ) -> SandboxConfiguration:
+        if sandbox_name is None:
+            if docker_image is not None:
+                raise FleetError(
+                    ErrorCode.CONFIG_INVALID,
+                    "A Docker image was supplied without selecting the Docker sandbox.",
+                    "Pass --sandbox docker together with --docker-image.",
+                )
+            return current
+        if sandbox_name == "docker" and docker_image is None:
+            if project is not None and current.provider == "docker":
+                return current
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "Docker diagnostics require an explicit local image reference.",
+                "Pass --docker-image with the preloaded local runner image.",
+            )
+        try:
+            return SandboxConfiguration(
+                provider=sandbox_name,
+                image=docker_image,
+                network_mode=(
+                    "approved-unrestricted" if sandbox_name == "local-unsafe" else "none"
+                ),
+            )
+        except ValueError:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "The requested doctor sandbox selection is invalid.",
+                "Use fake, Docker with an explicit local image, or local-unsafe.",
+            ) from None
+
+    async def _sandbox_preflight_check(
+        self,
+        configuration: SandboxConfiguration,
+        *,
+        expected_image_identity: str | None,
+        expected_daemon_identity: str | None,
+    ) -> tuple[DoctorCheck, SandboxPreflight | None]:
+        if self.sandboxes is None:
+            return (
+                DoctorCheck(
+                    name="sandbox_preflight",
+                    ok=configuration.provider == "fake",
+                    required=True,
+                    detail=f"sandbox={configuration.provider}; preflight registry unavailable.",
+                ),
+                None,
+            )
+        try:
+            preflight = await self.sandboxes.preflight(
+                configuration,
+                requirements_for_configuration(configuration),
+            )
+        except FleetError as error:
+            return (
+                DoctorCheck(
+                    name="sandbox_preflight",
+                    ok=False,
+                    required=True,
+                    detail=(
+                        f"sandbox={configuration.provider}; preflight={error.code.value}; "
+                        "no container was created."
+                    ),
+                ),
+                None,
+            )
+        if (
+            expected_image_identity is not None
+            and preflight.image_identity != expected_image_identity
+        ) or (
+            expected_daemon_identity is not None
+            and preflight.daemon_identity != expected_daemon_identity
+        ):
+            return (
+                DoctorCheck(
+                    name="sandbox_preflight",
+                    ok=False,
+                    required=True,
+                    detail=(
+                        f"sandbox={configuration.provider}; preflight=SANDBOX_BINDING_DRIFTED; "
+                        "no container was created."
+                    ),
+                ),
+                None,
+            )
+        image_detail = (
+            f"; image_identity={preflight.image_identity}"
+            if preflight.image_identity is not None
+            else ""
+        )
+        daemon_detail = (
+            f"; daemon_identity={preflight.daemon_identity}; "
+            f"platform={preflight.daemon_os}/{preflight.daemon_architecture}"
+            if preflight.daemon_identity is not None
+            else ""
+        )
+        return (
+            DoctorCheck(
+                name="sandbox_preflight",
+                ok=preflight.ready,
+                required=True,
+                detail=(
+                    f"sandbox={configuration.provider}; endpoint={preflight.endpoint_kind}"
+                    f"{image_detail}{daemon_detail}; inspect-only preflight complete."
+                ),
+            ),
+            preflight,
+        )
+
+    @staticmethod
+    def _sandbox_warning(configuration: SandboxConfiguration) -> str:
+        if configuration.provider == "fake":
+            return "security_level=fake provides no OS isolation and executes no project code."
+        if configuration.provider == "local-unsafe":
+            return (
+                "security_level=unsafe_host executes directly on the host and cannot provide "
+                "independent isolation evidence."
+            )
+        return (
+            "Docker doctor performed inspect-only checks; it did not create a container or "
+            "run repository code."
+        )
 
     def _provider_credential_check(
         self,

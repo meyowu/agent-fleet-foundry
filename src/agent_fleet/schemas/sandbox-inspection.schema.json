@@ -1,0 +1,197 @@
+{
+  "$defs": {
+    "SandboxCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "executes_code": {
+          "title": "Executes Code",
+          "type": "boolean"
+        },
+        "isolation_enforced": {
+          "title": "Isolation Enforced",
+          "type": "boolean"
+        },
+        "provider": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Provider",
+          "type": "string"
+        },
+        "security_level": {
+          "$ref": "#/$defs/SandboxSecurityLevel"
+        },
+        "supported_network_modes": {
+          "items": {
+            "enum": [
+              "none",
+              "approved-unrestricted"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Supported Network Modes",
+          "type": "array"
+        },
+        "supports_capability_drop": {
+          "default": false,
+          "title": "Supports Capability Drop",
+          "type": "boolean"
+        },
+        "supports_no_new_privileges": {
+          "default": false,
+          "title": "Supports No New Privileges",
+          "type": "boolean"
+        },
+        "supports_non_root": {
+          "default": false,
+          "title": "Supports Non Root",
+          "type": "boolean"
+        },
+        "supports_read_only_root": {
+          "default": false,
+          "title": "Supports Read Only Root",
+          "type": "boolean"
+        },
+        "supports_recovery": {
+          "title": "Supports Recovery",
+          "type": "boolean"
+        },
+        "supports_resource_limits": {
+          "title": "Supports Resource Limits",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider",
+        "security_level",
+        "isolation_enforced",
+        "executes_code",
+        "supported_network_modes",
+        "supports_resource_limits",
+        "supports_recovery"
+      ],
+      "title": "SandboxCapabilities",
+      "type": "object"
+    },
+    "SandboxSecurityLevel": {
+      "enum": [
+        "fake",
+        "isolated",
+        "unsafe_host"
+      ],
+      "title": "SandboxSecurityLevel",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "capabilities": {
+      "$ref": "#/$defs/SandboxCapabilities"
+    },
+    "capabilities_dropped": {
+      "title": "Capabilities Dropped",
+      "type": "boolean"
+    },
+    "configuration_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Configuration Hash",
+      "type": "string"
+    },
+    "daemon_identity": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Daemon Identity"
+    },
+    "effective_network_mode": {
+      "enum": [
+        "none",
+        "approved-unrestricted"
+      ],
+      "title": "Effective Network Mode",
+      "type": "string"
+    },
+    "exact_mounts": {
+      "title": "Exact Mounts",
+      "type": "boolean"
+    },
+    "image_identity": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image Identity"
+    },
+    "inspected_at": {
+      "format": "date-time",
+      "title": "Inspected At",
+      "type": "string"
+    },
+    "no_new_privileges": {
+      "title": "No New Privileges",
+      "type": "boolean"
+    },
+    "non_root": {
+      "title": "Non Root",
+      "type": "boolean"
+    },
+    "provider": {
+      "enum": [
+        "fake",
+        "docker",
+        "local-unsafe"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "read_only_root": {
+      "title": "Read Only Root",
+      "type": "boolean"
+    },
+    "ready": {
+      "title": "Ready",
+      "type": "boolean"
+    },
+    "resource_limits_enforced": {
+      "title": "Resource Limits Enforced",
+      "type": "boolean"
+    },
+    "sandbox_id": {
+      "pattern": "^sandbox_[0-9a-f]{32}$",
+      "title": "Sandbox Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sandbox_id",
+    "provider",
+    "ready",
+    "capabilities",
+    "configuration_hash",
+    "effective_network_mode",
+    "non_root",
+    "read_only_root",
+    "no_new_privileges",
+    "capabilities_dropped",
+    "resource_limits_enforced",
+    "exact_mounts",
+    "inspected_at"
+  ],
+  "title": "SandboxInspection",
+  "type": "object"
+}

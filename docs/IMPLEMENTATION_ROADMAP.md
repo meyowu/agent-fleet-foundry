@@ -4,7 +4,7 @@
 
 Implement phases in order. Every phase must leave a runnable, tested repository and produce an updated ExecPlan outcome. Do not begin a later phase by creating empty placeholder abstractions across the whole system. Add only the contracts required by the current vertical slice, while preserving the specified architectural boundaries.
 
-Current boundary as of 2026-09-04: Phase 0/1, the Phase 1.5 North-Star foundation, and the Phase 2 BYOK PydanticAI vertical slice are implemented. Phase 2 release acceptance remains governed by its living ExecPlan and final quality evidence; Phase 3–7 are roadmap. Docker or other real worker execution must not begin until the Phase 2 acceptance gates pass.
+Current boundary as of 2026-09-04: Phase 0/1, the Phase 1.5 North-Star foundation, the Phase 2 BYOK PydanticAI vertical slice, and the Phase 3 local Docker sandbox/evidence-gated bootstrap slice are implemented. Phase 3 release acceptance and delivery evidence are governed by its living ExecPlan. Phase 4–7 remain roadmap; no later-phase implementation begins until the Phase 3 acceptance gates pass.
 
 For each phase:
 
@@ -111,7 +111,7 @@ fleet patch show <run-id>
 - Repository adapter using structured Git subprocess calls.
 - Candidate worktree creation, canonical patch extraction, separate verification workspace, and cleanup.
 - Apply guard checking target state before applying.
-- Cancellation and startup recovery for fake resources.
+- Cancellation and explicit exact-run recovery for fake resources.
 - `fleet status`, `fleet logs`, `fleet artifacts`, `fleet patch show`, and `fleet patch apply` as real commands.
 
 ### Approval scenario
@@ -248,6 +248,8 @@ Offline TestModel/FunctionModel contract, integration, and CLI tests must obtain
 Do not add multiple real harnesses yet.
 
 ## Phase 3 — Real Docker sandbox and command/file ToolGateway
+
+**Implementation status:** implementation present; the Phase 3 living ExecPlan is authoritative for the exact offline, real-Docker, manual-canary, independent-review, commit, PR, merge, and post-merge evidence. The optional live-provider smoke remains separately gated and is not required for the deterministic Phase 3 bootstrap acceptance path.
 
 ### Goal
 

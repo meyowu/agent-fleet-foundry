@@ -29,6 +29,24 @@ def test_default_fleet_spec_round_trips_strictly() -> None:
     spec = validate_fleet_files(files)
     assert spec.spec.runtime.adapter == "fake"
     assert set(spec.spec.agents) == {"cos", "engineer", "verifier"}
+    assert spec.spec.agents["cos"].allowed_tools == []
+    assert spec.spec.agents["engineer"].allowed_tools == [
+        "repo.list_files",
+        "repo.read_file",
+        "repo.search_text",
+        "workspace.get_diff",
+        "workspace.write_file",
+        "workspace.apply_edit",
+        "workspace.delete_path",
+        "command.run",
+    ]
+    assert spec.spec.agents["verifier"].allowed_tools == [
+        "repo.list_files",
+        "repo.read_file",
+        "repo.search_text",
+        "workspace.get_diff",
+        "command.run",
+    ]
 
 
 def test_pydantic_ai_fleet_spec_requires_and_preserves_opaque_provider_model() -> None:

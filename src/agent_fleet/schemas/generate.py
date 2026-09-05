@@ -8,14 +8,24 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from agent_fleet.domain.bootstrap import BootstrapReport
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec, VerificationProfile
-from agent_fleet.domain.evidence import CommandEvidence, EvidenceBundle
+from agent_fleet.domain.evidence import CommandEvidence, EvidenceBundle, ResourceCleanupReceipt
 from agent_fleet.domain.fleet_patch import FleetPatch
 from agent_fleet.domain.fleet_plan import FleetPlan
 from agent_fleet.domain.models import (
+    CommandSpec,
     ImplementationReport,
     JsonEnvelope,
     SandboxCapabilities,
+    SandboxCleanupResult,
+    SandboxConfiguration,
+    SandboxExecutionHandle,
+    SandboxExecutionMetadata,
+    SandboxExecutionRecoveryRequest,
+    SandboxInspection,
+    SandboxPreflight,
+    SandboxRequirements,
     ScopeDecision,
     TaskSpec,
     ToolIntent,
@@ -39,8 +49,19 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "project-knowledge.schema.json": ProjectKnowledge,
     "fleet-plan.schema.json": FleetPlan,
     "sandbox-capabilities.schema.json": SandboxCapabilities,
+    "sandbox-configuration.schema.json": SandboxConfiguration,
+    "sandbox-requirements.schema.json": SandboxRequirements,
+    "sandbox-preflight.schema.json": SandboxPreflight,
+    "sandbox-inspection.schema.json": SandboxInspection,
+    "sandbox-execution-handle.schema.json": SandboxExecutionHandle,
+    "sandbox-execution-metadata.schema.json": SandboxExecutionMetadata,
+    "sandbox-execution-recovery-request.schema.json": SandboxExecutionRecoveryRequest,
+    "sandbox-cleanup-result.schema.json": SandboxCleanupResult,
+    "command-spec.schema.json": CommandSpec,
     "command-evidence.schema.json": CommandEvidence,
     "evidence-bundle.schema.json": EvidenceBundle,
+    "resource-cleanup-receipt.schema.json": ResourceCleanupReceipt,
+    "bootstrap-report.schema.json": BootstrapReport,
     "fleet-patch.schema.json": FleetPatch,
 }
 

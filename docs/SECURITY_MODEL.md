@@ -99,9 +99,9 @@ The adapter-code distinction is important: models, provider responses, and harne
 
 ### Current enforcement boundary
 
-- **Enforced in Phase 0–2:** bounded static profiling with pre-output/pre-write registered-secret rejection, canonical runtime-tool intents, an independently injected baseline PermissionBroker, three decision values, default deny, decision audit events, exact allow-once binding/consumption, runtime input rejection for host-path/sandbox capabilities, path and symlink checks, Git 2.45+ hardened worktrees and trusted executable resolution, canonical patch hashes, verifier-write denial/mutation detection, target-state apply guards, exact FakeSandbox matching, simulated-proof-aware EvidenceBundle/CompletionGate, strict `env:NAME` BYOK references, explicit PydanticAI provider construction, complete Fleet-supplied/model-response/final-request registered-secret scans, typed role output/usage projection, dynamic secret redaction, and no harness-native execution path.
-- **Still partial:** FakeSandbox remains non-isolating and executes no code; only direct/single/pair plans run; permission persistence is allow-once only; FleetPatch is a protected schema/validator rather than an operational workflow; the installed PydanticAI adapter code shares the trusted control-plane process.
-- **Roadmap:** Docker enforcement (Phase 3), run/persistent trust plus explain/revoke (Phase 4), the complete adaptive/chat workflow (Phase 5), and operational FleetPatch evolution (Phase 6).
+- **Enforced in Phase 0–3:** bounded static profiling with pre-output/pre-write registered-secret rejection; canonical runtime-tool intents; an independently injected baseline PermissionBroker with three decision values, default deny, decision events, and exact allow-once; descriptor-relative workspace operations; Git 2.45+ hardened worktrees and trusted executable resolution; canonical patches and guarded apply; exact fake/Docker/local-unsafe selection with no fallback; immutable local Docker daemon/image binding; inspected network-off, non-root, read-only, resource-bounded one-shot containers; durable execution recovery; fresh-verifier evidence; canary-before-publication BootstrapReport validation; strict `env:NAME` BYOK; complete model/request/artifact registered-secret scans; and no harness-native execution path.
+- **Still partial:** FakeSandbox remains simulated, local-unsafe remains non-isolating, only direct/single/pair plans run, permission persistence is allow-once only, FleetPatch is a protected schema/validator rather than an operational workflow, and installed Python adapter code shares the trusted control-plane process. Docker trusts the local account, CLI/configuration, daemon, kernel/VM, and preloaded image and does not defend against a hostile same-user process.
+- **Roadmap:** run/persistent trust plus explain/revoke (Phase 4), the complete adaptive/chat workflow (Phase 5), operational FleetPatch evolution (Phase 6), and broader release/platform hardening (Phase 7).
 
 ## 5. Authorization model
 
@@ -192,7 +192,7 @@ Deny overrides allow at the same or broader scope. More-specific allow cannot ov
 - raw credentials, grant IDs, approval resolution, or trusted policy context;
 - repository/sandbox adapter instances or an unmediated subprocess callable.
 
-A runtime may propose a typed action using the tool catalog. In Phase 2, `GatewayRuntimeToolCatalog` constructs trusted principal/stage/workspace identity, validates exact supported logical resource shapes, and asks ToolGateway and PermissionBroker. After authorization, candidate writes use a narrow Fleet-owned atomic candidate-worktree primitive; fake commands and the approval fixture invoke FakeSandbox. Broader resource canonicalization belongs with Phase 3 tools. The PydanticAI adapter exposes the catalog through its external-tool transport but cannot replace it with native shell, filesystem, code-execution, MCP, hosted, or arbitrary network tools. Built-in runtime modules must not import concrete repository or sandbox implementations or perform filesystem/subprocess side effects. A verifier mutation test must submit a forbidden intent and prove denial, not mutate a host path directly.
+A runtime may propose a typed action using the tool catalog. In Phase 3, `GatewayRuntimeToolCatalog` constructs trusted principal/stage/workspace/provider identity, validates exact supported logical resource shapes, and asks ToolGateway and PermissionBroker. After authorization, bounded list/read/search/write/edit/delete operations use descriptor-relative no-follow filesystem primitives, diff remains a trusted repository operation, and exact reviewed command IDs resolve server-side to structured no-shell execution through the selected sandbox. Fake commands and the approval fixture remain simulated; local-unsafe requires its separate high-risk confirmation; only Docker can supply isolated evidence. The PydanticAI adapter exposes the catalog through its external-tool transport but cannot replace it with native shell, filesystem, code-execution, MCP, hosted, or arbitrary network tools. Built-in runtime modules must not import concrete repository or sandbox implementations or perform filesystem/subprocess side effects. A verifier mutation test submits a forbidden intent and proves denial, not mutate a host path directly.
 
 The runtime registry performs exact adapter selection and typed capability checks with no fallback. The live PydanticAI path allows only `openai:<model>` and `openai-chat:<model>` and rejects other prefixes before credential resolution or network. CoS receives no execution tools; Engineer and Verifier receive only their stage-bound catalog. Fleet-owned instructions, tool definitions, output schemas, and bounded dynamic context are registered-secret scanned before model invocation. Complete new provider messages are scanned before any deferred tool, and the SDK-serialized body is scanned at the last request hook before send. Model output, usage, and provider metadata are bounded and projected into project-owned types before they cross the adapter boundary.
 
@@ -422,11 +422,11 @@ A known command can still execute malicious project code; sandbox enforcement re
 
 ## 10. Sandbox requirements
 
-Every sandbox provider exposes an immutable capability descriptor including provider name, security level, whether isolation is enforced, whether code is executed, supported network modes, and enforceable resource/recovery support. The control plane matches supported requirements against this descriptor before creating a resource. Phase 2 reports and binds the exact FakeSandbox descriptor; full run-level capability snapshots and richer requirement matching arrive with real sandbox providers. Missing capability is a hard mismatch, never permission to fall back.
+Every sandbox provider exposes an immutable capability descriptor including provider name, security level, whether isolation is enforced, whether code is executed, supported network modes, and enforceable resource/recovery support. The control plane matches `SandboxRequirements` against the exact selected descriptor before creating a resource. Phase 3 binds the complete configuration/capability snapshots and hashes to Project, Run, command evidence, and reports; Docker state also binds immutable image and daemon identities. Missing capability is a hard mismatch, never permission to fall back. Fake, Docker, and local-unsafe are separate explicit providers, and Docker failure never selects either weaker option.
 
 ## 10.1 Docker provider baseline
 
-The Docker adapter must create per-run or per-task workers with at least:
+The Phase 3 Docker adapter creates one worker per reviewed command with:
 
 - non-root user mapped deliberately;
 - `--cap-drop ALL`;
@@ -442,11 +442,11 @@ The Docker adapter must create per-run or per-task workers with at least:
 - CPU, memory, PID, timeout, and output limits;
 - explicit image reference, preferably digest/pin strategy documented;
 - container labels for project/run/task and recovery;
-- cleanup on success, failure, cancellation, and startup recovery;
+- cleanup on success, failure, cancellation, and explicit exact-run recovery;
 - secrets absent from environment and mounts;
 - control-plane-generated container names and paths.
 
-The initial implementation may invoke Docker CLI with structured argv. It must capture and classify failures without using a shell.
+The implementation invokes a fixed Docker CLI with structured argv and no shell. It accepts only a pinned local Unix endpoint and Linux daemon, requires an already-local image and resolves its immutable ID, constructs an empty controlled environment, inspects the effective container configuration before start, and compares full IDs plus an installation-scoped label set before cleanup. A durable pre-dispatch checkpoint and exact-label reconciliation prevent blind replay after create ambiguity. Every daemon operation is bounded by timeout/output limits; daemon identity is revalidated around discovery and destructive lifecycle operations.
 
 ### Network modes
 
@@ -480,7 +480,7 @@ Separate dependency/environment preparation from normal agent execution where pr
 
 The fake sandbox exists for deterministic tests. It declares `isolation_enforced=false`, `executes_code=false`, and evidence strength `simulated`. It must model permission/resource behavior but must never be presented as a security boundary or as test/build execution in production output.
 
-A real PydanticAI invocation does not change this classification. Model-generated file content may pass through the authorized candidate-write fixture, but the Phase 2 verification command is recorded rather than executed. Consequently every Phase 2 run using FakeSandbox keeps the corresponding proof gap and cannot set `verified_complete=true`.
+A real PydanticAI invocation does not change this classification. Model-generated file content may pass through authorized bounded workspace tools, but a FakeSandbox verification command is recorded rather than executed. Consequently every run using FakeSandbox keeps the corresponding proof gap and cannot set `verified_complete=true`; local-unsafe execution likewise cannot satisfy isolated or independently verified requirements.
 
 ## 11. Worktree and patch safety
 
@@ -588,7 +588,7 @@ CompletionGate must fail closed or return an explicit inconclusive decision when
 
 EvidenceBundle is immutable and content-addressed. It binds the exact ConfigSnapshot and TaskSpec artifact IDs/hashes, FleetPlan, repository/base identities, canonical patch, command/test/build records, Verifier identity and exact authoritative evidence IDs, Verifier-reported proof gaps/repairs/regressions, Verifier workspace-mutation detection, criterion assessments, risks, proof gaps, and the computed completion decision. Any missing/foreign/corrupt/mismatched task or configuration artifact, reported gap, contradictory PASS with repairs/regressions, Verifier mutation, stale/unbound final-patch evidence, or non-Verifier-owned evidence fails closed. `fleet status` validates the bundle binding and exposes its decision evidence instead of reducing completion to agent prose or opaque IDs.
 
-Phase 1.5 cannot map one overall scripted verdict independently to multiple acceptance criteria. When a TaskSpec contains more than one criterion, EvidenceAssembler marks each assessment inconclusive and records `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`; criterion-specific executed proof remains Phase 3/5 work.
+Phase 3 still cannot map one overall scripted or model verdict independently to multiple acceptance criteria. When a general TaskSpec contains more than one criterion, EvidenceAssembler marks each assessment inconclusive and records `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`; general criterion-specific model mapping remains Phase 5 work. The deterministic bootstrap canary uses its one bounded acceptance criterion and can therefore produce an independently verified decision when every Docker evidence binding passes.
 
 ## 17. Audit and redaction
 
@@ -631,22 +631,27 @@ The complete Phase 3/5 limit target includes:
 - max event payload size;
 - concurrency limit.
 
-Agents must never be allowed to raise these limits. Phase 2 enforces bounded repair counts, model validation sizes, profiler/config bounds, fake command output truncation, FleetPlan collection/concurrency ceilings, and per-invocation PydanticAI request/tool/token/time/retry ceilings. Provider-reported usage is persisted without price estimation. Real process/container and comprehensive artifact/event budgets remain later work; exhaustion produces a typed failure with current artifacts preserved where the implemented boundary supports it.
+Agents must never be allowed to raise these limits. Phase 3 enforces bounded repair counts, model validation sizes, profiler/config bounds, FleetPlan collection/concurrency ceilings, per-invocation PydanticAI request/tool/token/time/retry ceilings, command output/time bounds, local process-group termination, and Docker CPU/memory/no-swap/PID/shm/file-descriptor limits. Provider-reported usage is persisted without price estimation. Portable writable-bind disk quotas and comprehensive cross-run artifact/event/cost budgets remain later work; exhaustion produces a typed failure with current artifacts preserved where the implemented boundary supports it.
 
 ## 19. Recovery
 
-On process startup, RecoveryService examines resource leases and in-progress runs:
+Phase 3 does not run a blanket recovery sweep on process startup. Without a cross-process owner
+liveness lock, such a sweep could mistake another still-running Fleet process for an orphan.
+Instead, `fleet recover <run-id> --confirm-owner-stopped` invokes `RecoveryService` for one exact
+persisted Run after the operator confirms its prior owner has exited:
 
 - mark lost in-memory operations as interrupted;
-- inspect labeled containers/worktrees;
+- inspect only that Run's persisted containers/worktrees;
 - avoid rerunning a side effect without reconciliation;
 - clean resources known to be orphaned after recording an event;
-- leave ambiguous resources for explicit user recovery;
-- resume approval-paused runs from persisted state;
-- verify artifact hashes;
+- leave ambiguous resources outstanding for a later exact-run retry or manual diagnosis;
+- refuse durable approval-paused and review states, which retain their normal resume/cancel/apply paths;
 - do not delete user files outside Fleet state/workspace paths.
 
-Provide `fleet doctor` and later `fleet recover` diagnostics.
+Docker ambiguity discovery first uses the minimal unique installation/execution labels, then
+requires the exact generated name, full resource ID, and complete persisted label binding before
+any kill/remove. `fleet doctor` remains diagnostic-only; `fleet recover` is idempotent once every
+selected lease is terminal.
 
 ## 20. Required security tests
 

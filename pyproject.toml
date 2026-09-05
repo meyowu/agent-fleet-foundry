@@ -68,6 +68,7 @@ asyncio_mode = "auto"
 markers = [
   "integration: tests multiple real adapters together",
   "e2e: subprocess-level end-to-end tests",
+  "docker_integration: explicit opt-in tests against a real local Docker daemon",
   "live_provider: explicit opt-in test that contacts a configured model provider",
 ]
 

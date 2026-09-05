@@ -15,6 +15,7 @@ from agent_fleet.domain.models import (
     AgentInstance,
     AgentRole,
     CanonicalResource,
+    CommandSpec,
     FakeScenario,
     Run,
     RuntimeToolCall,
@@ -38,7 +39,37 @@ class _WriteFileArguments(StrictModel):
     reason: str = Field(min_length=1, max_length=4096)
 
 
+class _ReasonArguments(StrictModel):
+    reason: str = Field(min_length=1, max_length=4096)
+
+
+class _PathArguments(StrictModel):
+    path: str = Field(min_length=1, max_length=4096)
+    reason: str = Field(min_length=1, max_length=4096)
+
+
+class _SearchArguments(StrictModel):
+    query: str = Field(min_length=1, max_length=4096)
+    reason: str = Field(min_length=1, max_length=4096)
+
+
+class _EditArguments(StrictModel):
+    path: str = Field(min_length=1, max_length=4096)
+    expected_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    old: str = Field(min_length=1, max_length=200_000)
+    new: str = Field(max_length=200_000)
+    expected_matches: int = Field(ge=1, le=1000)
+    reason: str = Field(min_length=1, max_length=4096)
+
+
+class _DeleteArguments(StrictModel):
+    path: str = Field(min_length=1, max_length=4096)
+    expected_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str = Field(min_length=1, max_length=4096)
+
+
 class _VerificationArguments(StrictModel):
+    command_id: str = Field(min_length=1, max_length=100)
     reason: str = Field(min_length=1, max_length=4096)
 
 
@@ -56,13 +87,53 @@ _WRITE_FILE = RuntimeToolDefinition(
     parameters_json_schema=_WriteFileArguments.model_json_schema(),
     side_effect=True,
 )
-_RUN_VERIFICATION = RuntimeToolDefinition(
-    name="run_verification",
+_LIST_FILES = RuntimeToolDefinition(
+    name="repo_list_files",
     description=(
-        "Request the control-plane-declared verification command. In Phase 2 the fake sandbox "
-        "records simulated evidence and does not execute project code."
+        "List bounded regular files visible inside the TaskSpec scope. Protected paths and "
+        "symlink targets are never returned."
     ),
-    parameters_json_schema=_VerificationArguments.model_json_schema(),
+    parameters_json_schema=_ReasonArguments.model_json_schema(),
+    side_effect=False,
+)
+_READ_FILE = RuntimeToolDefinition(
+    name="repo_read_file",
+    description=(
+        "Read one bounded UTF-8 regular file inside the TaskSpec scope without following symlinks."
+    ),
+    parameters_json_schema=_PathArguments.model_json_schema(),
+    side_effect=False,
+)
+_SEARCH_TEXT = RuntimeToolDefinition(
+    name="repo_search_text",
+    description=(
+        "Search for a literal bounded string only within regular files visible to the TaskSpec."
+    ),
+    parameters_json_schema=_SearchArguments.model_json_schema(),
+    side_effect=False,
+)
+_APPLY_EDIT = RuntimeToolDefinition(
+    name="workspace_apply_edit",
+    description=(
+        "Apply an exact text replacement to one TaskSpec-authorized candidate file only when "
+        "its content hash and match count still agree."
+    ),
+    parameters_json_schema=_EditArguments.model_json_schema(),
+    side_effect=True,
+)
+_DELETE_FILE = RuntimeToolDefinition(
+    name="workspace_delete_file",
+    description=(
+        "Delete one TaskSpec-authorized regular candidate file only when its content hash still "
+        "agrees."
+    ),
+    parameters_json_schema=_DeleteArguments.model_json_schema(),
+    side_effect=True,
+)
+_GET_DIFF = RuntimeToolDefinition(
+    name="workspace_get_diff",
+    description="Return the canonical candidate patch and changed-path summary.",
+    parameters_json_schema=_ReasonArguments.model_json_schema(),
     side_effect=False,
 )
 _APPROVAL_PROBE = RuntimeToolDefinition(
@@ -108,13 +179,21 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
 
     @property
     def definitions(self) -> tuple[RuntimeToolDefinition, ...]:
+        run_verification = self._run_verification_definition()
+        read_tools = [_LIST_FILES, _READ_FILE, _SEARCH_TEXT, _GET_DIFF]
         if self._agent.role == AgentRole.ENGINEER:
-            definitions = [_WRITE_FILE, _RUN_VERIFICATION]
+            definitions = [
+                *read_tools,
+                _WRITE_FILE,
+                _APPLY_EDIT,
+                _DELETE_FILE,
+                run_verification,
+            ]
             if self._run.fake_scenario is FakeScenario.APPROVAL:
                 definitions.append(_APPROVAL_PROBE)
             return tuple(definitions)
         if self._agent.role == AgentRole.VERIFIER:
-            return (_RUN_VERIFICATION,)
+            return (*read_tools, run_verification)
         return ()
 
     @property
@@ -206,6 +285,68 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
             f"{self._run.run_id}:{self._agent.role}:{self._run.stage}:"
             f"{self._agent.iteration}:{call.name}"
         )
+        if call.name == _LIST_FILES.name:
+            list_arguments = _ReasonArguments.model_validate(call.arguments)
+            return (
+                ScriptedAction(
+                    action="repo.list_files",
+                    resource=CanonicalResource(kind="workspace_view", identifier="."),
+                    parameters={},
+                    reason=list_arguments.reason,
+                    side_effect=False,
+                    idempotency_key=(
+                        f"{identity_prefix}:{canonical_json_hash(call.arguments)[:24]}"
+                    ),
+                ),
+                False,
+            )
+        if call.name == _READ_FILE.name:
+            read_arguments = _PathArguments.model_validate(call.arguments)
+            return (
+                ScriptedAction(
+                    action="repo.read_file",
+                    resource=CanonicalResource(
+                        kind="workspace_path", identifier=read_arguments.path
+                    ),
+                    parameters={},
+                    reason=read_arguments.reason,
+                    side_effect=False,
+                    idempotency_key=(
+                        f"{identity_prefix}:{canonical_json_hash(call.arguments)[:24]}"
+                    ),
+                ),
+                False,
+            )
+        if call.name == _SEARCH_TEXT.name:
+            search_arguments = _SearchArguments.model_validate(call.arguments)
+            return (
+                ScriptedAction(
+                    action="repo.search_text",
+                    resource=CanonicalResource(kind="workspace_view", identifier="."),
+                    parameters={"query": search_arguments.query},
+                    reason=search_arguments.reason,
+                    side_effect=False,
+                    idempotency_key=(
+                        f"{identity_prefix}:{canonical_json_hash(call.arguments)[:24]}"
+                    ),
+                ),
+                False,
+            )
+        if call.name == _GET_DIFF.name:
+            diff_arguments = _ReasonArguments.model_validate(call.arguments)
+            return (
+                ScriptedAction(
+                    action="workspace.get_diff",
+                    resource=CanonicalResource(kind="workspace_view", identifier="."),
+                    parameters={},
+                    reason=diff_arguments.reason,
+                    side_effect=False,
+                    idempotency_key=(
+                        f"{identity_prefix}:{canonical_json_hash(call.arguments)[:24]}"
+                    ),
+                ),
+                False,
+            )
         if call.name == _WRITE_FILE.name:
             write_arguments = _WriteFileArguments.model_validate(call.arguments)
             scripted = ScriptedAction(
@@ -217,23 +358,60 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
                 idempotency_key=(f"{identity_prefix}:{canonical_json_hash(call.arguments)[:24]}"),
             )
             return scripted, True
-        if call.name == _RUN_VERIFICATION.name:
+        if call.name == _APPLY_EDIT.name:
+            edit_arguments = _EditArguments.model_validate(call.arguments)
+            scripted = ScriptedAction(
+                action="workspace.apply_edit",
+                resource=CanonicalResource(kind="workspace_path", identifier=edit_arguments.path),
+                parameters={
+                    "expected_sha256": edit_arguments.expected_sha256,
+                    "old": edit_arguments.old,
+                    "new": edit_arguments.new,
+                    "expected_matches": edit_arguments.expected_matches,
+                },
+                reason=edit_arguments.reason,
+                side_effect=True,
+                idempotency_key=(f"{identity_prefix}:{canonical_json_hash(call.arguments)[:24]}"),
+            )
+            return scripted, True
+        if call.name == _DELETE_FILE.name:
+            delete_arguments = _DeleteArguments.model_validate(call.arguments)
+            scripted = ScriptedAction(
+                action="workspace.delete_path",
+                resource=CanonicalResource(kind="workspace_path", identifier=delete_arguments.path),
+                parameters={"expected_sha256": delete_arguments.expected_sha256},
+                reason=delete_arguments.reason,
+                side_effect=True,
+                idempotency_key=(f"{identity_prefix}:{canonical_json_hash(call.arguments)[:24]}"),
+            )
+            return scripted, True
+        if call.name == "run_verification":
             verification_arguments = _VerificationArguments.model_validate(call.arguments)
+            command = self._command(verification_arguments.command_id)
+            command_hash = canonical_json_hash(command.model_dump(mode="json"))
+            configuration = self._run.sandbox_configuration
+            if configuration is None:
+                raise FleetError(
+                    ErrorCode.CONFIG_INVALID,
+                    "Run sandbox configuration is unavailable.",
+                    "Recover the Run from its immutable Project configuration.",
+                )
             scripted = ScriptedAction(
                 action="command.run",
-                resource=CanonicalResource(
-                    kind="fake_command", identifier="verification://offline-canary"
-                ),
+                resource=CanonicalResource(kind="project_command", identifier=command.command_id),
                 parameters={
-                    "executable": "python",
-                    "argv": ["-m", "pytest", "-q"],
-                    "cwd": ".",
+                    "command_id": command.command_id,
+                    "command_spec_sha256": command_hash,
+                    "network_mode": configuration.network_mode,
                 },
                 reason=verification_arguments.reason,
-                side_effect=False,
-                idempotency_key=f"{identity_prefix}:declared-offline-canary",
+                side_effect=True,
+                idempotency_key=(
+                    f"{identity_prefix}:{command.command_id}:{command_hash[:24]}:"
+                    f"{self._run.patch_sha256 or 'candidate-current'}"
+                ),
             )
-            return scripted, False
+            return scripted, True
         if call.name == _APPROVAL_PROBE.name:
             approval_arguments = _ApprovalProbeArguments.model_validate(call.arguments)
             scripted = ScriptedAction(
@@ -251,6 +429,47 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
             ErrorCode.COMMAND_DENIED,
             f"Runtime tool {call.name!r} is not recognized.",
             "Use only the exact tool definitions supplied by the control plane.",
+        )
+
+    def _commands(self) -> tuple[CommandSpec, ...]:
+        if self._task.verification_commands:
+            return tuple(self._task.verification_commands)
+        if self._run.sandbox_name == "fake":
+            return (
+                CommandSpec(
+                    command_id="offline-canary",
+                    executable="python",
+                    argv=("-m", "pytest", "-q"),
+                ),
+            )
+        return ()
+
+    def _command(self, command_id: str) -> CommandSpec:
+        for command in self._commands():
+            if command.command_id == command_id:
+                return command
+        raise FleetError(
+            ErrorCode.COMMAND_NOT_REVIEWED,
+            f"Verification command {command_id!r} is not bound to the TaskSpec.",
+            "Use one of the exact command IDs supplied by the control plane.",
+            details={"command_id": command_id},
+        )
+
+    def _run_verification_definition(self) -> RuntimeToolDefinition:
+        command_ids = [command.command_id for command in self._commands()]
+        schema = _VerificationArguments.model_json_schema()
+        command_property = schema.get("properties", {}).get("command_id")
+        if isinstance(command_property, dict):
+            command_property["enum"] = command_ids
+        return RuntimeToolDefinition(
+            name="run_verification",
+            description=(
+                "Run one exact TaskSpec-bound verification command through the configured "
+                "sandbox. The control plane supplies executable, argv, cwd, environment, "
+                "limits, identity, and permission context."
+            ),
+            parameters_json_schema=schema,
+            side_effect=True,
         )
 
     def _record(

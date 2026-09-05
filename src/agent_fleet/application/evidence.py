@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import cast
 
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.domain.config import ConfigSnapshot
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evidence import (
+    CleanupLeaseRecord,
     CommandEvidence,
     CompletionGate,
     CriterionAssessment,
@@ -15,17 +17,19 @@ from agent_fleet.domain.evidence import (
     EvidenceStrength,
     ProofGap,
     RemainingRisk,
+    ResourceCleanupReceipt,
 )
 from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy
 from agent_fleet.domain.models import (
     ArtifactKind,
     ArtifactMetadata,
     Run,
+    SandboxInspection,
     TaskSpec,
     Verdict,
     VerifierVerdict,
 )
-from agent_fleet.domain.security import sha256_bytes
+from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.state_store import StateStore
 
@@ -41,7 +45,13 @@ class EvidenceAssembler:
         self.artifacts = artifacts
         self.clock = clock
 
-    def assemble(self, run: Run, task: TaskSpec) -> EvidenceBundle:
+    def assemble(
+        self,
+        run: Run,
+        task: TaskSpec,
+        *,
+        assembled_at: datetime | None = None,
+    ) -> EvidenceBundle:
         if run.config_snapshot_artifact_id is None or run.config_snapshot_hash is None:
             raise _integrity_error("Run has no content-addressed configuration snapshot binding.")
         config_metadata, config_content = self._read_bound_artifact(
@@ -98,6 +108,55 @@ class EvidenceAssembler:
         if plan.run_id != run.run_id or plan.task_id != task.task_id:
             raise _integrity_error("FleetPlan identity does not match the current run and task.")
 
+        cleanup_complete = False
+        if run.cleanup_receipt_artifact_id is not None:
+            if run.cleanup_receipt_sha256 is None:
+                raise _integrity_error("Run cleanup receipt hash is missing.")
+            cleanup_metadata, cleanup_content = self._read_bound_artifact(
+                run.cleanup_receipt_artifact_id,
+                ArtifactKind.RESOURCE_CLEANUP,
+                run,
+                task,
+            )
+            if cleanup_metadata.sha256 != run.cleanup_receipt_sha256:
+                raise _integrity_error("Run cleanup receipt hash does not match its artifact.")
+            try:
+                cleanup_receipt = ResourceCleanupReceipt.model_validate_json(cleanup_content)
+            except ValueError as error:
+                raise _integrity_error("Resource cleanup receipt is invalid.") from error
+            current_records = [
+                CleanupLeaseRecord(
+                    lease_id=lease.lease_id,
+                    kind=lease.kind,
+                    resource_id=lease.resource_id,
+                    status=lease.status,
+                )
+                for lease in self.state.list_leases(run.run_id)
+            ]
+            if (
+                cleanup_receipt.run_id != run.run_id
+                or cleanup_receipt.leases != current_records
+                or self.state.outstanding_leases(run.run_id)
+                or not cleanup_receipt.complete
+            ):
+                raise _integrity_error(
+                    "Resource cleanup receipt does not match current terminal leases."
+                )
+            cleanup_complete = True
+
+        capabilities = run.sandbox_capabilities_snapshot
+        requirements = run.sandbox_requirements
+        if capabilities is None or run.sandbox_capabilities_hash is None or requirements is None:
+            raise _integrity_error("Run has no immutable sandbox capability binding.")
+        if (
+            canonical_json_hash(capabilities.model_dump(mode="json"))
+            != run.sandbox_capabilities_hash
+        ):
+            raise _integrity_error("Run sandbox capability hash does not match its content.")
+        command_hashes = {
+            command.command_id: canonical_json_hash(command.model_dump(mode="json"))
+            for command in task.verification_commands
+        }
         command_evidence: list[CommandEvidence] = []
         for artifact_id in run.command_evidence_artifact_ids:
             _, content = self._read_bound_artifact(
@@ -124,6 +183,65 @@ class EvidenceAssembler:
                 run,
                 task,
             )
+            if (
+                command.sandbox_inspection_artifact_id is None
+                or command.sandbox_inspection_sha256 is None
+            ):
+                raise _integrity_error("CommandEvidence has no sandbox inspection binding.")
+            inspection_metadata, inspection_content = self._read_bound_artifact(
+                command.sandbox_inspection_artifact_id,
+                ArtifactKind.SANDBOX_INSPECTION,
+                run,
+                task,
+            )
+            try:
+                inspection = SandboxInspection.model_validate_json(inspection_content)
+            except ValueError as error:
+                raise _integrity_error("SandboxInspection artifact is invalid.") from error
+            if (
+                inspection_metadata.sha256 != command.sandbox_inspection_sha256
+                or inspection.sandbox_id != command.sandbox_id
+                or inspection.provider != command.sandbox_provider
+                or inspection.capabilities != capabilities
+                or inspection.configuration_hash != run.sandbox_configuration_hash
+                or inspection.image_identity != run.sandbox_image_identity
+                or inspection.daemon_identity != run.sandbox_daemon_identity
+                or command.sandbox_daemon_identity != run.sandbox_daemon_identity
+                or inspection.effective_network_mode != command.network_mode
+                or not inspection.ready
+                or inspection.missing_requirements(requirements)
+            ):
+                raise _integrity_error(
+                    "SandboxInspection does not match its command and immutable Run binding."
+                )
+            if (
+                run.sandbox_name == "fake"
+                and command.command_id == "approval-proof"
+                and command.strength is EvidenceStrength.SIMULATED
+            ):
+                # The Phase 1 approval probe is audit evidence for a one-use logical
+                # side effect, not verification evidence for a TaskSpec criterion.
+                command_evidence.append(command)
+                continue
+            expected_command_hash = command_hashes.get(command.command_id)
+            if command_hashes and (
+                expected_command_hash is None
+                or command.command_spec_sha256 != expected_command_hash
+            ):
+                raise _integrity_error(
+                    "CommandEvidence is not bound to a reviewed TaskSpec command."
+                )
+            if task.verification_commands and (
+                command.sandbox_provider != run.sandbox_name
+                or command.sandbox_security_level is not capabilities.security_level
+                or command.sandbox_capabilities_sha256 != run.sandbox_capabilities_hash
+                or command.sandbox_configuration_sha256 != run.sandbox_configuration_hash
+                or command.sandbox_requirements_sha256
+                != canonical_json_hash(requirements.model_dump(mode="json"))
+            ):
+                raise _integrity_error(
+                    "CommandEvidence sandbox identity does not match the immutable Run."
+                )
             command_evidence.append(command)
 
         reported_verdict: Verdict | None = None
@@ -216,6 +334,17 @@ class EvidenceAssembler:
             fleet_plan_sha256=run.fleet_plan_hash,
             fleet_strategy=plan.strategy,
             required_evidence=plan.required_evidence,
+            sandbox_provider=run.sandbox_name,
+            sandbox_security_level=capabilities.security_level,
+            sandbox_configuration_sha256=run.sandbox_configuration_hash,
+            sandbox_requirements=requirements,
+            sandbox_requirements_sha256=canonical_json_hash(requirements.model_dump(mode="json")),
+            sandbox_image_identity=run.sandbox_image_identity,
+            sandbox_daemon_identity=run.sandbox_daemon_identity,
+            sandbox_capabilities=capabilities,
+            sandbox_capabilities_sha256=run.sandbox_capabilities_hash,
+            verification_command_hashes=command_hashes,
+            required_verification_command_ids=task.required_verification_command_ids,
             patch_artifact_id=run.patch_artifact_id,
             patch_sha256=run.patch_sha256,
             changed_paths=changed_paths,
@@ -229,17 +358,13 @@ class EvidenceAssembler:
                 verifier_verdict.required_repairs if verifier_verdict else []
             ),
             verifier_regressions=(verifier_verdict.regressions if verifier_verdict else []),
+            cleanup_receipt_artifact_id=run.cleanup_receipt_artifact_id,
+            cleanup_receipt_sha256=run.cleanup_receipt_sha256,
+            cleanup_complete=cleanup_complete,
             criterion_assessments=assessments,
-            remaining_risks=[
-                RemainingRisk(
-                    code="FAKE_SANDBOX_NO_ISOLATION",
-                    description=(
-                        "The fake provider neither executes code nor enforces OS isolation."
-                    ),
-                )
-            ],
+            remaining_risks=self._remaining_risks(run),
             proof_gaps=proof_gaps,
-            assembled_at=self.clock.now(),
+            assembled_at=assembled_at or self.clock.now(),
         )
         decision = CompletionGate.evaluate(
             bundle,
@@ -297,7 +422,10 @@ class EvidenceAssembler:
             gaps.append(
                 ProofGap(
                     code="SIMULATED_EXECUTION",
-                    description="FakeSandbox recorded outputs but did not execute project code.",
+                    description=(
+                        "The selected sandbox recorded simulated output and did not execute "
+                        "the reviewed project command."
+                    ),
                     required_strength=EvidenceStrength.OBSERVED,
                 )
             )
@@ -340,6 +468,49 @@ class EvidenceAssembler:
                 )
             )
         return gaps
+
+    @staticmethod
+    def _remaining_risks(run: Run) -> list[RemainingRisk]:
+        if run.sandbox_name == "fake":
+            return [
+                RemainingRisk(
+                    code="FAKE_SANDBOX_NO_ISOLATION",
+                    description=(
+                        "The fake provider neither executes code nor enforces OS isolation."
+                    ),
+                )
+            ]
+        if run.sandbox_name == "local-unsafe":
+            return [
+                RemainingRisk(
+                    code="LOCAL_UNSAFE_HOST_EXECUTION",
+                    description=(
+                        "The explicitly selected local-unsafe provider executes directly on "
+                        "the host without an isolation boundary."
+                    ),
+                )
+            ]
+        return [
+            RemainingRisk(
+                code="CONTAINER_NOT_VM_BOUNDARY",
+                description=(
+                    "Docker containers share the host kernel and are not a VM-strength boundary."
+                ),
+            ),
+            RemainingRisk(
+                code="WORKSPACE_DISK_QUOTA_NOT_PORTABLE",
+                description=(
+                    "Phase 3 does not claim a portable disk quota for the writable workspace bind."
+                ),
+            ),
+            RemainingRisk(
+                code="NETWORK_NONE_RETAINS_LOOPBACK",
+                description=(
+                    "Docker network=none removes external interfaces but retains "
+                    "container loopback."
+                ),
+            ),
+        ]
 
     def _read_bound_artifact(
         self,

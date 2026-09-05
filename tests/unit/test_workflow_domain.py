@@ -13,6 +13,7 @@ from agent_fleet.domain.models import (
     ResourceLease,
     Run,
     RunStatus,
+    SandboxCleanupResult,
     TaskSpec,
     WorkflowStage,
 )
@@ -143,6 +144,8 @@ def test_task_spec_rejects_cross_type_id_prefixes(field: str, wrong_id: str) -> 
     [
         (LeaseKind.WORKTREE, "sandbox_" + "1" * 32),
         (LeaseKind.SANDBOX, "ws_" + "1" * 32),
+        (LeaseKind.EXECUTION, "sandbox_" + "1" * 32),
+        (LeaseKind.EXECUTION, "ws_" + "1" * 32),
         (LeaseKind.WORKTREE, "garbage"),
     ],
 )
@@ -171,4 +174,17 @@ def test_implementation_report_rejects_non_artifact_evidence_id() -> None:
             evidence_artifact_ids=["run_" + "1" * 32],
             unresolved_limitations=[],
             verifier_focus=[],
+        )
+
+
+def test_complete_sandbox_cleanup_must_be_reconciled() -> None:
+    with pytest.raises(ValueError, match="complete sandbox cleanup must be reconciled"):
+        SandboxCleanupResult(
+            provider="fake",
+            resource_id="sandbox_" + "1" * 32,
+            resources_found=0,
+            resources_removed=0,
+            reconciled=False,
+            complete=True,
+            completed_at=datetime(2026, 9, 4, tzinfo=UTC),
         )

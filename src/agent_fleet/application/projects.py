@@ -9,19 +9,27 @@ import stat
 from contextlib import suppress
 from difflib import unified_diff
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 from agent_fleet.application.artifacts import ArtifactService
 from agent_fleet.application.runtime import RuntimeRegistry
+from agent_fleet.application.sandboxes import (
+    SandboxRegistry,
+    requirements_for_configuration,
+)
+from agent_fleet.domain.bootstrap import BootstrapReport
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     ArtifactKind,
     FleetEvent,
     Project,
+    RunStatus,
     RuntimeCapability,
     RuntimeConfiguration,
     RuntimeCredentialCheck,
     SandboxCapabilities,
+    SandboxConfiguration,
 )
 from agent_fleet.domain.repository_profile import RepositoryProfileResult
 from agent_fleet.domain.security import (
@@ -35,6 +43,9 @@ from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.repository_profile import RepositoryProfilerPort
 from agent_fleet.ports.state_store import StateStore
+
+if TYPE_CHECKING:
+    from agent_fleet.application.bootstrap import VerifiedBootstrapReport
 
 _BOOTSTRAP_RUNTIME_CAPABILITIES = frozenset(
     {
@@ -61,6 +72,7 @@ class ProjectService:
         redactor: Redactor,
         sandbox_capabilities: SandboxCapabilities,
         runtime_registry: RuntimeRegistry,
+        sandboxes: SandboxRegistry | None = None,
     ) -> None:
         self.state_root = state_root
         self.state = state
@@ -73,6 +85,7 @@ class ProjectService:
         self.redactor = redactor
         self.sandbox_capabilities = sandbox_capabilities
         self.runtime_registry = runtime_registry
+        self.sandboxes = sandboxes
 
     def preview(
         self,
@@ -82,6 +95,7 @@ class ProjectService:
         provider_model: str | None = None,
         credential_ref: str | None = None,
         sandbox_name: str = "fake",
+        docker_image: str | None = None,
     ) -> dict[str, object]:
         self._reject_registered_secrets(
             {
@@ -96,7 +110,11 @@ class ProjectService:
             provider_model=provider_model,
             credential_ref=credential_ref,
         )
-        self._validate_sandbox(sandbox_name)
+        sandbox_configuration = self._sandbox_configuration(
+            sandbox_name,
+            docker_image=docker_image,
+        )
+        sandbox_capabilities = self._validate_sandbox(sandbox_configuration)
         self.runtime_registry.require(
             runtime_configuration,
             required_capabilities=_BOOTSTRAP_RUNTIME_CAPABILITIES,
@@ -112,6 +130,7 @@ class ProjectService:
             result.profile,
             runtime_name=runtime_configuration.runtime_name,
             provider_model=runtime_configuration.provider_model,
+            sandbox_configuration=sandbox_configuration,
         )
         self._reject_registered_secrets(files)
         self.config.validate_files(files)
@@ -121,8 +140,9 @@ class ProjectService:
             "runtime": runtime_configuration.runtime_name,
             "provider_model": runtime_configuration.provider_model,
             "sandbox": sandbox_name,
-            "security_level": self.sandbox_capabilities.security_level.value,
-            "sandbox_capabilities": self.sandbox_capabilities.model_dump(mode="json"),
+            "security_level": sandbox_capabilities.security_level.value,
+            "sandbox_configuration": sandbox_configuration.model_dump(mode="json"),
+            "sandbox_capabilities": sandbox_capabilities.model_dump(mode="json"),
             "repository_profile": result.profile.model_dump(mode="json"),
             "repository_profile_semantic_sha256": profile_semantic_hash,
             "project_knowledge": result.project_knowledge.model_dump(mode="json"),
@@ -134,12 +154,109 @@ class ProjectService:
             "proposal_sha256": _proposal_hash(files, proposal_patch),
             "proposal_patch": proposal_patch,
             "warnings": [item.message for item in result.profile.ambiguities],
-            "security_warning": self._security_warning(runtime_configuration.runtime_name),
+            "security_warning": self._security_warning(
+                runtime_configuration.runtime_name,
+                sandbox_configuration.provider,
+            ),
         }
         self._reject_registered_secrets(preview)
         return preview
 
-    def initialize(
+    def register_bootstrap_canary(
+        self,
+        root: Path,
+        *,
+        sandbox_name: str,
+        docker_image: str | None,
+        sandbox_image_identity: str | None,
+        sandbox_daemon_identity: str | None,
+        allow_unsafe_local: bool,
+    ) -> dict[str, object]:
+        return self._initialize_without_canary(
+            root,
+            runtime_name="fake",
+            sandbox_name=sandbox_name,
+            docker_image=docker_image,
+            sandbox_image_identity=sandbox_image_identity,
+            sandbox_daemon_identity=sandbox_daemon_identity,
+            allow_unsafe_local=allow_unsafe_local,
+            trusted_canary_config=True,
+            create_canary_fixture=False,
+            fleet_owned_repository=True,
+        )
+
+    def _publish_bootstrap_target(
+        self,
+        root: Path,
+        *,
+        verified: VerifiedBootstrapReport,
+    ) -> dict[str, object]:
+        report_artifact = self.state.get_artifact(verified.report_artifact_id)
+        report = BootstrapReport.model_validate_json(
+            self.artifacts.read_text(verified.report_artifact_id)
+        )
+        canary_run = self.state.get_run(verified.canary_run_id)
+        if (
+            report_artifact.kind is not ArtifactKind.BOOTSTRAP_REPORT
+            or report_artifact.artifact_id != verified.report_artifact_id
+            or report_artifact.sha256 != verified.report_artifact_sha256
+            or report_artifact.project_id != verified.canary_project_id
+            or report_artifact.run_id != verified.canary_run_id
+            or report_artifact.task_id != verified.canary_task_id
+            or report.canary_project_id != verified.canary_project_id
+            or report.canary_run_id != verified.canary_run_id
+            or report.canary_task_id != verified.canary_task_id
+            or report.target_identity_hash != verified.target_identity_hash
+            or report.target_head_revision != verified.target_head_revision
+            or report.target_status_fingerprint != verified.target_status_fingerprint
+            or report.proposal_sha256 != verified.proposal_sha256
+            or report.target_runtime_configuration != verified.target_runtime_configuration
+            or report.sandbox_configuration != verified.sandbox_configuration
+            or report.sandbox_preflight.image_identity != verified.sandbox_image_identity
+            or report.sandbox_preflight.daemon_identity != verified.sandbox_daemon_identity
+            or not report.publish_allowed
+            or not report.cleanup_complete
+            or report.outstanding_lease_count != 0
+            or not report.completion_decision.verified_complete
+            or verified.sandbox_configuration.provider != "docker"
+            or self.state.outstanding_leases(verified.canary_run_id)
+            or canary_run.status is not RunStatus.READY_FOR_REVIEW
+            or not canary_run.verified_complete
+            or canary_run.task_id != verified.canary_task_id
+            or canary_run.project_id != verified.canary_project_id
+            or canary_run.assurance_verdict is None
+            or canary_run.assurance_verdict.value != "pass"
+            or canary_run.evidence_bundle_artifact_id != report.evidence_bundle.artifact_id
+            or canary_run.evidence_bundle_hash != report.evidence_bundle.sha256
+        ):
+            raise FleetError(
+                ErrorCode.BOOTSTRAP_REPORT_INVALID,
+                "The verified bootstrap capability is not authorized for target publication.",
+                "Run a new disposable Docker canary and validate its complete evidence graph.",
+            )
+        runtime_configuration = verified.target_runtime_configuration
+        return self._initialize_without_canary(
+            root,
+            runtime_name=runtime_configuration.runtime_name,
+            provider_model=runtime_configuration.provider_model,
+            credential_ref=runtime_configuration.credential_ref,
+            sandbox_name="docker",
+            docker_image=verified.sandbox_configuration.image,
+            sandbox_image_identity=verified.sandbox_image_identity,
+            sandbox_daemon_identity=verified.sandbox_daemon_identity,
+            allow_unsafe_local=False,
+            expected_proposal_hash=verified.proposal_sha256,
+            expected_identity_hash=verified.target_identity_hash,
+            expected_head_revision=verified.target_head_revision,
+            expected_status_fingerprint=verified.target_status_fingerprint,
+            create_canary_fixture=False,
+            bootstrap_report_artifact_id=report_artifact.artifact_id,
+            bootstrap_report_sha256=report_artifact.sha256,
+            bootstrap_canary_run_id=verified.canary_run_id,
+            bootstrap_verified=True,
+        )
+
+    def _initialize_without_canary(
         self,
         root: Path,
         *,
@@ -147,7 +264,21 @@ class ProjectService:
         provider_model: str | None = None,
         credential_ref: str | None = None,
         sandbox_name: str = "fake",
+        docker_image: str | None = None,
+        allow_unsafe_local: bool = False,
         expected_proposal_hash: str | None = None,
+        expected_identity_hash: str | None = None,
+        expected_head_revision: str | None = None,
+        expected_status_fingerprint: str | None = None,
+        trusted_canary_config: bool = False,
+        create_canary_fixture: bool = True,
+        fleet_owned_repository: bool = False,
+        bootstrap_report_artifact_id: str | None = None,
+        bootstrap_report_sha256: str | None = None,
+        bootstrap_canary_run_id: str | None = None,
+        bootstrap_verified: bool = False,
+        sandbox_image_identity: str | None = None,
+        sandbox_daemon_identity: str | None = None,
     ) -> dict[str, object]:
         self._reject_registered_secrets(
             {
@@ -163,7 +294,17 @@ class ProjectService:
             provider_model=provider_model,
             credential_ref=credential_ref,
         )
-        self._validate_sandbox(sandbox_name)
+        sandbox_configuration = self._sandbox_configuration(
+            sandbox_name,
+            docker_image=docker_image,
+        )
+        sandbox_capabilities = self._validate_sandbox(sandbox_configuration)
+        if sandbox_name == "local-unsafe" and not allow_unsafe_local:
+            raise FleetError(
+                ErrorCode.UNSAFE_LOCAL_CONFIRMATION_REQUIRED,
+                "Local-unsafe initialization requires a separate high-risk confirmation.",
+                "Pass --allow-unsafe-local explicitly; --yes is not sufficient.",
+            )
         self.runtime_registry.require(
             runtime_configuration,
             required_capabilities=_BOOTSTRAP_RUNTIME_CAPABILITIES,
@@ -172,14 +313,43 @@ class ProjectService:
         info = self.repository.inspect(root)
         self._reject_registered_secrets(info.model_dump(mode="json"))
         repository_root = Path(info.root)
-        if path_is_within(self.state_root, repository_root) or path_is_within(
-            repository_root, self.state_root
+        repository_is_fleet_owned = path_is_within(repository_root, self.state_root)
+        if fleet_owned_repository and not repository_is_fleet_owned:
+            raise FleetError(
+                ErrorCode.PATH_OUTSIDE_SCOPE,
+                "A Fleet-owned repository must remain beneath the Fleet state directory.",
+                "Create the bootstrap canary through the trusted BootstrapService.",
+            )
+        if not fleet_owned_repository and (
+            repository_is_fleet_owned or path_is_within(self.state_root, repository_root)
         ):
             raise FleetError(
                 ErrorCode.PATH_OUTSIDE_SCOPE,
                 "The Fleet state directory and target repository must be disjoint.",
                 "Choose an AGENT_FLEET_HOME that is neither inside nor an ancestor of the "
                 "repository, then retry initialization.",
+            )
+        expected_repository_values = {
+            "identity_hash": expected_identity_hash,
+            "head_revision": expected_head_revision,
+            "status_fingerprint": expected_status_fingerprint,
+        }
+        actual_repository_values = {
+            "identity_hash": info.identity_hash,
+            "head_revision": info.head_revision,
+            "status_fingerprint": info.status_fingerprint,
+        }
+        mismatched_repository_values = sorted(
+            name
+            for name, expected in expected_repository_values.items()
+            if expected is not None and actual_repository_values[name] != expected
+        )
+        if mismatched_repository_values:
+            raise FleetError(
+                ErrorCode.BOOTSTRAP_TARGET_DRIFTED,
+                "The target repository changed after bootstrap evidence was recorded.",
+                "Review a fresh initialization proposal and run the canary again.",
+                details={"mismatched_fields": mismatched_repository_values},
             )
         profile_result = self.profiler.profile(Path(info.root))
         self._reject_registered_secrets(profile_result.model_dump(mode="json"))
@@ -189,6 +359,8 @@ class ProjectService:
             profile_result.profile,
             runtime_name=runtime_configuration.runtime_name,
             provider_model=runtime_configuration.provider_model,
+            sandbox_configuration=sandbox_configuration,
+            trusted_canary=trusted_canary_config,
         )
         self._reject_registered_secrets(proposed_files)
         self.config.validate_files(proposed_files)
@@ -218,6 +390,14 @@ class ProjectService:
             "runtime_name": runtime_configuration.runtime_name,
             "provider_model": runtime_configuration.provider_model,
             "credential_ref": runtime_configuration.credential_ref,
+            "sandbox_name": sandbox_configuration.provider,
+            "sandbox_configuration": sandbox_configuration,
+            "sandbox_image_identity": sandbox_image_identity,
+            "sandbox_daemon_identity": sandbox_daemon_identity,
+            "bootstrap_report_artifact_id": bootstrap_report_artifact_id,
+            "bootstrap_report_sha256": bootstrap_report_sha256,
+            "bootstrap_canary_run_id": bootstrap_canary_run_id,
+            "bootstrap_verified": bootstrap_verified,
         }
         if existing is None:
             project = Project(
@@ -244,8 +424,12 @@ class ProjectService:
         _, config_snapshot = self.config.load_snapshot(staging / "fleet.yaml")
         config_snapshot_content = config_snapshot.model_dump_json(indent=2)
         config_snapshot_hash = self.config.snapshot_hash(config_snapshot)
-        canary = self.repository.create_canary_fixture(
-            self.state_root / "projects" / project.project_id / "canaries" / "bootstrap"
+        canary = (
+            self.repository.create_canary_fixture(
+                self.state_root / "projects" / project.project_id / "canaries" / "bootstrap"
+            )
+            if create_canary_fixture
+            else None
         )
         self.config.apply(fleet_root, proposed_files)
         _, applied_snapshot = self.config.load_snapshot(fleet_root / "fleet.yaml")
@@ -335,8 +519,12 @@ class ProjectService:
                     "project_knowledge_artifact_id": knowledge_artifact.artifact_id,
                     "runtime": runtime_configuration.runtime_name,
                     "provider_model": runtime_configuration.provider_model,
-                    "sandbox": "fake",
-                    "sandbox_capabilities": self.sandbox_capabilities.model_dump(mode="json"),
+                    "sandbox": sandbox_configuration.provider,
+                    "sandbox_configuration": sandbox_configuration.model_dump(mode="json"),
+                    "sandbox_capabilities": sandbox_capabilities.model_dump(mode="json"),
+                    "bootstrap_report_artifact_id": bootstrap_report_artifact_id,
+                    "bootstrap_canary_run_id": bootstrap_canary_run_id,
+                    "bootstrap_verified": bootstrap_verified,
                 },
             )
         )
@@ -356,13 +544,21 @@ class ProjectService:
             "project_knowledge_semantic_sha256": (project.project_knowledge_semantic_hash),
             "project_knowledge_artifact_sha256": knowledge_artifact.sha256,
             "project_knowledge": profile_result.project_knowledge.model_dump(mode="json"),
-            "canary_path": str(canary),
+            "canary_path": str(canary) if canary is not None else None,
             "runtime": runtime_configuration.runtime_name,
             "provider_model": runtime_configuration.provider_model,
-            "sandbox": "fake",
-            "security_level": "fake",
-            "sandbox_capabilities": self.sandbox_capabilities.model_dump(mode="json"),
-            "warning": self._security_warning(runtime_configuration.runtime_name),
+            "sandbox": sandbox_configuration.provider,
+            "security_level": sandbox_capabilities.security_level.value,
+            "sandbox_configuration": sandbox_configuration.model_dump(mode="json"),
+            "sandbox_capabilities": sandbox_capabilities.model_dump(mode="json"),
+            "bootstrap_report_artifact_id": bootstrap_report_artifact_id,
+            "bootstrap_report_sha256": bootstrap_report_sha256,
+            "bootstrap_canary_run_id": bootstrap_canary_run_id,
+            "bootstrap_verified": bootstrap_verified,
+            "warning": self._security_warning(
+                runtime_configuration.runtime_name,
+                sandbox_configuration.provider,
+            ),
         }
 
     @staticmethod
@@ -388,30 +584,68 @@ class ProjectService:
                 ),
             ) from None
 
-    def _validate_sandbox(self, sandbox_name: str) -> None:
-        if sandbox_name != "fake":
+    @staticmethod
+    def _sandbox_configuration(
+        sandbox_name: str,
+        *,
+        docker_image: str | None,
+    ) -> SandboxConfiguration:
+        try:
+            return SandboxConfiguration(
+                provider=sandbox_name,
+                image=docker_image,
+                network_mode=(
+                    "approved-unrestricted" if sandbox_name == "local-unsafe" else "none"
+                ),
+            )
+        except ValueError:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "The requested sandbox configuration is invalid.",
+                "Use fake, Docker with an explicit local image, or explicit local-unsafe.",
+            ) from None
+
+    def _validate_sandbox(
+        self,
+        configuration: SandboxConfiguration,
+    ) -> SandboxCapabilities:
+        if self.sandboxes is not None:
+            provider = self.sandboxes.require(
+                configuration,
+                requirements_for_configuration(configuration),
+            )
+            return provider.capabilities
+        if configuration.provider != "fake":
             raise FleetError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
-                f"Sandbox {sandbox_name!r} is not available in Phase 2.",
-                "Use `--sandbox fake`; Docker execution begins in Phase 3.",
+                f"Sandbox {configuration.provider!r} is not registered.",
+                "Construct ProjectService with the exact sandbox registry.",
             )
         if self.sandbox_capabilities != SandboxCapabilities.phase1_fake():
             raise FleetError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
                 "The selected fake sandbox reported an unexpected capability descriptor.",
-                "Use the built-in non-executing FakeSandbox for Phase 2.",
+                "Use the built-in non-executing FakeSandbox.",
             )
+        return self.sandbox_capabilities
 
     @staticmethod
-    def _security_warning(runtime_name: str) -> str:
-        if runtime_name == "fake":
+    def _security_warning(runtime_name: str, sandbox_name: str) -> str:
+        if sandbox_name == "fake":
             return (
-                "Fake runtime and sandbox provide deterministic orchestration, "
-                "not model or OS isolation."
+                "FakeSandbox provides deterministic orchestration only; it executes no "
+                "project code and cannot produce independently verified evidence."
             )
+        if sandbox_name == "local-unsafe":
+            return (
+                "local-unsafe executes reviewed commands directly on the host without "
+                "isolation; each run requires a separate explicit confirmation."
+            )
+        if runtime_name == "fake":
+            return "The fake runtime drives reviewed commands inside the isolated Docker sandbox."
         return (
-            "The selected runtime may contact its configured model provider, but the fake "
-            "sandbox does not execute project code or provide OS isolation."
+            "The selected runtime may contact its configured model provider from the control "
+            "plane; project commands execute only through the isolated Docker sandbox."
         )
 
     def _reject_registered_secrets(self, value: object) -> None:

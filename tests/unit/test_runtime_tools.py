@@ -118,10 +118,22 @@ def test_tool_definitions_are_role_specific_and_identity_free() -> None:
     verifier, _ = _catalog(AgentRole.VERIFIER)
 
     assert [item.name for item in engineer.definitions] == [
+        "repo_list_files",
+        "repo_read_file",
+        "repo_search_text",
+        "workspace_get_diff",
         "workspace_write_file",
+        "workspace_apply_edit",
+        "workspace_delete_file",
         "run_verification",
     ]
-    assert [item.name for item in verifier.definitions] == ["run_verification"]
+    assert [item.name for item in verifier.definitions] == [
+        "repo_list_files",
+        "repo_read_file",
+        "repo_search_text",
+        "workspace_get_diff",
+        "run_verification",
+    ]
     serialized = str([item.model_dump(mode="json") for item in engineer.definitions])
     for forbidden in (
         "run_id",
@@ -188,18 +200,75 @@ async def test_tool_execution_binds_gateway_context_and_returns_only_safe_result
 
 
 @pytest.mark.asyncio
+async def test_read_edit_and_delete_tools_translate_to_narrow_gateway_actions() -> None:
+    catalog, gateway = _catalog(AgentRole.ENGINEER)
+    calls = [
+        RuntimeToolCall(
+            call_id="call_read_1",
+            name="repo_read_file",
+            arguments={"path": "src/canary_calc/core.py", "reason": "Inspect target."},
+        ),
+        RuntimeToolCall(
+            call_id="call_edit_1",
+            name="workspace_apply_edit",
+            arguments={
+                "path": "src/canary_calc/core.py",
+                "expected_sha256": "a" * 64,
+                "old": "value = 1",
+                "new": "value = 2",
+                "expected_matches": 1,
+                "reason": "Apply bounded change.",
+            },
+        ),
+        RuntimeToolCall(
+            call_id="call_delete_1",
+            name="workspace_delete_file",
+            arguments={
+                "path": "src/canary_calc/core.py",
+                "expected_sha256": "b" * 64,
+                "reason": "Delete reviewed file.",
+            },
+        ),
+    ]
+
+    for call in calls:
+        await catalog.execute(call)
+
+    scripted_actions = [item["scripted"] for item in gateway.calls]
+    assert [item.action for item in scripted_actions] == [
+        "repo.read_file",
+        "workspace.apply_edit",
+        "workspace.delete_path",
+    ]
+    assert scripted_actions[0].side_effect is False
+    assert scripted_actions[1].parameters["expected_sha256"] == "a" * 64
+    assert scripted_actions[2].parameters == {"expected_sha256": "b" * 64}
+    assert [record.side_effect_committed for record in catalog.records] == [False, True, True]
+
+
+@pytest.mark.asyncio
 async def test_tool_budget_and_call_id_reuse_fail_closed() -> None:
     catalog, gateway = _catalog(AgentRole.ENGINEER, max_calls=1)
     call = RuntimeToolCall(
         call_id="call_check_1",
         name="run_verification",
-        arguments={"reason": "Collect bounded evidence."},
+        arguments={
+            "command_id": "offline-canary",
+            "reason": "Collect bounded evidence.",
+        },
     )
     await catalog.execute(call)
 
     with pytest.raises(FleetError) as reused:
         await catalog.execute(
-            call.model_copy(update={"arguments": {"reason": "Changed after execution."}})
+            call.model_copy(
+                update={
+                    "arguments": {
+                        "command_id": "offline-canary",
+                        "reason": "Changed after execution.",
+                    }
+                }
+            )
         )
     assert reused.value.code is ErrorCode.COMMAND_DENIED
 
@@ -208,7 +277,10 @@ async def test_tool_budget_and_call_id_reuse_fail_closed() -> None:
             RuntimeToolCall(
                 call_id="call_check_2",
                 name="run_verification",
-                arguments={"reason": "A second request."},
+                arguments={
+                    "command_id": "offline-canary",
+                    "reason": "A second request.",
+                },
             )
         )
     assert exhausted.value.code is ErrorCode.RUNTIME_BUDGET_EXCEEDED

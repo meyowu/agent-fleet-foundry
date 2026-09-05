@@ -59,16 +59,16 @@ The product has differentiated value only when the following six properties are 
 
 The implementation status is deliberately explicit:
 
-| Differentiator | Implemented through Phase 2 | Remaining product milestone |
+| Differentiator | Implemented through Phase 3 | Remaining product milestone |
 |---|---|---|
-| Repository-aware bootstrap | Static profile, knowledge artifacts, detected-command proposal, no-write/no-credential-read diff preview, and disposable canary fixture creation | Isolated canary execution plus bootstrap EvidenceBundle in Phase 3 |
+| Repository-aware bootstrap | Static profile, knowledge artifacts, detected-command proposal, read-only diff preview, disposable deterministic canary through the ordinary Docker workflow, validated BootstrapReport, cleanup proof, and `.fleet/` publication only after success | Broader safe project-command discovery/execution and non-local sandbox support |
 | Adaptive Fleet | Validated plan plus direct/single-Engineer/Engineer+Verifier paths through fake or PydanticAI runtime | Parallel and specialist scheduling in Phase 5 |
 | Permission control plane | Independent broker contract, exact allow-once, and no runtime host-path or harness-tool bypass | Run/persistent exact trust, explain, and revoke in Phase 4 |
-| Sandbox abstraction | Explicit capability contract and fail-closed exact FakeSandbox matching | Docker in Phase 3; remote providers later |
-| Evidence-first delivery | Exact ConfigSnapshot/TaskSpec bindings, strict runtime outputs/usage artifacts, EvidenceBundle, inspectable proof gaps, and simulated-proof-aware CompletionGate | Executed Docker evidence in Phase 3 and full workflow in Phase 5 |
+| Sandbox abstraction | Exact fail-closed fake/Docker/local-unsafe dispatch; Docker pins a local daemon and immutable image, inspects one-shot containers, enforces network/resource boundaries, and recovers exact resources | Modal/hosted providers, approved network modes, and broader platform evidence |
+| Evidence-first delivery | Exact ConfigSnapshot/TaskSpec/FleetPlan/patch/command/cleanup/verdict/BootstrapReport bindings; fresh Docker verifier evidence can satisfy CompletionGate while fake/local-unsafe cannot | General multi-criterion model mapping and full Phase 5 workflow |
 | Versioned evolution | FleetPatch schema and protected-path validator | Proposal/diff/apply/rollback in Phase 6 |
 
-Implemented Phase 2 functionality is not shorthand for the complete MVP. CLI and documentation must label FakeSandbox, simulated evidence, and roadmap-only behaviors directly even when the selected model runtime is real.
+Implemented Phase 3 functionality is not shorthand for the complete MVP. CLI and documentation must label FakeSandbox as simulated, local-unsafe as non-isolating, Docker's local trusted-computing-base limits, and roadmap-only behaviors directly even when the selected model runtime is real.
 
 ## 3. Target users
 
@@ -156,14 +156,15 @@ Target interactive flow:
 11. Apply `.fleet/` only after user confirmation.
 12. Enter or offer the CoS chat experience.
 
-The current Phase 2 non-interactive real-runtime form is:
+The current Phase 3 non-interactive real-runtime/isolated-worker form is:
 
 ```bash
 fleet init . \
   --runtime pydantic-ai \
   --provider-model '<provider>:<model>' \
   --credential-ref 'env:PROVIDER_API_KEY' \
-  --sandbox fake \
+  --sandbox docker \
+  --docker-image '<preloaded-local-image-ref>' \
   --yes
 ```
 
@@ -171,9 +172,9 @@ fleet init . \
 
 For the implemented adapter, `<provider>` is exactly `openai` or `openai-chat`; there is no implicit fallback. Preview validates the full selection and proposal without reading the environment variable, writing Fleet/repository state, or contacting a provider. Init resolves the explicit reference before writes but does not invoke a model. The `env:NAME` reference is persisted only in Fleet-owned state; `.fleet/` stores the selected runtime and opaque provider/model ID, never the reference or raw value. `fleet doctor` performs inspect-only credential readiness with no provider call. `fleet run` revalidates the registered selection, resolves the credential, and may then send the bounded role prompt/context over HTTPS from the trusted control plane.
 
-Phase 2 does not overwrite a differing existing generated `.fleet/` tree. A runtime or provider/model reconfiguration that changes repository files fails before Project/artifact state or repository mutation. The user reviews a fresh preview, moves the whole conflicting generated tree aside, and reruns explicit init. A credential-reference-only change may succeed in place because that reference is Fleet-owned state and never part of `.fleet/`.
+Phase 3 does not overwrite a differing existing generated `.fleet/` tree. A runtime, provider/model, or sandbox reconfiguration that changes repository files fails before Project/artifact state or repository mutation. The user reviews a fresh preview, moves the whole conflicting generated tree aside, and reruns explicit init. A credential-reference-only change may succeed in place because that reference is Fleet-owned state and never part of `.fleet/`.
 
-Steps 8–10 above remain the Phase 3 bootstrap target. Phase 2 creates the disposable canary fixture but does not execute its tests during init or emit a complete `BootstrapReport`.
+Steps 8–10 are implemented for a Docker-selected init. The target remains untouched through preview and canary execution. Confirmed init uses a deterministic fake runtime with the real Docker provider to produce a nonempty canary patch, Engineer command evidence, a fresh non-mutating Verifier command, cleanup receipts, CompletionDecision, and hash-valid `BootstrapReport`; only then may `.fleet/` be published. Fake or local-unsafe selection cannot satisfy this publication gate. No live provider call or arbitrary target-repository code is required by the bootstrap canary.
 
 ### Dirty repository behavior
 
@@ -219,7 +220,7 @@ Before execution, CoS proposes a typed FleetPlan. The deterministic planner acce
 
 The plan records why each role is needed. Unplanned roles are not instantiated, and a role name never grants tools or permission. Parallel and specialist scheduling remain Phase 5 behavior even though the FleetPlan schema represents them. Phase 2 supplies strict real-model `ScopeDecision`, `ImplementationReport`, and `VerifierVerdict` values for the supported direct/single/pair paths; the deterministic control plane still constructs and validates the plan.
 
-For a PydanticAI project, run-time `--runtime`, `--provider-model`, and `--credential-ref` flags may be omitted to use the reviewed Fleet-owned registration. If supplied, they must match it exactly. `--fake-scenario` is rejected for the real runtime. Provider HTTPS is the only Phase 2 network boundary; every model-visible action crosses the role-bound tool catalog, ToolGateway, and PermissionBroker. Authorized candidate writes use a Fleet-owned candidate-worktree primitive; fake commands and approval fixtures use FakeSandbox.
+For a PydanticAI project, run-time `--runtime`, `--provider-model`, and `--credential-ref` flags may be omitted to use the reviewed Fleet-owned registration. If supplied, they must match it exactly. `--fake-scenario` is rejected for the real runtime. Provider HTTPS remains a trusted-control-plane network boundary distinct from worker networking. Every model-visible action crosses the role-bound tool catalog, ToolGateway, and PermissionBroker. Phase 3 Engineer tools are bounded list/read/search/diff/write/edit/delete plus exact reviewed commands; Verifier receives only list/read/search/diff and exact reviewed commands. Descriptor-relative workspace operations and selected sandbox dispatch remain control-plane-owned; fake commands are simulated, local-unsafe is explicitly non-isolating, and only Docker can produce isolated evidence.
 
 Expected stages:
 
