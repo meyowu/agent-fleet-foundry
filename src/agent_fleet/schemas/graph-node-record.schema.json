@@ -1,5 +1,16 @@
 {
   "$defs": {
+    "AgentRole": {
+      "enum": [
+        "cos",
+        "engineer",
+        "verifier",
+        "researcher",
+        "architect"
+      ],
+      "title": "AgentRole",
+      "type": "string"
+    },
     "ArtifactKind": {
       "enum": [
         "fleet_config_proposal",
@@ -108,6 +119,17 @@
           "maxItems": 16,
           "title": "Depends On",
           "type": "array"
+        },
+        "execution_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentRole"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "goal": {
           "anyOf": [

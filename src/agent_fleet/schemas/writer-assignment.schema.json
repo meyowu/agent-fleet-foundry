@@ -27,6 +27,21 @@
       "title": "Node Id",
       "type": "string"
     },
+    "role_id": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Role Id"
+    },
     "scope": {
       "items": {
         "maxLength": 4096,

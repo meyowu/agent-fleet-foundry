@@ -1,0 +1,148 @@
+{
+  "$defs": {
+    "OrganizationAdmission": {
+      "additionalProperties": false,
+      "properties": {
+        "config_snapshot_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Snapshot Sha256",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 1000000000,
+          "minimum": 0,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "tree_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Tree Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "revision",
+        "tree_sha256",
+        "config_snapshot_sha256"
+      ],
+      "title": "OrganizationAdmission",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "base_revision": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Base Revision",
+      "type": "string"
+    },
+    "config_snapshot_artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Config Snapshot Artifact Id",
+      "type": "string"
+    },
+    "config_snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Snapshot Sha256",
+      "type": "string"
+    },
+    "fleet_plan_artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Fleet Plan Artifact Id",
+      "type": "string"
+    },
+    "fleet_plan_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Fleet Plan Sha256",
+      "type": "string"
+    },
+    "model_bindings_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Bindings Sha256"
+    },
+    "organization_admission": {
+      "$ref": "#/$defs/OrganizationAdmission"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "repository_identity": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repository Identity",
+      "type": "string"
+    },
+    "repository_root": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Repository Root",
+      "type": "string"
+    },
+    "root_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Root Run Id",
+      "type": "string"
+    },
+    "run_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Run Sha256",
+      "type": "string"
+    },
+    "target_status_fingerprint": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Target Status Fingerprint",
+      "type": "string"
+    },
+    "task_id": {
+      "pattern": "^task_[0-9a-f]{32}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "task_spec_artifact_id": {
+      "pattern": "^art_[0-9a-f]{32}$",
+      "title": "Task Spec Artifact Id",
+      "type": "string"
+    },
+    "task_spec_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Task Spec Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "root_run_id",
+    "project_id",
+    "task_id",
+    "run_sha256",
+    "task_spec_artifact_id",
+    "task_spec_sha256",
+    "fleet_plan_artifact_id",
+    "fleet_plan_sha256",
+    "config_snapshot_artifact_id",
+    "config_snapshot_sha256",
+    "repository_root",
+    "repository_identity",
+    "base_revision",
+    "target_status_fingerprint",
+    "organization_admission"
+  ],
+  "title": "PlanReviewBinding",
+  "type": "object"
+}

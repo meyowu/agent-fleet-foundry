@@ -53,6 +53,21 @@
           "title": "Node Id",
           "type": "string"
         },
+        "role_id": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role Id"
+        },
         "scope": {
           "items": {
             "maxLength": 4096,
@@ -171,6 +186,25 @@
       ],
       "default": null,
       "title": "Response"
+    },
+    "role_selections": {
+      "additionalProperties": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_-]*$",
+        "type": "string"
+      },
+      "maxProperties": 4,
+      "propertyNames": {
+        "enum": [
+          "engineer",
+          "verifier",
+          "researcher",
+          "architect"
+        ]
+      },
+      "title": "Role Selections",
+      "type": "object"
     },
     "workflow": {
       "default": "code-change",

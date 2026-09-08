@@ -11,6 +11,7 @@ from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import (
+    AgentRole,
     BoundedSummary,
     CriterionId,
     EvidenceRequirementId,
@@ -50,6 +51,7 @@ class FleetStrategy(StrEnum):
 class FleetPlanNode(StrictModel):
     node_id: NodeId
     role_id: RoleId
+    execution_kind: AgentRole | None = Field(default=None, exclude_if=lambda value: value is None)
     goal: BoundedSummary | None = None
     criterion_ids: list[CriterionId] = Field(default_factory=list, max_length=128)
     depends_on: list[NodeId] = Field(default_factory=list, max_length=16)
@@ -58,6 +60,10 @@ class FleetPlanNode(StrictModel):
     requires_workspace: bool = False
     independent_verifier: bool = False
     max_steps: int = Field(default=10, ge=1, le=100)
+
+    @property
+    def effective_kind(self) -> AgentRole:
+        return self.execution_kind or AgentRole(self.role_id)
 
     @field_validator("scope")
     @classmethod
@@ -101,6 +107,7 @@ class FleetPlan(StrictModel):
     task_id: TaskId
     strategy: FleetStrategy
     nodes: list[FleetPlanNode] = Field(max_length=16)
+    repair_role_id: RoleId | None = Field(default=None, exclude_if=lambda value: value is None)
     max_parallel_agents: int = Field(default=1, ge=1, le=8)
     required_evidence: list[EvidenceRequirementId] = Field(min_length=1, max_length=32)
     rationale: Annotated[
@@ -151,8 +158,17 @@ def validate_fleet_plan(
         raise _invalid("FleetPlan evidence requirements must exactly match its TaskSpec.")
     if known_roles is not None:
         missing_roles = {node.role_id for node in plan.nodes} - known_roles
+        if plan.repair_role_id is not None and plan.repair_role_id not in known_roles:
+            missing_roles.add(plan.repair_role_id)
         if missing_roles:
             raise _invalid(f"FleetPlan references undeclared roles: {sorted(missing_roles)}.")
+    for node in plan.nodes:
+        try:
+            kind = node.effective_kind
+        except ValueError:
+            raise _invalid("FleetPlan custom roles require a bound execution kind.") from None
+        if node.role_id in {item.value for item in AgentRole} and kind != node.role_id:
+            raise _invalid("FleetPlan execution kinds disagree with role authority.")
     task_criteria = {criterion.criterion_id for criterion in task.acceptance_criteria}
     if any(set(node.criterion_ids) - task_criteria for node in plan.nodes):
         raise _invalid("FleetPlan nodes must not introduce acceptance criterion IDs.")
@@ -167,7 +183,7 @@ def validate_fleet_plan(
             "independent verifier."
         )
     if plan.strategy is FleetStrategy.DIRECT:
-        if task.change_kind != "read_only" or plan.nodes:
+        if task.change_kind != "read_only" or plan.nodes or plan.repair_role_id is not None:
             raise _invalid("Direct plans are limited to read-only tasks and have no specialists.")
         if set(plan.required_evidence) != _DIRECT_EVIDENCE_REQUIREMENTS:
             raise _invalid("A direct plan requires exactly control_plane_plan evidence.")
@@ -200,7 +216,10 @@ def validate_fleet_plan(
                 f"Verifier {verifier.node_id!r} requests paths outside the TaskSpec allow-list."
             )
     if plan.strategy is FleetStrategy.SINGLE_ENGINEER and (
-        len(writers) != 1 or writers[0].role_id != "engineer" or verifiers or len(plan.nodes) != 1
+        len(writers) != 1
+        or writers[0].effective_kind != "engineer"
+        or verifiers
+        or len(plan.nodes) != 1
     ):
         raise _invalid(
             "A single-engineer plan must contain exactly one Engineer writer and no verifier."
@@ -215,8 +234,8 @@ def validate_fleet_plan(
         writer = writers[0]
         verifier = verifiers[0]
         if (
-            writer.role_id != "engineer"
-            or verifier.role_id != "verifier"
+            writer.effective_kind != "engineer"
+            or verifier.effective_kind != "verifier"
             or writer.node_id not in verifier.depends_on
         ):
             raise _invalid(
@@ -228,8 +247,8 @@ def validate_fleet_plan(
             raise _invalid(
                 "A parallel-engineers plan requires at least two writers and parallel capacity."
             )
-        if any(writer.role_id != "engineer" for writer in writers) or any(
-            node.role_id not in {"engineer", "verifier"} for node in plan.nodes
+        if any(writer.effective_kind != "engineer" for writer in writers) or any(
+            node.effective_kind not in {"engineer", "verifier"} for node in plan.nodes
         ):
             raise _invalid(
                 "A parallel-engineers plan may contain only Engineer writers and Verifiers."
@@ -256,7 +275,7 @@ def validate_fleet_plan(
     if plan.strategy is FleetStrategy.RESEARCH_ARCHITECT_ENGINEER_VERIFIER:
         if not requires_independent_verification:
             raise _invalid("The specialist plan requires independent_verifier_verdict evidence.")
-        by_role = {node.role_id: node for node in plan.nodes}
+        by_role = {node.effective_kind.value: node for node in plan.nodes}
         expected = {"researcher", "architect", "engineer", "verifier"}
         if set(by_role) != expected or len(plan.nodes) != len(expected):
             raise _invalid(
@@ -285,6 +304,14 @@ def validate_fleet_plan(
                 raise _invalid(
                     "Read-only specialists require a workspace with the full task scope."
                 )
+    for node in plan.nodes:
+        kind = node.effective_kind
+        if (
+            kind is AgentRole.COS
+            or node.can_write != (kind is AgentRole.ENGINEER)
+            or node.independent_verifier != (kind is AgentRole.VERIFIER)
+        ):
+            raise _invalid("FleetPlan execution kinds disagree with role authority.")
     for index, left in enumerate(writers):
         for right in writers[index + 1 :]:
             if _scopes_overlap(left.scope, right.scope):

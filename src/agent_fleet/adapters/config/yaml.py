@@ -36,6 +36,12 @@ from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import SandboxConfiguration
 from agent_fleet.domain.paths import path_overlaps_scope
 from agent_fleet.domain.repository_profile import RepositoryProfile
+from agent_fleet.domain.role_templates import (
+    ROLE_CATALOG_PATH,
+    ResolvedRoleTemplate,
+    RoleCatalog,
+    resolve_role_templates,
+)
 from agent_fleet.domain.security import (
     Redactor,
     canonical_json_hash,
@@ -89,6 +95,22 @@ class YamlConfigurationAdapter:
 
     def snapshot_hash(self, snapshot: ConfigSnapshot) -> str:
         return sha256_bytes(snapshot.model_dump_json(indent=2).encode("utf-8"))
+
+    def role_templates(
+        self, spec: FleetSpec, snapshot: ConfigSnapshot
+    ) -> dict[str, ResolvedRoleTemplate]:
+        _reject_registered_secret(spec.model_dump(mode="json"), self.redactor)
+        _reject_registered_secret(snapshot.model_dump(mode="json"), self.redactor)
+        files = {item.path: item.content for item in snapshot.files}
+        rebuilt_spec, rebuilt = self.snapshot_from_files(files)
+        if rebuilt_spec != spec or rebuilt != snapshot:
+            raise _config_error("role configuration does not match its exact snapshot closure")
+        catalog = (
+            _parse(files[ROLE_CATALOG_PATH].encode("utf-8"), RoleCatalog, redactor=self.redactor)
+            if ROLE_CATALOG_PATH in files
+            else None
+        )
+        return _resolve_catalog(spec, files, catalog)
 
     def verification_profile(
         self,
@@ -211,7 +233,12 @@ def load_fleet_snapshot(
         spec, snapshot = _snapshot_from_reader(
             lambda reference, limit: _read_bounded_logical_at(pinned_fd, reference, limit),
             redactor=active_redactor,
+            include_roles=_optional_role_catalog_present(pinned_fd),
         )
+        if _optional_role_catalog_present(pinned_fd) != any(
+            item.path == ROLE_CATALOG_PATH for item in snapshot.files
+        ):
+            raise _config_error("optional role catalog changed during configuration inspection")
         _validate_directory_binding(repository_fd, lexical_fleet_root.name, fleet_fd)
     except FleetError:
         raise
@@ -584,11 +611,13 @@ def snapshot_from_fleet_files(
             raise _config_error("referenced configuration file exceeds its byte limit")
         return content
 
-    return _snapshot_from_reader(read_content, redactor=active_redactor)
+    return _snapshot_from_reader(
+        read_content, redactor=active_redactor, include_roles=ROLE_CATALOG_PATH in encoded_files
+    )
 
 
 def _snapshot_from_reader(
-    read_content: Callable[[str, int], bytes], *, redactor: Redactor
+    read_content: Callable[[str, int], bytes], *, redactor: Redactor, include_roles: bool = False
 ) -> tuple[FleetSpec, ConfigSnapshot]:
     contents: dict[str, bytes] = {}
     total_bytes = 0
@@ -620,6 +649,13 @@ def _snapshot_from_reader(
     guidance = {agent.instructions for agent in spec.spec.agents.values()}
     for reference in sorted(set(references)):
         read(reference, MAX_AGENT_GUIDANCE_BYTES if reference in guidance else MAX_CONFIG_BYTES)
+    if include_roles:
+        catalog = _parse(read(ROLE_CATALOG_PATH), RoleCatalog, redactor=redactor)
+        for template in catalog.roles.values():
+            read(template.instructions, MAX_AGENT_GUIDANCE_BYTES)
+        _resolve_catalog(
+            spec, {path: _decode_utf8(value) for path, value in contents.items()}, catalog
+        )
     profile = parse_verification_profile(read(spec.spec.project.verification), redactor=redactor)
     skill_names: dict[str, str] = {}
     for workflow_id, request in sorted(spec.spec.workflows.items()):
@@ -698,7 +734,9 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         return result
 
 
-def _parse[ConfigType: (FleetSpec, VerificationProfile, WorkflowDefinition, VerificationSkill)](
+def _parse[
+    ConfigType: (FleetSpec, VerificationProfile, WorkflowDefinition, VerificationSkill, RoleCatalog)
+](
     content: bytes,
     model: type[ConfigType],
     *,
@@ -774,6 +812,36 @@ def _fleet_references(spec: FleetSpec) -> list[str]:
         ]
     )
     return references
+
+
+def _resolve_catalog(
+    spec: FleetSpec, files: dict[str, str], catalog: RoleCatalog | None
+) -> dict[str, ResolvedRoleTemplate]:
+    try:
+        return resolve_role_templates(spec, files, catalog)
+    except (ValueError, KeyError, UnicodeError):
+        pass
+    raise _config_error("role catalog violates its declared base, guidance or capability ceiling")
+
+
+def _optional_role_catalog_present(root_fd: int) -> bool:
+    """Only absence is optional; unsafe/aliased directories/files fail closed."""
+
+    try:
+        parent_fd = os.open("agents", _directory_open_flags(), dir_fd=root_fd)
+    except FileNotFoundError:
+        return False
+    try:
+        try:
+            os.stat("roles.yaml", dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            present = False
+        else:
+            present = True
+        _validate_directory_binding(root_fd, "agents", parent_fd)
+        return present
+    finally:
+        os.close(parent_fd)
 
 
 def _validate_logical_reference(reference: str) -> None:

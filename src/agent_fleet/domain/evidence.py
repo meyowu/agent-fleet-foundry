@@ -111,6 +111,7 @@ def assess_criterion_results(
     config_snapshot_sha256: str,
     patch_sha256: str | None,
     command_hashes: dict[str, str],
+    verifier_role: str = "verifier",
 ) -> tuple[list[CriterionAssessment], list[ProofGap]]:
     """Resolve model references only against exact current control-plane records.
 
@@ -158,7 +159,7 @@ def assess_criterion_results(
                 command.run_id == run_id
                 and command.task_id == task_id
                 and command.agent_instance_id == verifier_agent_instance_id
-                and command.principal_role == "verifier"
+                and command.principal_role == verifier_role
                 and command.workflow_stage is WorkflowStage.VERIFYING
                 and command.workspace_kind is WorkspaceKind.VERIFICATION
                 and command.workspace_id is not None
@@ -305,6 +306,7 @@ class EvidenceBundle(StrictModel):
     changed_paths: list[str] = Field(default_factory=list)
     command_evidence: list[CommandEvidence] = Field(default_factory=list)
     verifier_agent_instance_id: AgentInstanceId | None = None
+    verifier_role: RoleId | None = Field(default=None, exclude_if=lambda value: value is None)
     verifier_verdict_artifact_id: ArtifactId | None = None
     verifier_evidence_artifact_ids: list[ArtifactId] = Field(default_factory=list)
     verifier_workspace_mutated: bool = False
@@ -391,6 +393,7 @@ class CompletionGate:
                 run_id=bundle.run_id,
                 task_id=bundle.task_id,
                 verifier_agent_instance_id=bundle.verifier_agent_instance_id,
+                verifier_role=bundle.verifier_role or "verifier",
                 base_revision=bundle.base_revision,
                 config_snapshot_sha256=bundle.config_snapshot_sha256,
                 patch_sha256=bundle.patch_sha256,
@@ -644,7 +647,7 @@ class CompletionGate:
             item.strength is EvidenceStrength.INDEPENDENTLY_VERIFIED
             and (
                 item.agent_instance_id != bundle.verifier_agent_instance_id
-                or item.principal_role != "verifier"
+                or item.principal_role != (bundle.verifier_role or "verifier")
                 or item.workflow_stage is not WorkflowStage.VERIFYING
                 or item.workspace_id is None
                 or item.sandbox_id is None
@@ -658,7 +661,7 @@ class CompletionGate:
         if any(item.workspace_mutated_during_execution for item in verifier_commands):
             reasons.append("VERIFIER_COMMAND_MUTATED_WORKSPACE")
         if any(
-            item.principal_role != "verifier"
+            item.principal_role != (bundle.verifier_role or "verifier")
             or item.workflow_stage is not WorkflowStage.VERIFYING
             or item.workspace_id is None
             or item.sandbox_id is None

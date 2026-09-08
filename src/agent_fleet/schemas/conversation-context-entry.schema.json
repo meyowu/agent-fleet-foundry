@@ -88,6 +88,7 @@
         "running",
         "waiting_for_children",
         "paused_for_approval",
+        "paused_for_plan",
         "ready_for_review",
         "applying",
         "completed",

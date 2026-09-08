@@ -6,6 +6,7 @@ from typing import Protocol
 from agent_fleet.domain.models import (
     AgentInvocation,
     AgentInvocationResult,
+    AgentRole,
     RuntimeCapability,
     RuntimeConfiguration,
     RuntimeCredentialCheck,
@@ -60,6 +61,7 @@ class RuntimeInvocationServices:
     configuration: RuntimeConfiguration
     tools: RuntimeToolCatalog
     accounting: RuntimeAccounting | None = None
+    execution_kind: AgentRole | None = None
 
 
 class RuntimeAdapter(Protocol):

@@ -12,7 +12,8 @@ from agent_fleet.domain.fleet_plan import (
     validate_fleet_plan,
 )
 from agent_fleet.domain.ids import IdPrefix
-from agent_fleet.domain.models import Run, TaskSpec, WriterAssignment
+from agent_fleet.domain.models import AgentRole, Run, TaskSpec, WriterAssignment
+from agent_fleet.domain.role_templates import ResolvedRoleTemplate, validate_role_plan
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
 
@@ -33,6 +34,8 @@ class FleetPlanner:
         writer_assignments: Sequence[WriterAssignment] = (),
         max_parallel_agents: int = 2,
         configured_max_parallel_agents: int = 2,
+        role_selections: dict[str, str] | None = None,
+        role_templates: dict[str, ResolvedRoleTemplate] | None = None,
     ) -> FleetPlan:
         if (
             type(max_parallel_agents) is not int
@@ -146,6 +149,44 @@ class FleetPlanner:
                 "Read-only research and architecture guide one bounded Engineer before "
                 "independent verification."
             )
+        selections = role_selections or {}
+        used_kinds = {node.role_id for node in nodes}
+        if set(selections) - used_kinds:
+            raise self._invalid("Role selections must name an execution kind in the selected team.")
+        assignments_by_node = {item.node_id: item for item in writer_assignments}
+        bound_nodes: list[FleetPlanNode] = []
+        for node in nodes:
+            assignment = assignments_by_node.get(node.node_id)
+            selected = (
+                assignment.role_id
+                if assignment is not None and assignment.role_id is not None
+                else selections.get(node.role_id, node.role_id)
+            )
+            if selected != node.role_id:
+                template = role_templates.get(selected) if role_templates is not None else None
+                if template is None or template.execution_kind != node.role_id:
+                    raise self._invalid(
+                        "The selected custom role has no compatible reviewed template."
+                    )
+                node = FleetPlanNode.model_validate(
+                    {
+                        **node.model_dump(),
+                        "role_id": selected,
+                        "execution_kind": AgentRole(node.role_id),
+                        "max_steps": min(node.max_steps, template.max_steps),
+                    }
+                )
+            bound_nodes.append(node)
+        nodes = bound_nodes
+        repair_role: str | None = None
+        if strategy is FleetStrategy.PARALLEL_ENGINEERS and any(
+            node.can_write and node.role_id != "engineer" for node in nodes
+        ):
+            repair_role = selections.get("engineer")
+            if repair_role is None:
+                raise self._invalid(
+                    "Custom parallel writers require an explicit engineer repair selection."
+                )
         if role_max_steps is not None:
             nodes = [
                 FleetPlanNode.model_validate(
@@ -164,12 +205,15 @@ class FleetPlanner:
             task_id=task.task_id,
             strategy=strategy,
             nodes=nodes,
+            repair_role_id=repair_role,
             max_parallel_agents=capacity if strategy is FleetStrategy.PARALLEL_ENGINEERS else 1,
             required_evidence=task.required_evidence,
             rationale=rationale,
             created_at=self.clock.now(),
         )
         validate_fleet_plan(plan, task, known_roles=known_roles)
+        if role_templates is not None:
+            validate_role_plan(plan, role_templates)
         return plan
 
     @staticmethod

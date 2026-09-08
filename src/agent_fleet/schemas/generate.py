@@ -63,6 +63,13 @@ from agent_fleet.domain.graph import (
     GraphNodeRecord,
     GraphSnapshot,
 )
+from agent_fleet.domain.model_profiles import (
+    ModelConfigurationAudit,
+    ModelProfile,
+    ProjectModelSelection,
+    ResolvedModelBinding,
+    RunModelBindings,
+)
 from agent_fleet.domain.models import (
     AgentExecutionCheckpoint,
     ApprovalRequest,
@@ -99,8 +106,10 @@ from agent_fleet.domain.organization_tree import (
     PreparedPublication,
     PublicationObservation,
 )
+from agent_fleet.domain.plan_review import PlanReviewBinding, PlanReviewCheckpoint
 from agent_fleet.domain.repository_boundary import OrganizationRepositoryBoundary
 from agent_fleet.domain.repository_profile import ProjectKnowledge, RepositoryProfile
+from agent_fleet.domain.role_templates import ResolvedRoleTemplate, RoleCatalog, RoleTemplate
 from agent_fleet.domain.trust import (
     ExactPermissionScope,
     ProjectTrustSettings,
@@ -109,6 +118,16 @@ from agent_fleet.domain.trust import (
 )
 
 SCHEMAS: dict[str, type[BaseModel]] = {
+    "role-catalog.schema.json": RoleCatalog,
+    "role-template.schema.json": RoleTemplate,
+    "resolved-role-template.schema.json": ResolvedRoleTemplate,
+    "model-profile.schema.json": ModelProfile,
+    "project-model-selection.schema.json": ProjectModelSelection,
+    "resolved-model-binding.schema.json": ResolvedModelBinding,
+    "run-model-bindings.schema.json": RunModelBindings,
+    "model-configuration-audit.schema.json": ModelConfigurationAudit,
+    "plan-review-binding.schema.json": PlanReviewBinding,
+    "plan-review-checkpoint.schema.json": PlanReviewCheckpoint,
     "fleet.schema.json": FleetSpec,
     "verification-profile.schema.json": VerificationProfile,
     "config-snapshot.schema.json": ConfigSnapshot,
