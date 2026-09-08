@@ -15,6 +15,14 @@ untracked feature files; it is not a Git commit or archive hash. Final collectio
 2302 tests. Documentation is excluded from this aggregate and archive-bearing
 README/USER_GUIDE changes require a final package refresh.
 
+Exact aggregate command (run from the repository root; Git includes tracked
+hidden fixtures that a default `rg --files` inventory can omit):
+
+```bash
+git ls-files -co --exclude-standard -z src tests scripts |
+  sort -z | xargs -0 shasum -a 256 | shasum -a 256
+```
+
 Implemented: foreground session/onboarding and exact in-session review; opt-in
 durable plan approval before execution; immutable per-role model profiles;
 operational custom role templates with reviewed evolution; authenticated local
@@ -33,7 +41,7 @@ operator's retained disposable evidence root.
 | Gate / report | Final-freeze result |
 | --- | --- |
 | `uv lock --check --offline`; `uv sync --all-extras --frozen --offline` | PASS; 55 resolved,53 checked. |
-| `ruff format --check .`; `ruff check .` | PASS; 312 Python files, no findings. |
+| `ruff format --check .`; `ruff check .` | PASS; formatter reported312 files, no lint findings. |
 | `mypy src tests` | PASS; 260 files. |
 | `python -m agent_fleet.schemas.generate --check` | PASS; 92 schemas, migrations1–10. |
 | `node --check` on dashboard and browser-probe JavaScript; `git diff --check` | PASS. |
@@ -187,16 +195,51 @@ uses the same verified image/daemon and leaves no managed container.
 
 ## Delivery
 
-All local final gates passed. Module commits so far:
+All local final gates passed. Four module commits were pushed and merged:
 `231ccd95e2d04ce872dd9db48eb4069fc3288a05` (contracts),
-`c02043f29c31133c4a83161a592c3ee6ecfafdaa` (runtime/session), and
-`814b3ae7044a00f74c3713cb35900c2c95b180ca` (Dashboard); the release documentation
-commit follows. Each staged source tree also passed isolated archive-based CLI
+`c02043f29c31133c4a83161a592c3ee6ecfafdaa` (runtime/session),
+`814b3ae7044a00f74c3713cb35900c2c95b180ca` (Dashboard), and
+`c9e839a4899bb3b0e58d820640e181c0055c11e2` (release docs/installed journeys).
+Each of the first three staged source trees also passed isolated archive-based CLI
 import/help smoke, with Dashboard registration added only alongside its module.
 Those small commit smokes do not replace final-tree matrix acceptance.
 
-Remote push/PR/merge is pending; no tag or publication is implied. The owner prohibits Actions-minute spending: normal
-CI-skipped delivery is allowed only after local acceptance and a fresh read-back
-showing no required protection/check is bypassed. Workflow and protection settings
-must remain unchanged. Exact final commits/PR/main tree and remote Actions count
-will be recorded after delivery.
+[PR6](https://github.com/meyowu/agent-fleet-codex-kit/pull/6) was normally merged
+at `2026-09-08T00:45:57Z` (September7 local time), with exact-head matching and no
+admin override. Merge commit `8e64fd893b68384868222ebad3b274787c9d89f8` has parents
+the baseline `9276cbf44fa32adc8087d618e0ec4aeff60b877c` and feature head
+`c9e839a4899bb3b0e58d820640e181c0055c11e2`. Its tree
+`eab059c281eb9a78c1999be6835cc029a539c417` exactly matches the accepted feature
+tree. GitHub PR/main and fetched local main were read back; the local checkout
+fast-forwarded cleanly.
+
+Fresh pre-merge REST showed main unprotected; GraphQL showed no branch protection
+rule or inherited repository rulesets (empty list, no next page). The REST
+ruleset endpoint was plan-restricted, not interpreted as proof of absence.
+Workflow files and repository settings were unchanged; the repository remains
+private. Head and merge commit carry `[skip ci]` under the owner's Actions-minute
+constraint. Post-merge Actions total remains7, latest run33989500224 at the old
+baseline, with no new run for this candidate. Hosted CI was intentionally skipped,
+not reported as a pass. No tag, package publication or visibility change occurred.
+
+### Post-merge read-back and smoke
+
+On the exact merge tree, offline lock55/sync53, Ruff format (reported313 files),
+lint, mypy260 files,92 generated schemas, both JavaScript syntax checks and Git
+whitespace checks all passed. The source/test/scripts and README/USER_GUIDE
+hashes above were unchanged. The offline build produced identical wheel/sdist
+hashes to final acceptance. The focused post-merge command was:
+
+```bash
+AGENT_FLEET_ENABLE_LIVE_PROVIDER_TESTS=0 AGENT_FLEET_ENABLE_DOCKER_TESTS=0 \
+AGENT_FLEET_ENABLE_INSTALL_TESTS=0 UV_PYTHON_DOWNLOADS=never \
+uv run --offline --frozen pytest -q -ra \
+  tests/integration/test_distribution.py tests/unit/test_schema_generation.py \
+  --junitxml "$fleet_evidence_root/postmerge-archives.xml"
+```
+
+Result:6 passed in1.99s. This is a post-merge smoke, not a new full-matrix claim.
+This final receipt changes only this ledger and the living ExecPlan, both excluded
+from the distribution. Packaged README/guide, source, tests, schemas, dependencies
+and assets remain frozen, so the complete accepted matrix and fresh-install
+archive identity still refer to the delivered implementation.
