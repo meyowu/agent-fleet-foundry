@@ -6,6 +6,7 @@ from typing import Literal, Protocol
 from agent_fleet.domain.config import ConfigSnapshot, FleetSpec, VerificationProfile
 from agent_fleet.domain.models import SandboxConfiguration
 from agent_fleet.domain.repository_profile import RepositoryProfile
+from agent_fleet.domain.role_templates import ResolvedRoleTemplate
 
 
 class ConfigurationPort(Protocol):
@@ -31,6 +32,10 @@ class ConfigurationPort(Protocol):
     def hash(self, spec: FleetSpec) -> str: ...
 
     def snapshot_hash(self, snapshot: ConfigSnapshot) -> str: ...
+
+    def role_templates(
+        self, spec: FleetSpec, snapshot: ConfigSnapshot
+    ) -> dict[str, ResolvedRoleTemplate]: ...
 
     def verification_profile(
         self,

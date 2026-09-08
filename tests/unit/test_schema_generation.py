@@ -123,7 +123,8 @@ def test_adaptive_graph_public_schema_catalog_is_complete_and_bounded() -> None:
         seed["$defs"]["Run"]["properties"].keys()
     )
     specialist = SCHEMAS["specialist-report.schema.json"].model_json_schema()
-    assert specialist["properties"]["role"]["enum"] == ["researcher", "architect"]
+    assert specialist["properties"]["role"]["pattern"] == r"^[a-z][a-z0-9_-]*$"
+    assert specialist["properties"]["role"]["maxLength"] == 64
     assert specialist["properties"]["findings"]["maxItems"] == 32
     delivery = SCHEMAS["graph-delivery-evidence.schema.json"].model_json_schema()
     assert delivery["properties"]["child_cleanup_receipts"]["maxItems"] == 16

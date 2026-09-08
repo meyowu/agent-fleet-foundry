@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -13,6 +13,7 @@ from agent_fleet.application.evolution_context import (
     build_evolution_context,
     validate_context_proposal,
 )
+from agent_fleet.application.model_profiles import ModelProfileService
 from agent_fleet.domain.config import ConfigSnapshot
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evolution import (
@@ -40,6 +41,7 @@ from agent_fleet.domain.organization_tree import (
     PublicationObservation,
 )
 from agent_fleet.domain.security import Redactor, canonical_json_hash
+from agent_fleet.domain.session_review import OrganizationReview
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
 from agent_fleet.ports.evolution import OrganizationStore
@@ -68,6 +70,8 @@ class OrganizationService:
         ids: IdGenerator,
         redactor: Redactor,
         secrets: SecretStore,
+        *,
+        model_profiles: ModelProfileService | None = None,
     ) -> None:
         self.state = state
         self.store = store
@@ -79,20 +83,20 @@ class OrganizationService:
         self.ids = ids
         self.redactor = redactor
         self.secrets = secrets
+        self.model_profiles = model_profiles
 
     def project_for_path(self, path: Path) -> Project:
         repository = self.repository.inspect(path)
         project = self.state.get_project_by_root(repository.root)
         if project is None or project.identity_hash != repository.identity_hash:
             raise _conflict("The selected repository has no matching registered organization.")
-        self._register_secrets(project.credential_ref)
+        self.register_project_secrets(project)
         return self.state.get_project(project.project_id)
 
     def get_proposal(self, proposal_id: str) -> FleetPatchProposalRecord:
         proposal = self.store.get_proposal(proposal_id)
-        project = self.state.get_project(proposal.base.project_id)
         run = self.state.get_run(proposal.source_run_id)
-        self._register_secrets(project.credential_ref, run.credential_ref)
+        self.register_run_secrets(run)
         # Re-read all payloads with the now-current explicit credential registry.
         return self.store.get_proposal(proposal_id)
 
@@ -108,26 +112,104 @@ class OrganizationService:
         self.get_proposal(operation.proposal_id)
         return self.store.get_operation(operation_id)
 
-    def apply(self, proposal_id: str) -> OrganizationPublicationResult:
+    def review(
+        self, proposal_id: str, *, action: Literal["apply", "rollback"]
+    ) -> tuple[OrganizationReview, FleetPatchProposalRecord]:
+        proposal = self.get_proposal(proposal_id)
+        project = self.state.get_project(proposal.base.project_id)
+        with self.files.session(project, self.ids.new(IdPrefix.ORGANIZATION_OPERATION)) as session:
+            expected = self._review_binding(proposal, project, session, action=action)
+            operation = self.store.operation_for_proposal(proposal_id)
+            if action == "apply" and (
+                proposal.patch.rollback_of is not None
+                or operation is not None
+                or proposal.base != expected.organization.admission
+            ):
+                raise _conflict("Review requires an unapplied proposal for the current generation.")
+            if action == "rollback" and (
+                operation is None
+                or operation.status != "committed"
+                or operation.committed_version != expected.organization.revision
+            ):
+                raise _conflict("Rollback review requires the exact currently applied proposal.")
+            return expected, proposal
+
+    def _review_binding(
+        self,
+        proposal: FleetPatchProposalRecord,
+        project: Project,
+        session: OrganizationPublicationSession,
+        *,
+        action: Literal["apply", "rollback"],
+    ) -> OrganizationReview:
+        head, _ = self._capture_head(project, session)
+        return OrganizationReview(
+            proposal_id=proposal.patch.fleet_patch_id,
+            action=action,
+            proposal_sha256=proposal.proposal_sha256,
+            project_sha256=canonical_json_hash(project.model_dump(mode="json")),
+            repository_sha256=canonical_json_hash(
+                self.repository.inspect_organization_boundary(
+                    Path(project.canonical_root)
+                ).model_dump(mode="json")
+            ),
+            organization=head,
+        )
+
+    def _check_review(
+        self,
+        expected: OrganizationReview | None,
+        proposal: FleetPatchProposalRecord,
+        project: Project,
+        session: OrganizationPublicationSession,
+        *,
+        action: Literal["apply", "rollback"],
+    ) -> None:
+        if expected is not None and expected != self._review_binding(
+            proposal, project, session, action=action
+        ):
+            raise _conflict("The exact reviewed proposal, action or organization head changed.")
+
+    def apply(
+        self,
+        proposal_id: str,
+        *,
+        expected_review: OrganizationReview | None = None,
+        validate_review: Callable[[], None] | None = None,
+    ) -> OrganizationPublicationResult:
         """User-authorized application; this method is never a model tool."""
         proposal = self.get_proposal(proposal_id)
         operation = self.store.operation_for_proposal(proposal_id)
-        if operation is not None:
+        if operation is not None and expected_review is None:
             return self._repeat(operation)
         if proposal.patch.rollback_of is not None:
             raise _conflict("An inverse proposal is applied only by explicit rollback.")
         project = self.state.get_project(proposal.base.project_id)
         operation_id = self.ids.new(IdPrefix.ORGANIZATION_OPERATION)
         with self.files.session(project, operation_id) as session:
+            proposal = self.get_proposal(proposal_id)
+            if validate_review is not None:
+                validate_review()
+            self._check_review(expected_review, proposal, project, session, action="apply")
             return self._publish(
                 project, proposal, session, operation_id=operation_id, authorization="apply"
             )
 
-    def rollback(self, proposal_id: str) -> OrganizationPublicationResult:
+    def rollback(
+        self,
+        proposal_id: str,
+        *,
+        expected_review: OrganizationReview | None = None,
+        validate_review: Callable[[], None] | None = None,
+    ) -> OrganizationPublicationResult:
         original = self.get_proposal(proposal_id)
         project = self.state.get_project(original.base.project_id)
         operation_id = self.ids.new(IdPrefix.ORGANIZATION_OPERATION)
         with self.files.session(project, operation_id) as session:
+            original = self.get_proposal(proposal_id)
+            if validate_review is not None:
+                validate_review()
+            self._check_review(expected_review, original, project, session, action="rollback")
             head, before = self._capture_head(project, session)
             applied = self.store.operation_for_proposal(proposal_id)
             if (
@@ -530,6 +612,25 @@ class OrganizationService:
                 ) from None
             del value
 
+    def register_project_secrets(self, project: Project) -> None:
+        if self.model_profiles is not None:
+            self.model_profiles.prepare_project(project)
+        else:
+            self._register_secrets(project.credential_ref)
+
+    def register_run_secrets(self, run: Run) -> None:
+        project = self.state.get_project(run.project_id)
+        if run.model_bindings_sha256 is None:
+            self._register_secrets(project.credential_ref, run.credential_ref)
+        elif self.model_profiles is None:
+            raise _conflict("The required model-binding service is unavailable.")
+        else:
+            self.model_profiles.inspect_bindings(
+                project,
+                root_run_id=run.parent_run_id or run.run_id,
+                expected_sha256=run.model_bindings_sha256,
+            )
+
     @contextmanager
     def initialization_guard(self, project: Project, *, expected: Project | None) -> Iterator[None]:
         """Fence all init filesystem/Project writes without creating a version baseline."""
@@ -559,7 +660,7 @@ class OrganizationService:
     def run_guard(self, run: Run) -> Iterator[None]:
         """Serialize configuration-dependent continuation/application with publication."""
         project = self.state.get_project(run.project_id)
-        self._register_secrets(project.credential_ref, run.credential_ref)
+        self.register_run_secrets(run)
         with self.files.session(project, self.ids.new(IdPrefix.ORGANIZATION_OPERATION)) as session:
             head, _ = self._capture_head(project, session)
             admitted = self.store.admission_for_run(run.run_id)

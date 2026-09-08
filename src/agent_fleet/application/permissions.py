@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent_fleet.domain.models import (
+    AgentRole,
     CanonicalResource,
     CommandSpec,
     PermissionDecision,
@@ -25,7 +26,10 @@ class BaselinePermissionBroker:
         intent: ToolIntent,
         task: TaskSpec,
         sandbox: SandboxCapabilities,
+        *,
+        execution_kind: AgentRole | None = None,
     ) -> PermissionDecision:
+        role = intent.principal_role if execution_kind is None else execution_kind.value
         if (
             intent.run_id != task.run_id
             or intent.task_id != task.task_id
@@ -35,7 +39,7 @@ class BaselinePermissionBroker:
         if (
             intent.action
             in {"workspace.write_file", "workspace.apply_edit", "workspace.delete_path"}
-            and intent.principal_role == "engineer"
+            and role == "engineer"
             and intent.stage in {WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING}
             and task.change_kind == "code_change"
             and intent.resource.kind == "workspace_path"
@@ -79,8 +83,8 @@ class BaselinePermissionBroker:
                 "repo.search_text",
                 "workspace.get_diff",
             }
-            and intent.principal_role in {"engineer", "verifier", "researcher", "architect"}
-            and _role_stage_allowed(intent.principal_role, intent.stage)
+            and role in {"engineer", "verifier", "researcher", "architect"}
+            and _role_stage_allowed(role, intent.stage)
             and not intent.side_effect
         ):
             workspace_view = CanonicalResource(kind="workspace_view", identifier=".")
@@ -109,16 +113,16 @@ class BaselinePermissionBroker:
             )
         if (
             intent.action == "command.run"
-            and intent.principal_role in {"engineer", "verifier"}
+            and role in {"engineer", "verifier"}
             and intent.resource.kind == "project_command"
             and task.change_kind == "code_change"
             and intent.side_effect
             and (
                 (
-                    intent.principal_role == "engineer"
+                    role == "engineer"
                     and intent.stage in {WorkflowStage.IMPLEMENTING, WorkflowStage.REPAIRING}
                 )
-                or (intent.principal_role == "verifier" and intent.stage is WorkflowStage.VERIFYING)
+                or (role == "verifier" and intent.stage is WorkflowStage.VERIFYING)
             )
         ):
             command = _task_command(task, intent.resource.identifier, sandbox.provider)
@@ -154,7 +158,7 @@ class BaselinePermissionBroker:
             )
         if (
             intent.action == "fixture.record_side_effect"
-            and intent.principal_role == "engineer"
+            and role == "engineer"
             and intent.resource
             == CanonicalResource(kind="fake_side_effect", identifier="fixture://approval-proof")
             and intent.parameters == {"record": "approved-once"}

@@ -361,6 +361,19 @@
           "title": "Max Repair Iterations",
           "type": "integer"
         },
+        "model_bindings_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Bindings Sha256"
+        },
         "parent_iteration": {
           "anyOf": [
             {
@@ -454,6 +467,11 @@
           ],
           "default": null,
           "title": "Pending Approval Id"
+        },
+        "plan_review_required": {
+          "default": false,
+          "title": "Plan Review Required",
+          "type": "boolean"
         },
         "project_id": {
           "pattern": "^prj_[0-9a-f]{32}$",
@@ -745,6 +763,7 @@
         "running",
         "waiting_for_children",
         "paused_for_approval",
+        "paused_for_plan",
         "ready_for_review",
         "applying",
         "completed",

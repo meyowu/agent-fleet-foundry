@@ -1,0 +1,137 @@
+{
+  "$defs": {
+    "RoleTemplate": {
+      "additionalProperties": false,
+      "properties": {
+        "allowedPaths": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 128,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowedpaths"
+        },
+        "allowedTools": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 100,
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9_.-]*$",
+                "type": "string"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Allowedtools"
+        },
+        "baseRole": {
+          "enum": [
+            "engineer",
+            "verifier",
+            "researcher",
+            "architect"
+          ],
+          "title": "Baserole",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "instructions": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Instructions",
+          "type": "string"
+        },
+        "maxSteps": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maxsteps"
+        },
+        "modelProfile": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modelprofile"
+        }
+      },
+      "required": [
+        "baseRole",
+        "description",
+        "instructions"
+      ],
+      "title": "RoleTemplate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "agentfleet.dev/v1alpha1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "kind": {
+      "const": "RoleCatalog",
+      "title": "Kind",
+      "type": "string"
+    },
+    "roles": {
+      "maxProperties": 32,
+      "patternProperties": {
+        "^[a-z][a-z0-9_-]*$": {
+          "$ref": "#/$defs/RoleTemplate"
+        }
+      },
+      "propertyNames": {
+        "maxLength": 64,
+        "minLength": 1
+      },
+      "title": "Roles",
+      "type": "object"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "roles"
+  ],
+  "title": "RoleCatalog",
+  "type": "object"
+}

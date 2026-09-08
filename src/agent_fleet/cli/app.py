@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -19,7 +20,9 @@ from rich.text import Text
 from agent_fleet import __version__
 from agent_fleet.bootstrap import build_container
 from agent_fleet.cli.chat import register_chat_command
+from agent_fleet.cli.dashboard import register_dashboard_command
 from agent_fleet.cli.evolution import register_evolution_commands
+from agent_fleet.cli.models import register_models_commands
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix, new_id
 from agent_fleet.domain.models import (
@@ -38,10 +41,13 @@ app = typer.Typer(
         "Local-first Agent Fleet control plane with exact fake, Docker, or explicit "
         "local-unsafe execution boundaries."
     ),
-    no_args_is_help=True,
+    no_args_is_help=False,
+    invoke_without_command=True,
 )
 patch_app = typer.Typer(help="Inspect or explicitly apply candidate patches.")
 app.add_typer(patch_app, name="patch")
+plan_app = typer.Typer(help="Inspect and approve an exact opt-in pre-execution plan.")
+app.add_typer(plan_app, name="plan")
 permissions_app = typer.Typer(help="Inspect and manage exact user-owned permission scopes.")
 app.add_typer(permissions_app, name="permissions")
 console = Console()
@@ -310,6 +316,9 @@ def run(
             ),
         ),
     ] = None,
+    review_plan: Annotated[
+        bool, typer.Option("--review-plan", help="Pause after CoS planning, before execution.")
+    ] = False,
     json_output: JsonFlag = False,
 ) -> None:
     """Run the reviewed project through its exact registered sandbox boundary."""
@@ -328,6 +337,7 @@ def run(
                 sandbox_name=sandbox,
                 fake_scenario=fake_scenario,
                 allow_unsafe_local=allow_unsafe_local,
+                review_plan=review_plan,
             )
         )
         data = container.inspection.status(result.run_id)
@@ -348,6 +358,44 @@ def status(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = Fal
         lambda: jsonable(build_container(redactor=redactor).inspection.status(run_id)),
         redactor=redactor,
     )
+
+
+@plan_app.command("show")
+def plan_show(run_id: Annotated[str, typer.Argument()], json_output: JsonFlag = False) -> None:
+    """Show the complete recorded task/plan and exact decision hash, without execution."""
+    redactor = _environment_redactor()
+    _present(
+        "fleet plan show",
+        json_output,
+        lambda: build_container(redactor=redactor).conversations.reviews.run_plan(run_id),
+        redactor=redactor,
+    )
+
+
+@plan_app.command("approve")
+def plan_approve(
+    run_id: Annotated[str, typer.Argument()],
+    expected_sha256: Annotated[
+        str, typer.Option("--expected-sha256", help="Exact checkpoint hash from fleet plan show.")
+    ],
+    json_output: JsonFlag = False,
+) -> None:
+    """Approve only the reviewed pending plan; fleet resume is a separate action."""
+    redactor = _environment_redactor()
+
+    def operation() -> JsonValue:
+        container = build_container(redactor=redactor)
+        checkpoint = container.plan_reviews.approve(
+            container.state.get_run(run_id), expected_sha256=expected_sha256
+        )
+        return jsonable(
+            {
+                "checkpoint": checkpoint.safe_projection(),
+                "notice": "Plan approved only; explicitly resume this run to execute it once.",
+            }
+        )
+
+    _present("fleet plan approve", json_output, operation, redactor=redactor)
 
 
 @app.command()
@@ -878,13 +926,41 @@ def _exit_code(code: ErrorCode) -> int:
     return 1
 
 
-register_chat_command(
+_launch_chat = register_chat_command(
     app,
     service_factory=lambda redactor: build_container(redactor=redactor).conversations,
     redactor_factory=_environment_redactor,
     presenter=_present_with_warnings,
     error_presenter=_present_error,
 )
+
+register_dashboard_command(app)
+
+register_models_commands(
+    app,
+    service_factory=lambda redactor: build_container(redactor=redactor).model_profiles,
+    redactor_factory=_environment_redactor,
+    presenter=_present_with_warnings,
+    error_presenter=_present_error,
+)
+
+
+@app.callback()
+def entry(ctx: typer.Context) -> None:
+    """Enter the foreground session only for an actual interactive terminal."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if not _interactive_terminal():
+        # Do this before a service/container is created: bare pipes and help
+        # must not initialize state, consume input, or register a conversation.
+        typer.echo(ctx.get_help())
+        return
+    _launch_chat()
+
+
+def _interactive_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
 
 register_evolution_commands(
     app,

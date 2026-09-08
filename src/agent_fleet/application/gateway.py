@@ -647,7 +647,11 @@ class ToolGateway:
         independently_verified = (
             capabilities.security_level is SandboxSecurityLevel.ISOLATED
             and capabilities.executes_code
-            and intent.principal_role == "verifier"
+            and (
+                intent.principal_role == "verifier"
+                or self.state.get_agent_instance(intent.agent_instance_id).effective_kind
+                == "verifier"
+            )
             and intent.stage is WorkflowStage.VERIFYING
             and workspace.kind is WorkspaceKind.VERIFICATION
             and run.patch_sha256 is not None
@@ -897,6 +901,22 @@ class ToolGateway:
         workspace: Workspace,
         sandbox_handle: SandboxHandle,
     ) -> None:
+        try:
+            execution_kind = agent.effective_kind
+        except ValueError:
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "The agent has no supported execution-kind binding.",
+                "Use an instance created from the reviewed FleetPlan.",
+            ) from None
+        if agent.execution_kind is not None and (
+            self.state.get_agent_instance(agent.agent_instance_id) != agent
+        ):
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "The custom agent does not match its persisted principal.",
+                "Use the exact active instance; role identities cannot be substituted.",
+            )
         if (
             task.run_id != run.run_id
             or run.task_id != task.task_id
@@ -932,7 +952,7 @@ class ToolGateway:
                 "Trusted gateway workspace or sandbox has no active persisted lease.",
                 "Recover the Run resources before executing another tool.",
             )
-        if agent.role in {"engineer", "researcher", "architect"} and (
+        if execution_kind in {"engineer", "researcher", "architect"} and (
             workspace.kind is not WorkspaceKind.CANDIDATE
         ):
             raise FleetError(
@@ -940,7 +960,7 @@ class ToolGateway:
                 "Worker actions require the bound candidate workspace.",
                 "Use the WorkflowEngine-managed worker context.",
             )
-        if agent.role == "verifier" and workspace.kind is not WorkspaceKind.VERIFICATION:
+        if execution_kind == "verifier" and workspace.kind is not WorkspaceKind.VERIFICATION:
             raise FleetError(
                 ErrorCode.COMMAND_DENIED,
                 "Verifier actions require a fresh verification workspace.",

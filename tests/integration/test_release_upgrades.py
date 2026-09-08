@@ -27,6 +27,15 @@ _ORGANIZATION_TABLES = (
     "organization_trees",
     "organization_events",
 )
+_MODEL_TABLES = (
+    "run_model_bindings",
+    "project_model_selection_heads",
+    "project_model_selection_versions",
+    "model_profile_heads",
+    "model_profile_versions",
+    "model_configuration_audit",
+)
+_PLAN_REVIEW_TABLES = ("plan_review_heads", "plan_review_versions")
 
 
 def _rows(database: Path) -> dict[str, list[tuple[object, ...]]]:
@@ -93,9 +102,9 @@ async def test_schema7_upgrade_preserves_real_paused_chat_budget_graph_and_lease
         original.backup(copy)
         # This isolated fixture models schema7; it is not an older-binary execution claim.
         copy.execute("PRAGMA foreign_keys=OFF")
-        for table in _ORGANIZATION_TABLES:
+        for table in (*_PLAN_REVIEW_TABLES, *_MODEL_TABLES, *_ORGANIZATION_TABLES):
             copy.execute(f"DROP TABLE {table}")
-        copy.execute("DELETE FROM schema_migrations WHERE version=8")
+        copy.execute("DELETE FROM schema_migrations WHERE version>=8")
         assert copy.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 7
     expected = _rows(database)
     try:

@@ -19,7 +19,9 @@ from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.graph import GraphCoordinator
 from agent_fleet.application.graph_workflow import GraphWorkflowExecution
 from agent_fleet.application.inspection import InspectionService
+from agent_fleet.application.model_profiles import ModelProfileService
 from agent_fleet.application.permission_policy import PermissionPolicyService
+from agent_fleet.application.plan_review import PlanReviewService
 from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.proposal_tools import ProposalHashToolCatalog
 from agent_fleet.application.resources import CancellationService, ResourceService
@@ -51,9 +53,10 @@ from agent_fleet.domain.evidence import (
 )
 from agent_fleet.domain.evolution import FleetPatchProposalRecord
 from agent_fleet.domain.fleet_patch import validate_fleet_patch
-from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy
+from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy, validate_fleet_plan
 from agent_fleet.domain.graph import GraphDriverClaim, GraphStatus
 from agent_fleet.domain.ids import IdPrefix
+from agent_fleet.domain.model_profiles import RunModelBindings
 from agent_fleet.domain.models import (
     AgentExecutionCheckpoint,
     AgentInstance,
@@ -87,6 +90,7 @@ from agent_fleet.domain.models import (
     WorkspaceKind,
 )
 from agent_fleet.domain.paths import path_is_within
+from agent_fleet.domain.role_templates import ResolvedRoleTemplate, validate_role_plan
 from agent_fleet.domain.security import Redactor
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
@@ -134,6 +138,8 @@ class WorkflowEngine:
         organization: OrganizationService,
         permission_policy: PermissionPolicyService | None = None,
         conversations: ConversationStore | None = None,
+        model_profiles: ModelProfileService | None = None,
+        plan_reviews: PlanReviewService | None = None,
     ) -> None:
         self.state = state
         self.repository = repository
@@ -153,6 +159,8 @@ class WorkflowEngine:
         self.redactor = redactor
         self.permission_policy = permission_policy
         self.conversations = conversations
+        self.model_profiles = model_profiles
+        self.plan_reviews = plan_reviews
         self._conversation_claims: dict[str, ConversationClaim] = {}
         self.graph_execution = GraphWorkflowExecution(self)
         self.graph_coordinator = GraphCoordinator(graphs, state, self.graph_execution, clock)
@@ -170,6 +178,7 @@ class WorkflowEngine:
         allow_unsafe_local: bool = False,
         budget_limits: RunBudgetLimits | None = None,
         conversation_submission: ConversationSubmission | None = None,
+        review_plan: bool = False,
     ) -> Run:
         self._reject_untrusted_secrets(
             {
@@ -264,11 +273,21 @@ class WorkflowEngine:
             provider_model=selected_provider_model,
             credential_ref=selected_credential_ref,
         )
-        self.runtimes.require(
-            runtime_configuration,
-            required_capabilities=_MINIMUM_RUNTIME_CAPABILITIES,
-            credential_check=RuntimeCredentialCheck.RESOLVE,
+        profiles_selected = (
+            self.model_profiles.prepare_project(project)
+            if self.model_profiles is not None
+            else False
         )
+        if not profiles_selected:
+            self.runtimes.require(
+                runtime_configuration,
+                required_capabilities=_MINIMUM_RUNTIME_CAPABILITIES,
+                credential_check=RuntimeCredentialCheck.RESOLVE,
+            )
+        # Newly registered selected secrets must be checked against earlier
+        # repository/user option reads before errors or durable data can escape.
+        self._reject_untrusted_secrets(info.model_dump(mode="json"))
+        self._reject_untrusted_secrets({"runtime": runtime_name, "model": provider_model})
         spec_path = Path(project.canonical_root) / ".fleet" / "fleet.yaml"
         spec, config_snapshot = self.config.load_snapshot(spec_path)
         config_hash = self.config.snapshot_hash(config_snapshot)
@@ -290,11 +309,41 @@ class WorkflowEngine:
                 "Restore the exact reviewed configuration, or preserve this project/state "
                 "and separately initialize a different protected setup.",
             )
-        self.runtimes.require(
-            runtime_configuration,
-            required_capabilities=spec.spec.runtime.required_capabilities,
-            credential_check=RuntimeCredentialCheck.NONE,
-        )
+        run_id = self.ids.new(IdPrefix.RUN)
+        model_bindings: RunModelBindings | None = None
+        role_templates = self.config.role_templates(spec, config_snapshot)
+        repository_preferences = {
+            role: template.model_profile
+            for role, template in role_templates.items()
+            if template.model_profile is not None
+        }
+        if profiles_selected or repository_preferences:
+            if self.model_profiles is None:
+                raise FleetError(
+                    ErrorCode.CONFIG_INVALID,
+                    "Model profile resolution is unavailable for this requested organization.",
+                    "Use the configured user-owned model profile service.",
+                )
+            model_bindings = self.model_profiles.resolve(
+                project,
+                root_run_id=run_id,
+                roles=sorted(set(spec.spec.agents) | set(role_templates)),
+                repository_preferences=repository_preferences,
+                legacy_configuration=runtime_configuration,
+            )
+            runtime_configuration = model_bindings.roles["cos"].configuration
+            for binding in model_bindings.roles.values():
+                self.runtimes.require(
+                    binding.configuration,
+                    required_capabilities=spec.spec.runtime.required_capabilities,
+                    credential_check=RuntimeCredentialCheck.NONE,
+                )
+        else:
+            self.runtimes.require(
+                runtime_configuration,
+                required_capabilities=spec.spec.runtime.required_capabilities,
+                credential_check=RuntimeCredentialCheck.NONE,
+            )
         with self.organization.admission(project) as admitted:
             if admitted.config_snapshot_sha256 != config_hash:
                 raise FleetError(
@@ -316,7 +365,16 @@ class WorkflowEngine:
                 "Restore the reviewed local Docker boundary or run a fresh verified bootstrap.",
                 details={"sandbox": project.sandbox_name},
             )
-        if selected_runtime != "fake" and fake_scenario is not None:
+        if fake_scenario is not None and (
+            runtime_configuration.runtime_name != "fake"
+            or (
+                model_bindings is not None
+                and any(
+                    item.configuration.runtime_name != "fake"
+                    for item in model_bindings.roles.values()
+                )
+            )
+        ):
             raise FleetError(
                 ErrorCode.CONFIG_INVALID,
                 "Fake scenarios are available only with the fake runtime.",
@@ -326,7 +384,7 @@ class WorkflowEngine:
         redacted_goal, _ = self.redactor.redact_text(goal)
         now = self.clock.now()
         run = Run(
-            run_id=self.ids.new(IdPrefix.RUN),
+            run_id=run_id,
             project_id=project.project_id,
             correlation_id=self.ids.new(IdPrefix.CORRELATION),
             goal=redacted_goal,
@@ -335,6 +393,8 @@ class WorkflowEngine:
             runtime_name=runtime_configuration.runtime_name,
             provider_model=runtime_configuration.provider_model,
             credential_ref=runtime_configuration.credential_ref,
+            model_bindings_sha256=model_bindings.bindings_sha256 if model_bindings else None,
+            plan_review_required=review_plan,
             sandbox_name=project.sandbox_name,
             sandbox_configuration=project.sandbox_configuration,
             sandbox_requirements=sandbox_requirements,
@@ -369,6 +429,10 @@ class WorkflowEngine:
                 self._conversation_claims[run.run_id] = conversation_claim
         orderly = False
         try:
+            if model_bindings is not None:
+                if self.model_profiles is None:
+                    raise RuntimeError("Model profile service is unavailable")
+                self.model_profiles.save_bindings(model_bindings)
             self.budgets.initialize_run(run.run_id, budget_limits or RunBudgetLimits())
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.INTAKE)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.SCOPING)
@@ -378,29 +442,13 @@ class WorkflowEngine:
                 config_snapshot,
                 runtime_configuration,
                 fleet_spec=spec,
-                known_roles=set(spec.spec.agents),
+                known_roles=set(role_templates),
             )
-            if run.fleet_strategy == FleetStrategy.DIRECT.value:
-                run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
-                result = await self._continue(run)
+            if run.plan_review_required:
+                self._plan_review_service().create(run)
                 orderly = True
-                return result
-            if self._is_adaptive_graph(run):
-                if run.fleet_plan_artifact_id is None:
-                    raise RuntimeError("The accepted graph has no FleetPlan artifact")
-                plan = FleetPlan.model_validate_json(
-                    self.artifacts.read_text(run.fleet_plan_artifact_id)
-                )
-                self.graph_execution.initialize(run, plan)
-                run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
-                run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
-                result = await self._continue(run)
-                orderly = True
-                return result
-            run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
-            await self._prepare_workspace(run)
-            run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
-            result = await self._continue(run)
+                return self.state.get_run(run.run_id)
+            result = await self._dispatch_scoped_plan(run)
             orderly = True
             return result
         except ApprovalRequiredError:
@@ -472,6 +520,7 @@ class WorkflowEngine:
         except FleetError:
             latest = self.state.get_run(run_id)
             orderly = latest.status in {
+                RunStatus.PAUSED_FOR_PLAN,
                 RunStatus.FAILED,
                 RunStatus.REJECTED,
                 RunStatus.CANCELLED,
@@ -515,16 +564,23 @@ class WorkflowEngine:
             # A released child-graph claim does not mean the parent's verifier
             # stopped. Public resume cannot take over an executing parent.
             raise GraphOwnershipUnavailableError()
-        with self.organization.run_guard(run):
-            # Active/paused Run and retained-claim blockers keep publication
-            # fenced after this short exact-generation check is released.
-            pass
+        if run.plan_review_required and run.status is RunStatus.RUNNING:
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "A reviewed plan has an active or uncertain execution owner.",
+                "Do not replay its consumed decision. Inspect the run and use stopped-owner "
+                "recovery or cancellation only after its owner has stopped.",
+            )
         runtime_configuration = self._runtime_configuration(run)
         self.runtimes.require(
             runtime_configuration,
             required_capabilities=_MINIMUM_RUNTIME_CAPABILITIES,
             credential_check=RuntimeCredentialCheck.RESOLVE,
         )
+        with self.organization.run_guard(run):
+            # Active/paused Run and retained-claim blockers keep publication
+            # fenced after this short exact-generation check is released.
+            pass
         project = self.state.get_project(run.project_id)
         if self.permission_policy is not None:
             self.permission_policy.validate_run_target(run)
@@ -544,6 +600,30 @@ class WorkflowEngine:
             required_capabilities=spec.spec.runtime.required_capabilities,
             credential_check=RuntimeCredentialCheck.NONE,
         )
+        dispatch_scoped = False
+        if run.plan_review_required:
+            plan_checkpoint = self._plan_review_service().inspect(run)
+            if run.status is RunStatus.PAUSED_FOR_PLAN:
+                if plan_checkpoint.status == "pending":
+                    return run
+                # The atomic consumption is outside the failure/cleanup handler:
+                # a losing CAS must never fail or clean the winning caller's run.
+                run = self._plan_review_service().consume(
+                    run, expected_sha256=plan_checkpoint.checkpoint_sha256
+                )
+                dispatch_scoped = True
+            elif plan_checkpoint.status != "consumed":
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "Execution has no consumed exact plan decision.",
+                    "Preserve this run for inspection; do not reconstruct or replay its plan.",
+                )
+        elif run.status is RunStatus.PAUSED_FOR_PLAN:
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "A plan pause is missing its immutable review requirement.",
+                "Preserve this run for inspection; do not execute it.",
+            )
         if run.status is RunStatus.PAUSED_FOR_APPROVAL:
             if run.pending_approval_id is None:
                 raise FleetError(
@@ -637,6 +717,8 @@ class WorkflowEngine:
                 {"request_id": request.request_id, "stage": run.stage.value if run.stage else None},
             )
         try:
+            if dispatch_scoped:
+                return await self._dispatch_scoped_plan(run)
             return await self._continue(run, continuation_claim=continuation_claim)
         except ApprovalRequiredError:
             return self.state.get_run(run_id)
@@ -711,6 +793,7 @@ class WorkflowEngine:
             raise ConversationOwnershipUnavailableError()
         run = self.state.get_run(claim.run_id)
         if run.status not in {
+            RunStatus.PAUSED_FOR_PLAN,
             RunStatus.PAUSED_FOR_APPROVAL,
             RunStatus.WAITING_FOR_CHILDREN,
             RunStatus.READY_FOR_REVIEW,
@@ -727,7 +810,9 @@ class WorkflowEngine:
         summary, refs = conversation_result(
             self.state,
             self.artifacts,
-            InspectionService(self.state, self.artifacts, self.budgets, self.graphs),
+            InspectionService(
+                self.state, self.artifacts, self.budgets, self.graphs, self.model_profiles
+            ),
             run,
         )
         self._reject_untrusted_secrets(summary.model_dump(mode="json"))
@@ -746,6 +831,7 @@ class WorkflowEngine:
         known_roles: set[str],
     ) -> Run:
         guidance = self._role_guidance(fleet_spec, config_snapshot, AgentRole.COS)
+        role_templates = self.config.role_templates(fleet_spec, config_snapshot)
         task_id = self.ids.new(IdPrefix.TASK)
         agent = AgentInstance(
             agent_instance_id=self.ids.new(IdPrefix.AGENT),
@@ -759,8 +845,28 @@ class WorkflowEngine:
         project = self.state.get_project(run.project_id)
         invocation_input: dict[str, JsonValue] = {
             "goal": run.goal,
-            "available_roles": cast(JsonValue, sorted(fleet_spec.spec.agents)),
-            "delegation_roles": cast(JsonValue, fleet_spec.spec.agents["cos"].may_delegate_to),
+            "available_roles": cast(JsonValue, sorted(role_templates)),
+            "delegation_roles": cast(
+                JsonValue,
+                sorted(role for role, item in role_templates.items() if item.delegation_allowed),
+            ),
+            "role_templates": cast(
+                JsonValue,
+                [
+                    {
+                        "role_id": item.role_id,
+                        "execution_kind": item.execution_kind.value,
+                        "description": item.description,
+                        "max_steps": item.max_steps,
+                        "allowed_tools": list(item.allowed_tools),
+                        "allowed_paths": list(item.allowed_paths)
+                        if item.allowed_paths is not None
+                        else None,
+                    }
+                    for item in role_templates.values()
+                    if item.delegation_allowed
+                ],
+            ),
             "max_parallel_agents": fleet_spec.spec.workflows["code-change"].max_parallel_agents,
         }
         organization_context = self.organization.proposal_context(run, config_snapshot)
@@ -900,18 +1006,16 @@ class WorkflowEngine:
             task,
             strategy,
             known_roles=known_roles,
-            role_max_steps={
-                role: request.max_steps for role, request in fleet_spec.spec.agents.items()
-            },
+            role_max_steps={role: request.max_steps for role, request in role_templates.items()},
+            role_templates=role_templates,
+            role_selections={str(key): value for key, value in decision.role_selections.items()},
             writer_assignments=decision.writer_assignments,
             max_parallel_agents=decision.max_parallel_agents,
             configured_max_parallel_agents=fleet_spec.spec.workflows[
                 decision.workflow
             ].max_parallel_agents,
         )
-        if {node.role_id for node in plan.nodes} - set(
-            fleet_spec.spec.agents["cos"].may_delegate_to
-        ):
+        if any(not role_templates[node.role_id].delegation_allowed for node in plan.nodes):
             raise FleetError(
                 ErrorCode.COMMAND_DENIED,
                 "The proposed team exceeds the reviewed CoS delegation ceiling.",
@@ -1035,6 +1139,50 @@ class WorkflowEngine:
             ),
         )
 
+    def _plan_review_service(self) -> PlanReviewService:
+        if self.plan_reviews is None:
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "The durable plan review service is unavailable.",
+                "Use the complete configured application; never bypass a required checkpoint.",
+            )
+        return self.plan_reviews
+
+    async def _dispatch_scoped_plan(self, run: Run) -> Run:
+        """Execute the already persisted plan, never invoke CoS to reconstruct it."""
+        self._assert_conversation_execution(run)
+        if run.status is not RunStatus.RUNNING or run.stage is not WorkflowStage.SCOPING:
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "The frozen plan is not at its single-owner dispatch boundary.",
+                "Inspect the retained execution; do not dispatch it again.",
+            )
+        if run.plan_review_required:
+            checkpoint = self._plan_review_service().inspect(run)
+            if checkpoint.status != "consumed":
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "The reviewed plan has not been consumed by its execution owner.",
+                    "Approve and explicitly resume the exact pending plan.",
+                )
+        if run.fleet_strategy == FleetStrategy.DIRECT.value:
+            run = self._transition(run, RunStatus.RUNNING, WorkflowStage.PRESENTING)
+            return await self._continue(run)
+        if self._is_adaptive_graph(run):
+            if run.fleet_plan_artifact_id is None:
+                raise RuntimeError("The accepted graph has no FleetPlan artifact")
+            plan = FleetPlan.model_validate_json(
+                self.artifacts.read_text(run.fleet_plan_artifact_id)
+            )
+            self.graph_execution.initialize(run, plan)
+            run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
+            run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
+            return await self._continue(run)
+        run = self._transition(run, RunStatus.RUNNING, WorkflowStage.WORKSPACE_PREPARATION)
+        await self._prepare_workspace(run)
+        run = self._transition(run, RunStatus.RUNNING, WorkflowStage.IMPLEMENTING)
+        return await self._continue(run)
+
     async def _continue(
         self, run: Run, *, continuation_claim: GraphDriverClaim | None = None
     ) -> Run:
@@ -1089,7 +1237,7 @@ class WorkflowEngine:
     ) -> Run:
         while True:
             run = self.state.get_run(run.run_id)
-            if run.status is RunStatus.PAUSED_FOR_APPROVAL:
+            if run.status in {RunStatus.PAUSED_FOR_PLAN, RunStatus.PAUSED_FOR_APPROVAL}:
                 return run
             if self._is_adaptive_graph(run) and run.stage is WorkflowStage.IMPLEMENTING:
                 run = await self.graph_coordinator.drive(run.run_id)
@@ -1273,7 +1421,8 @@ class WorkflowEngine:
         if run.task_id is None:
             raise RuntimeError("run has no task")
         task = self.state.get_task(run.task_id)
-        guidance = self._active_role_guidance(run, AgentRole.ENGINEER)
+        template = self._execution_role(run, AgentRole.ENGINEER)
+        guidance = template.instructions
         workspace = self.resources.candidate_workspace(run.run_id)
         handle = self.resources.engineer_sandbox(run.run_id)
         checkpoint = run.engineer_checkpoint
@@ -1306,12 +1455,13 @@ class WorkflowEngine:
             agent_instance_id=checkpoint.agent_instance_id,
             run_id=run.run_id,
             task_id=task.task_id,
-            role=AgentRole.ENGINEER,
+            role=template.role_id,
+            execution_kind=(template.execution_kind if template.role_id != "engineer" else None),
             status=AgentStatus.RUNNING,
             iteration=run.repair_iterations,
             created_at=checkpoint.created_at,
         )
-        configuration = self._runtime_configuration(run)
+        configuration = self._runtime_configuration(run, agent.role)
         adapter = self.runtimes.get(configuration.runtime_name)
         catalog = GatewayRuntimeToolCatalog(
             gateway=self.gateway,
@@ -1322,15 +1472,16 @@ class WorkflowEngine:
             workspace=workspace,
             sandbox_handle=handle,
             max_calls=configuration.max_tool_calls,
+            allowed_tools=(template.allowed_tools if template.role_id != "engineer" else None),
         )
         request = self._build_invocation(
             run_id=run.run_id,
             task_id=task.task_id,
             agent_instance_id=agent.agent_instance_id,
-            role=AgentRole.ENGINEER,
+            role=agent.role,
             stage=run.stage or WorkflowStage.IMPLEMENTING,
             iteration=run.repair_iterations,
-            max_steps=self._active_role_max_steps(run, AgentRole.ENGINEER, ceiling=20),
+            max_steps=min(20, template.max_steps),
             instructions=guidance,
             context_artifact_ids=[
                 item
@@ -1351,13 +1502,14 @@ class WorkflowEngine:
                     "previous_verifier_feedback": self._repair_feedback(run),
                     "graph_context": self.graph_execution.model_context(run),
                 },
+                runtime_name=configuration.runtime_name,
             ),
         )
         self.state.save_agent_instance(agent)
         self._emit(
             run,
             "agent.started",
-            {"role": "engineer", "iteration": run.repair_iterations},
+            {"role": agent.role, "execution_kind": "engineer", "iteration": run.repair_iterations},
             agent_id=agent.agent_instance_id,
         )
         result = await self._invoke_runtime_agent(
@@ -1365,7 +1517,9 @@ class WorkflowEngine:
             agent,
             adapter,
             request,
-            RuntimeInvocationServices(configuration=configuration, tools=catalog),
+            RuntimeInvocationServices(
+                configuration=configuration, tools=catalog, execution_kind=agent.effective_kind
+            ),
         )
         evidence_artifact_ids = self._command_evidence_ids(catalog.records)
         report = cast(ImplementationReport, result.output).model_copy(
@@ -1375,7 +1529,7 @@ class WorkflowEngine:
             run,
             task.task_id,
             agent.agent_instance_id,
-            "engineer",
+            agent.role,
             result,
         )
         self.artifacts.create_text(
@@ -1383,7 +1537,7 @@ class WorkflowEngine:
             project_id=run.project_id,
             run_id=run.run_id,
             task_id=task.task_id,
-            producer=f"{run.runtime_name}-runtime:engineer",
+            producer=f"{configuration.runtime_name}-runtime:{agent.role}",
             content=report.model_dump_json(indent=2),
             mime_type="application/json",
         )
@@ -1432,7 +1586,8 @@ class WorkflowEngine:
         if run.task_id is None or run.patch_artifact_id is None:
             raise RuntimeError("run has no task or patch")
         task = self.state.get_task(run.task_id)
-        guidance = self._active_role_guidance(run, AgentRole.VERIFIER)
+        template = self._execution_role(run, AgentRole.VERIFIER)
+        guidance = template.instructions
         patch = self.artifacts.read_text(run.patch_artifact_id).encode()
         if run.sandbox_configuration is None or run.sandbox_requirements is None:
             raise RuntimeError("Run sandbox binding was not materialized")
@@ -1507,12 +1662,13 @@ class WorkflowEngine:
             agent_instance_id=checkpoint.agent_instance_id,
             run_id=run.run_id,
             task_id=task.task_id,
-            role=AgentRole.VERIFIER,
+            role=template.role_id,
+            execution_kind=(template.execution_kind if template.role_id != "verifier" else None),
             status=AgentStatus.RUNNING,
             iteration=run.repair_iterations,
             created_at=checkpoint.created_at,
         )
-        configuration = self._runtime_configuration(run)
+        configuration = self._runtime_configuration(run, agent.role)
         adapter = self.runtimes.get(configuration.runtime_name)
         catalog = GatewayRuntimeToolCatalog(
             gateway=self.gateway,
@@ -1523,15 +1679,16 @@ class WorkflowEngine:
             workspace=workspace,
             sandbox_handle=handle,
             max_calls=configuration.max_tool_calls,
+            allowed_tools=(template.allowed_tools if template.role_id != "verifier" else None),
         )
         request = self._build_invocation(
             run_id=run.run_id,
             task_id=task.task_id,
             agent_instance_id=agent.agent_instance_id,
-            role=AgentRole.VERIFIER,
+            role=agent.role,
             stage=WorkflowStage.VERIFYING,
             iteration=run.repair_iterations,
-            max_steps=self._active_role_max_steps(run, AgentRole.VERIFIER, ceiling=10),
+            max_steps=min(10, template.max_steps),
             instructions=guidance,
             context_artifact_ids=[
                 item
@@ -1550,13 +1707,14 @@ class WorkflowEngine:
                     "patch_sha256": run.patch_sha256,
                     "patch": self._bounded_runtime_text(patch.decode()),
                 },
+                runtime_name=configuration.runtime_name,
             ),
         )
         self.state.save_agent_instance(agent)
         self._emit(
             run,
             "agent.started",
-            {"role": "verifier", "iteration": run.repair_iterations},
+            {"role": agent.role, "execution_kind": "verifier", "iteration": run.repair_iterations},
             agent_id=agent.agent_instance_id,
         )
         result = await self._invoke_runtime_agent(
@@ -1564,7 +1722,9 @@ class WorkflowEngine:
             agent,
             adapter,
             request,
-            RuntimeInvocationServices(configuration=configuration, tools=catalog),
+            RuntimeInvocationServices(
+                configuration=configuration, tools=catalog, execution_kind=agent.effective_kind
+            ),
         )
         evidence_artifact_ids = self._command_evidence_ids(catalog.records)
         after = self.repository.workspace_status_fingerprint(workspace)
@@ -1576,7 +1736,7 @@ class WorkflowEngine:
             run,
             task.task_id,
             agent.agent_instance_id,
-            "verifier",
+            agent.role,
             result,
         )
         bound_verdict = cast(VerifierVerdict, result.output).model_copy(
@@ -1587,7 +1747,7 @@ class WorkflowEngine:
             project_id=run.project_id,
             run_id=run.run_id,
             task_id=task.task_id,
-            producer=f"{run.runtime_name}-runtime:verifier",
+            producer=f"{configuration.runtime_name}-runtime:{agent.role}",
             content=bound_verdict.model_dump_json(indent=2),
             mime_type="application/json",
         )
@@ -1634,6 +1794,49 @@ class WorkflowEngine:
         services: RuntimeInvocationServices,
     ) -> AgentInvocationResult:
         self._assert_conversation_execution(run)
+        if (
+            request.role != agent.role
+            or request.agent_instance_id != agent.agent_instance_id
+            or request.run_id != run.run_id
+            or (
+                services.execution_kind is not None
+                and services.execution_kind is not agent.effective_kind
+            )
+        ):
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "The runtime principal binding is invalid.",
+                "Use the exact reviewed agent and task invocation.",
+            )
+        if agent.effective_kind is not AgentRole.COS:
+            template = self._execution_role(run, agent.effective_kind)
+            if template.role_id != agent.role or request.max_steps > template.max_steps:
+                raise FleetError(
+                    ErrorCode.COMMAND_DENIED,
+                    "The runtime role exceeds its exact plan binding.",
+                    "Use the selected role and bounded plan steps.",
+                )
+        if run.model_bindings_sha256 is not None:
+            expected = self._runtime_configuration(run, agent.role)
+            if services.configuration != expected or request.role != agent.role:
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "The invocation does not match its immutable role/model binding.",
+                    "Restore the exact selected role configuration before dispatch.",
+                )
+            # This event records the application's selected configuration,
+            # independently of optional or provider-reported usage metadata.
+            self._emit(
+                run,
+                "runtime.model_selected",
+                {
+                    "role": agent.role,
+                    "runtime": expected.runtime_name,
+                    "provider_model": expected.provider_model,
+                    "model_bindings_sha256": run.model_bindings_sha256,
+                },
+                agent_id=agent.agent_instance_id,
+            )
         accounting: RuntimeAccounting | None = None
         attempt_finished = False
         try:
@@ -1684,8 +1887,14 @@ class WorkflowEngine:
                 AgentRole.RESEARCHER.value: (SpecialistReport,),
                 AgentRole.ARCHITECT.value: (SpecialistReport,),
             }
-            expected_output = expected_outputs.get(str(request.role))
-            if expected_output is None or not isinstance(result.output, expected_output):
+            expected_output = expected_outputs.get(agent.effective_kind.value)
+            if (
+                expected_output is None
+                or not isinstance(result.output, expected_output)
+                or (
+                    isinstance(result.output, SpecialistReport) and result.output.role != agent.role
+                )
+            ):
                 raise FleetError(
                     ErrorCode.RUNTIME_OUTPUT_INVALID,
                     f"The {agent.role} runtime returned the wrong structured output type.",
@@ -1765,7 +1974,9 @@ class WorkflowEngine:
         )
 
     @staticmethod
-    def _runtime_input(run: Run, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    def _runtime_input(
+        run: Run, value: dict[str, JsonValue], *, runtime_name: str | None = None
+    ) -> dict[str, JsonValue]:
         capabilities = run.sandbox_capabilities_snapshot
         enriched: dict[str, JsonValue] = {
             **value,
@@ -1773,12 +1984,44 @@ class WorkflowEngine:
                 capabilities.model_dump(mode="json") if capabilities is not None else None
             ),
         }
-        if run.runtime_name == "fake":
+        if (runtime_name or run.runtime_name) == "fake":
             enriched["fake_scenario"] = run.fake_scenario.value
         return enriched
 
-    @staticmethod
-    def _runtime_configuration(run: Run) -> RuntimeConfiguration:
+    def _runtime_configuration(self, run: Run, role: str = "cos") -> RuntimeConfiguration:
+        if run.parent_run_id is not None:
+            parent = self.state.get_run(run.parent_run_id)
+            if parent.model_bindings_sha256 != run.model_bindings_sha256:
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "The child is missing its required root model binding.",
+                    "Restore the exact root and child registrations before dispatch.",
+                )
+        if run.model_bindings_sha256 is not None:
+            if self.model_profiles is None:
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "This Run requires an immutable model binding service.",
+                    "Restore the complete control plane before resuming this Run.",
+                )
+            root = self.state.get_run(run.parent_run_id) if run.parent_run_id else run
+            if (
+                root.parent_run_id is not None
+                or root.project_id != run.project_id
+                or root.model_bindings_sha256 != run.model_bindings_sha256
+            ):
+                raise FleetError(
+                    ErrorCode.RECOVERY_REQUIRED,
+                    "The child model binding differs from its registered root.",
+                    "Restore the immutable root and child registrations.",
+                )
+            bindings = self.model_profiles.for_run(
+                self.state.get_project(run.project_id),
+                root_run_id=root.run_id,
+                expected_sha256=run.model_bindings_sha256,
+                required_roles=(role,),
+            )
+            return bindings.roles[role].configuration
         return RuntimeConfiguration(
             runtime_name=run.runtime_name,
             provider_model=run.provider_model,
@@ -1793,7 +2036,7 @@ class WorkflowEngine:
         role: str,
         result: AgentInvocationResult,
     ) -> Run:
-        if (
+        if run.model_bindings_sha256 is None and (
             result.usage is None
             and result.provider_metadata is None
             and result.checkpoint_ref is None
@@ -1810,13 +2053,20 @@ class WorkflowEngine:
             ),
             "checkpoint_ref": result.checkpoint_ref,
         }
+        if run.model_bindings_sha256 is not None:
+            configuration = self._runtime_configuration(run, role)
+            observation["selected_model"] = configuration.model_dump(
+                mode="json", exclude={"credential_ref"}
+            )
+            observation["model_bindings_sha256"] = run.model_bindings_sha256
+        selected_runtime = self._runtime_configuration(run, role).runtime_name
         self._reject_untrusted_secrets(observation)
         artifact = self.artifacts.create_text(
             kind=ArtifactKind.RUNTIME_USAGE,
             project_id=run.project_id,
             run_id=run.run_id,
             task_id=task_id,
-            producer=f"{run.runtime_name}-runtime",
+            producer=f"{selected_runtime}-runtime",
             content=json.dumps(observation, indent=2, sort_keys=True) + "\n",
             mime_type="application/json",
         )
@@ -1867,7 +2117,7 @@ class WorkflowEngine:
         run_id: str,
         task_id: str,
         agent_instance_id: str,
-        role: AgentRole,
+        role: str,
         stage: WorkflowStage,
         iteration: int,
         max_steps: int,
@@ -1900,6 +2150,84 @@ class WorkflowEngine:
     def _active_role_guidance(self, run: Run, role: AgentRole) -> str:
         spec, snapshot = self._active_role_configuration(run)
         return self._role_guidance(spec, snapshot, role)
+
+    def _execution_role(self, run: Run, kind: AgentRole) -> ResolvedRoleTemplate:
+        """Resolve an exact selected principal, including graph children and joined repair."""
+        self._runtime_configuration(run)  # Register all pinned secrets before parsing context.
+        spec, snapshot = self._active_role_configuration(run)
+        templates = self.config.role_templates(spec, snapshot)
+        root = self.state.get_run(run.parent_run_id) if run.parent_run_id is not None else run
+        if (
+            root.fleet_plan_artifact_id is None
+            or root.fleet_plan_hash is None
+            or root.task_id is None
+        ):
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "The task has no exact FleetPlan binding.",
+                "Recover the existing task without reconstructing its plan.",
+            )
+        metadata = self.state.get_artifact(root.fleet_plan_artifact_id)
+        if (
+            metadata.kind is not ArtifactKind.FLEET_PLAN
+            or metadata.run_id != root.run_id
+            or metadata.project_id != root.project_id
+            or metadata.task_id != root.task_id
+            or metadata.sha256 != root.fleet_plan_hash
+            or root.config_snapshot_hash != run.config_snapshot_hash
+        ):
+            raise FleetError(
+                ErrorCode.ARTIFACT_INTEGRITY_FAILED,
+                "The selected plan does not match its exact task binding.",
+                "Restore the recorded plan and configuration artifacts.",
+            )
+        plan = FleetPlan.model_validate_json(self.artifacts.read_bounded_text(metadata.artifact_id))
+        validate_fleet_plan(plan, self.state.get_task(root.task_id), known_roles=set(templates))
+        validate_role_plan(plan, templates)
+        nodes = [node for node in plan.nodes if node.effective_kind is kind]
+        if run.parent_run_id is not None:
+            _, bound = self.graph_execution._node(run)
+            nodes = [node for node in nodes if node == bound.node]
+        if len(nodes) == 1:
+            node = nodes[0]
+            template = templates[node.role_id].model_copy(
+                update={"max_steps": min(node.max_steps, templates[node.role_id].max_steps)}
+            )
+        elif kind is AgentRole.ENGINEER and run.parent_run_id is None and len(nodes) > 1:
+            role_id = plan.repair_role_id
+            if role_id is None and all(node.role_id == "engineer" for node in nodes):
+                role_id = "engineer"  # Exact legacy parallel-join semantics.
+            if role_id is None or role_id not in templates:
+                raise FleetError(
+                    ErrorCode.COMMAND_DENIED,
+                    "Joined repair has no explicit compatible writer selection.",
+                    "Start a new task with a reviewed repair-role selection.",
+                )
+            template = templates[role_id]
+        else:
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "The execution role is ambiguous or absent.",
+                "Use the exact role node selected by the reviewed plan.",
+            )
+        if (
+            template.execution_kind is not kind
+            or not template.delegation_allowed
+            or run.task_id is None
+            or (
+                template.allowed_paths is not None
+                and any(
+                    not path_is_within(path, list(template.allowed_paths))
+                    for path in self.state.get_task(run.task_id).allowed_paths
+                )
+            )
+        ):
+            raise FleetError(
+                ErrorCode.COMMAND_DENIED,
+                "The execution scope exceeds its selected role template.",
+                "Keep execution within the reviewed role path ceiling.",
+            )
+        return template
 
     def _active_role_max_steps(self, run: Run, role: AgentRole, *, ceiling: int) -> int:
         spec, _ = self._active_role_configuration(run)

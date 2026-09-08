@@ -19,6 +19,8 @@ from agent_fleet.adapters.filesystem.workspace import BoundedWorkspaceFileSystem
 from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
 from agent_fleet.adapters.persistence.evolution import SqliteOrganizationStore
 from agent_fleet.adapters.persistence.graphs import SqliteGraphStore
+from agent_fleet.adapters.persistence.model_profiles import SqliteModelProfileStore
+from agent_fleet.adapters.persistence.plan_review import SqlitePlanReviewStore
 from agent_fleet.adapters.persistence.runtime_budgets import SqliteRuntimeBudgetStore
 from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
@@ -41,16 +43,19 @@ from agent_fleet.application.evidence import EvidenceAssembler
 from agent_fleet.application.evolution import OrganizationService
 from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.inspection import InspectionService
+from agent_fleet.application.model_profiles import ModelProfileService
 from agent_fleet.application.patches import PatchService
 from agent_fleet.application.permission_policy import (
     PermissionPolicyService,
     PolicyPermissionBroker,
 )
+from agent_fleet.application.plan_review import PlanReviewService
 from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.projects import ProjectService
 from agent_fleet.application.resources import CancellationService, RecoveryService, ResourceService
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.application.sandboxes import SandboxRegistry
+from agent_fleet.application.session_review import SessionReviewService
 from agent_fleet.application.workflow import WorkflowEngine
 from agent_fleet.domain.security import Redactor
 
@@ -88,6 +93,8 @@ class ApplicationContainer:
     repository: GitRepositoryAdapter
     profiler: StaticRepositoryProfiler
     runtimes: RuntimeRegistry
+    model_profiles: ModelProfileService
+    plan_reviews: PlanReviewService
     secrets: EnvironmentSecretStore
     redactor: Redactor
 
@@ -199,13 +206,15 @@ def build_container(
     budgets = SqliteRuntimeBudgetStore(root / "state.db", clock, ids, active_redactor, state)
     local_artifacts = LocalArtifactStore(root / "artifacts")
     artifacts = ArtifactService(local_artifacts, state, clock, ids, active_redactor)
-    graphs = SqliteGraphStore(root / "state.db", clock, ids, active_redactor, local_artifacts)
+    config = YamlConfigurationAdapter(active_redactor)
+    graphs = SqliteGraphStore(
+        root / "state.db", clock, ids, active_redactor, local_artifacts, config=config
+    )
     conversation_store = SqliteConversationStore(
         root / "state.db", clock, ids, active_redactor, state
     )
     repository = GitRepositoryAdapter(root, ids)
     profiler = StaticRepositoryProfiler()
-    config = YamlConfigurationAdapter(active_redactor)
     system = LocalSystemDiagnostics(root)
     secrets = EnvironmentSecretStore(active_redactor)
     runtimes = RuntimeRegistry(
@@ -213,6 +222,15 @@ def build_container(
             "fake": FakeRuntimeAdapter(),
             "pydantic-ai": PydanticAIRuntimeAdapter(secrets, active_redactor),
         }
+    )
+    model_profiles = ModelProfileService(
+        store=SqliteModelProfileStore(state),
+        state=state,
+        repository=repository,
+        runtimes=runtimes,
+        secrets=secrets,
+        redactor=active_redactor,
+        clock=clock,
     )
     sandbox = FakeSandboxProvider(clock, ids)
     process_runner = BoundedProcessRunner()
@@ -259,6 +277,16 @@ def build_container(
         ids,
         active_redactor,
         secrets,
+        model_profiles=model_profiles,
+    )
+    plan_reviews = PlanReviewService(
+        store=SqlitePlanReviewStore(state),
+        state=state,
+        artifacts=artifacts,
+        repository=repository,
+        config=config,
+        organization=organization,
+        clock=clock,
     )
     gateway = ToolGateway(
         state,
@@ -290,6 +318,8 @@ def build_container(
         organization=organization,
         permission_policy=permissions,
         conversations=conversation_store,
+        model_profiles=model_profiles,
+        plan_reviews=plan_reviews,
     )
     projects = ProjectService(
         root,
@@ -322,9 +352,15 @@ def build_container(
         redactor=active_redactor,
     )
     approvals = ApprovalService(state, permissions)
-    inspection = InspectionService(state, artifacts, budgets, graphs)
+    inspection = InspectionService(state, artifacts, budgets, graphs, model_profiles)
     cancellation = CancellationService(
         state, resources, clock, graphs, conversations=conversation_store
+    )
+    patches = PatchService(
+        state, artifacts, repository, config, secrets, clock, graphs, organization
+    )
+    reviews = SessionReviewService(
+        state, artifacts, inspection, patches, organization, clock, plan_reviews=plan_reviews
     )
     conversations = ConversationService(
         conversation_store,
@@ -339,6 +375,9 @@ def build_container(
         ids,
         active_redactor,
         secrets,
+        reviews,
+        bootstrap_service,
+        model_profiles=model_profiles,
     )
     return ApplicationContainer(
         state_root=root,
@@ -354,9 +393,7 @@ def build_container(
         workflow=workflow,
         approvals=approvals,
         permissions=permissions,
-        patches=PatchService(
-            state, artifacts, repository, config, secrets, clock, graphs, organization
-        ),
+        patches=patches,
         inspection=inspection,
         cancellation=cancellation,
         recovery=RecoveryService(state, resources, graphs, conversations=conversation_store),
@@ -374,6 +411,8 @@ def build_container(
         repository=repository,
         profiler=profiler,
         runtimes=runtimes,
+        model_profiles=model_profiles,
+        plan_reviews=plan_reviews,
         secrets=secrets,
         redactor=active_redactor,
     )

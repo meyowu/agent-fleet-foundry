@@ -1,0 +1,124 @@
+{
+  "$defs": {
+    "AgentLifecycle": {
+      "enum": [
+        "persistent",
+        "per_task"
+      ],
+      "title": "AgentLifecycle",
+      "type": "string"
+    },
+    "AgentRole": {
+      "enum": [
+        "cos",
+        "engineer",
+        "verifier",
+        "researcher",
+        "architect"
+      ],
+      "title": "AgentRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Trusted resolver output; not accepted from model output as authority.",
+  "properties": {
+    "allowed_paths": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Allowed Paths"
+    },
+    "allowed_tools": {
+      "items": {
+        "maxLength": 100,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_.-]*$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Allowed Tools",
+      "type": "array"
+    },
+    "delegation_allowed": {
+      "title": "Delegation Allowed",
+      "type": "boolean"
+    },
+    "description": {
+      "maxLength": 512,
+      "title": "Description",
+      "type": "string"
+    },
+    "execution_kind": {
+      "$ref": "#/$defs/AgentRole"
+    },
+    "instruction_references": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 2,
+      "minItems": 1,
+      "title": "Instruction References",
+      "type": "array"
+    },
+    "instructions": {
+      "maxLength": 32768,
+      "title": "Instructions",
+      "type": "string"
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/AgentLifecycle"
+    },
+    "max_steps": {
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Max Steps",
+      "type": "integer"
+    },
+    "model_profile": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model Profile"
+    },
+    "role_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Role Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "role_id",
+    "execution_kind",
+    "lifecycle",
+    "description",
+    "instructions",
+    "instruction_references",
+    "allowed_tools",
+    "max_steps",
+    "delegation_allowed"
+  ],
+  "title": "ResolvedRoleTemplate",
+  "type": "object"
+}

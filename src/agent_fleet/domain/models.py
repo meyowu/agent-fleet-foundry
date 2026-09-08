@@ -380,6 +380,7 @@ class RunStatus(StrEnum):
     RUNNING = "running"
     WAITING_FOR_CHILDREN = "waiting_for_children"
     PAUSED_FOR_APPROVAL = "paused_for_approval"
+    PAUSED_FOR_PLAN = "paused_for_plan"
     READY_FOR_REVIEW = "ready_for_review"
     APPLYING = "applying"
     COMPLETED = "completed"
@@ -690,11 +691,15 @@ class Run(StrictModel):
     parent_node_id: RoleId | None = None
     parent_iteration: int | None = Field(default=None, ge=0, le=5)
     goal: str
+    plan_review_required: bool = Field(default=False, exclude_if=lambda value: not value)
     base_revision: str
     target_status_fingerprint: Sha256
     runtime_name: RuntimeName = "fake"
     provider_model: ProviderModelId | None = None
     credential_ref: CredentialReferenceString | None = None
+    model_bindings_sha256: Sha256 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     sandbox_name: SandboxName = "fake"
     sandbox_configuration: SandboxConfiguration | None = None
     sandbox_configuration_hash: Sha256 | None = None
@@ -817,6 +822,7 @@ class WriterAssignment(StrictModel):
     """A bounded untrusted subgoal; only the planner may instantiate its writer."""
 
     node_id: RoleId
+    role_id: RoleId | None = Field(default=None, exclude_if=lambda value: value is None)
     goal: BoundedSummary
     scope: list[LogicalRepoPath] = Field(min_length=1, max_length=128)
     criterion_ids: list[CriterionId] = Field(min_length=1, max_length=128)
@@ -842,6 +848,9 @@ class ScopeDecision(StrictModel):
     workflow: WorkflowId = "code-change"
     change_kind: Literal["read_only", "code_change"] = "code_change"
     fleet_strategy: FleetStrategyName
+    role_selections: dict[Literal["engineer", "verifier", "researcher", "architect"], RoleId] = (
+        Field(default_factory=dict, max_length=4, exclude_if=lambda value: not value)
+    )
     writer_assignments: list[WriterAssignment] = Field(default_factory=list, max_length=8)
     max_parallel_agents: int = Field(default=2, ge=1, le=8)
     allowed_paths: list[LogicalRepoPath] = Field(max_length=128)
@@ -1137,6 +1146,7 @@ class AgentInstance(StrictModel):
     run_id: RunId
     task_id: TaskId | None = None
     role: RoleId
+    execution_kind: AgentRole | None = Field(default=None, exclude_if=lambda value: value is None)
     status: AgentStatus
     iteration: int = Field(ge=0)
     created_at: datetime
@@ -1149,9 +1159,20 @@ class AgentInstance(StrictModel):
 
     @model_validator(mode="after")
     def require_task_for_specialists(self) -> AgentInstance:
+        if self.execution_kind is not None and (
+            (self.role in {item.value for item in AgentRole} and self.execution_kind != self.role)
+            or (self.role != AgentRole.COS and self.execution_kind is AgentRole.COS)
+        ):
+            raise ValueError("execution kind cannot replace a built-in or create another CoS")
         if self.task_id is None and self.role != AgentRole.COS.value:
             raise ValueError("only the CoS may exist before a TaskSpec is bound")
         return self
+
+    @property
+    def effective_kind(self) -> AgentRole:
+        # A custom instance receives this control-plane field only after its
+        # exact configuration and FleetPlan node have been validated.
+        return self.execution_kind or AgentRole(self.role)
 
 
 class FleetEvent(StrictModel):
@@ -1448,7 +1469,7 @@ class ImplementationReport(StrictModel):
 class SpecialistReport(StrictModel):
     """Untrusted read-only analysis, never execution or verification authority."""
 
-    role: Literal["researcher", "architect"]
+    role: RoleId
     summary: BoundedSummary
     findings: list[BoundedText] = Field(max_length=32)
     recommendations: list[BoundedText] = Field(max_length=32)

@@ -27,7 +27,7 @@ from agent_fleet.domain.models import ApprovalChoice, FakeScenario, jsonable
 from agent_fleet.domain.security import Redactor
 
 if TYPE_CHECKING:
-    from agent_fleet.application.conversations import ChatExecutionOptions
+    from agent_fleet.application.conversations import ChatExecutionOptions, SessionBootstrapOptions
 
 type View = dict[str, JsonValue]
 _MAX_LINE_BYTES = 16_384
@@ -35,10 +35,14 @@ _MAX_QUEUED_LINES = 8
 _PROGRESS_INTERVAL = 0.25
 _HELP = (
     "/status  /artifacts  /permissions [request-id]  /cancel  /resume\n"
-    "/approve <request-id> --once|--run|--always --scope project\n"
+    "/approve [request-id] --once|--run|--always --scope project\n"
+    "/approve shows pending scopes; no-ID choices require an exact /confirm code.\n"
     "/deny <request-id> [--reason <text>]  /help  /exit\n"
+    "/plan [approve]  /diff  /apply  /confirm <review-code>  /dismiss\n"
+    "/fleet-patch list|show|diff|apply|rollback [proposal-id]\n"
     "New goals wait until the current turn settles. Approval never resumes automatically.\n"
-    "Review and apply code patches with fleet patch; organization proposals with fleet fleet-patch."
+    "--review-plan pauses new tasks before execution; /plan labels gate or inspection mode. "
+    "Application requires a fresh exact review code; no model message can confirm it."
 )
 
 
@@ -50,6 +54,12 @@ class ConversationClient(Protocol):
     ) -> View: ...
 
     def status(self, conversation_id: str) -> View: ...
+
+    def preview_initialization(
+        self, project_path: Path, *, options: SessionBootstrapOptions
+    ) -> View: ...
+
+    async def initialize(self, *, code: str) -> View: ...
 
     async def submit(
         self,
@@ -66,9 +76,19 @@ class ConversationClient(Protocol):
 
     def artifacts(self, conversation_id: str) -> View: ...
 
+    def review(
+        self, conversation_id: str, *, action: str, arguments: tuple[str, ...] = ()
+    ) -> View: ...
+
     def permissions(self, conversation_id: str, *, identifier: str | None = None) -> View: ...
 
-    def approve(self, conversation_id: str, request_id: str, *, choice: ApprovalChoice) -> View: ...
+    def approve(
+        self,
+        conversation_id: str,
+        request_id: str | None = None,
+        *,
+        choice: ApprovalChoice | None = None,
+    ) -> View: ...
 
     def deny(self, conversation_id: str, request_id: str, *, reason: str | None = None) -> View: ...
 
@@ -126,6 +146,7 @@ class PosixLineInput:
         self._fd: int | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._was_blocking = True
+        self._owns_fd = False
         self._registered = False
         self._eof = False
         self._buffer = bytearray()
@@ -135,12 +156,24 @@ class PosixLineInput:
         valid = False
         with suppress(OSError, ValueError, AttributeError, NotImplementedError):
             fd = self.stream.fileno()
-            mode = os.fstat(fd).st_mode
+            original = os.fstat(fd)
+            mode = original.st_mode
             if os.name == "posix" and (stat.S_ISFIFO(mode) or os.isatty(fd)):
-                self._fd = fd
+                if os.isatty(fd):
+                    # stdin/stdout often share one terminal open-file description.
+                    # Setting O_NONBLOCK on stdin then also affects stdout, causing
+                    # large TextIO writes to lose bytes. Own a separate read-only
+                    # description for the exact terminal device instead of dup().
+                    self._fd = os.open(os.ttyname(fd), os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
+                    self._owns_fd = True
+                    opened = os.fstat(self._fd)
+                    if not os.isatty(self._fd) or opened.st_rdev != original.st_rdev:
+                        raise OSError("Terminal device changed during input setup.")
+                else:
+                    self._fd = fd
+                    self._was_blocking = os.get_blocking(fd)
+                    os.set_blocking(fd, False)
                 self._loop = asyncio.get_running_loop()
-                self._was_blocking = os.get_blocking(fd)
-                os.set_blocking(fd, False)
                 self._attach()
                 valid = True
         if not valid:
@@ -165,8 +198,12 @@ class PosixLineInput:
         self._detach()
         if self._fd is not None:
             with suppress(OSError):
-                os.set_blocking(self._fd, self._was_blocking)
+                if self._owns_fd:
+                    os.close(self._fd)
+                else:
+                    os.set_blocking(self._fd, self._was_blocking)
         self._fd = None
+        self._owns_fd = False
         self._buffer.clear()
 
     def _fail(self) -> None:
@@ -333,6 +370,15 @@ async def run_session(
         cleaned, _ = redactor.redact_data(view)
         display(json.dumps(cleaned, ensure_ascii=True, sort_keys=True, indent=2))
 
+    def review_data(view: View) -> None:
+        # Keep complete diffs readable rather than JSON-escaped, while applying
+        # the same terminal-control escaping and secret redaction to every byte.
+        data({key: value for key, value in view.items() if key not in {"patch", "text_diff"}})
+        for key in ("patch", "text_diff"):
+            value = view.get(key)
+            if isinstance(value, str):
+                display(value)
+
     async def stop() -> View:
         nonlocal execution
         cleanup = asyncio.create_task(service.cancel(conversation_id))
@@ -392,6 +438,30 @@ async def run_session(
                             result(service.status(conversation_id))
                         elif command == "/artifacts" and not arguments:
                             data(service.artifacts(conversation_id))
+                        elif command in {
+                            "/plan",
+                            "/diff",
+                            "/apply",
+                            "/fleet-patch",
+                            "/confirm",
+                            "/dismiss",
+                        }:
+                            changes_target = (
+                                command in {"/apply", "/confirm"}
+                                or (command == "/plan" and bool(arguments))
+                                or (
+                                    command == "/fleet-patch"
+                                    and bool(arguments)
+                                    and arguments[0] in {"apply", "rollback"}
+                                )
+                            )
+                            if execution is not None and changes_target:
+                                raise _busy_error()
+                            review_data(
+                                service.review(
+                                    conversation_id, action=command[1:], arguments=tuple(arguments)
+                                )
+                            )
                         elif command == "/permissions" and len(arguments) <= 1:
                             data(
                                 service.permissions(
@@ -487,8 +557,14 @@ def _busy_error() -> FleetError:
     )
 
 
-def _approval(arguments: list[str]) -> tuple[str, ApprovalChoice]:
+def _approval(arguments: list[str]) -> tuple[str | None, ApprovalChoice | None]:
     choices = {"--once": ApprovalChoice.ALLOW_ONCE, "--run": ApprovalChoice.ALLOW_RUN}
+    if not arguments:
+        return None, None
+    if len(arguments) == 1 and arguments[0] in choices:
+        return None, choices[arguments[0]]
+    if arguments == ["--always", "--scope", "project"]:
+        return None, ApprovalChoice.ALLOW_ALWAYS
     if len(arguments) == 2 and arguments[1] in choices:
         return arguments[0], choices[arguments[1]]
     if len(arguments) == 4 and arguments[1:] == ["--always", "--scope", "project"]:
@@ -502,11 +578,13 @@ def _approval(arguments: list[str]) -> tuple[str, ApprovalChoice]:
 
 async def _terminal_session(
     service: ConversationClient,
-    selected: View,
+    selected: View | None,
     options: ChatExecutionOptions,
     *,
     redactor: Redactor,
     show_error: Callable[[FleetError], None],
+    onboarding_path: Path | None = None,
+    create_new: bool = False,
 ) -> View:
     terminal = Console()
     interrupted = asyncio.Event()
@@ -520,6 +598,30 @@ async def _terminal_session(
         if not installed:
             raise _input_error()
         async with PosixLineInput(sys.stdin) as reader:
+            if selected is None:
+                from agent_fleet.cli.onboarding import onboard
+
+                if onboarding_path is None:
+                    raise _command_error()
+                selected = await onboard(
+                    service,
+                    onboarding_path,
+                    options,
+                    reader,
+                    emit=lambda text: terminal.print(
+                        _display_text(text, redactor), markup=False, highlight=False
+                    ),
+                    create_new=create_new,
+                    interrupt=interrupted,
+                )
+                if selected is None:
+                    return {
+                        "conversation_opened": False,
+                        "notice": (
+                            "Setup stopped. If the canary had begun, inspect its local "
+                            "setup evidence before retrying; no conversation was opened."
+                        ),
+                    }
             return await run_session(
                 service,
                 selected,
@@ -593,7 +695,7 @@ def register_chat_command(
     redactor_factory: Callable[[], Redactor],
     presenter: Presenter,
     error_presenter: ErrorPresenter,
-) -> None:
+) -> Callable[[], None]:
     """Wire one command without importing the parent CLI or creating a container."""
 
     class SafeChatCommand(TyperCommand):
@@ -621,6 +723,9 @@ def register_chat_command(
         credential_ref: Annotated[str | None, typer.Option("--credential-ref")] = None,
         fake_scenario: Annotated[str | None, typer.Option("--fake-scenario")] = None,
         allow_unsafe_local: Annotated[bool, typer.Option("--allow-unsafe-local")] = False,
+        review_plan: Annotated[
+            bool, typer.Option("--review-plan", help="Pause new tasks for exact plan approval.")
+        ] = False,
     ) -> None:
         """Reopen a bounded conversation; approval and patch application stay explicit."""
         redactor = redactor_factory()
@@ -647,13 +752,26 @@ def register_chat_command(
                 credential_ref=credential_ref,
                 fake_scenario=scenario,
                 allow_unsafe_local=allow_unsafe_local,
+                review_plan=review_plan,
             )
             service = service_factory(redactor)
-            selected = service.select(path, conversation_id=conversation, create_new=create_new)
-            selected_id = selected.get("conversation_id")
-            if not isinstance(selected_id, str):
+            selected: View | None = None
+            try:
+                selected = service.select(path, conversation_id=conversation, create_new=create_new)
+            except FleetError as error:
+                if not (
+                    error.code is ErrorCode.PROJECT_NOT_INITIALIZED
+                    and message is None
+                    and conversation is None
+                    and sys.stdin.isatty()
+                    and sys.stdout.isatty()
+                ):
+                    raise
+            selected_id = selected.get("conversation_id") if selected is not None else None
+            if selected is not None and not isinstance(selected_id, str):
                 raise _command_error()
             if message is not None:
+                assert isinstance(selected_id, str)
                 view = asyncio.run(
                     _message_session(
                         service,
@@ -673,6 +791,8 @@ def register_chat_command(
                         show_error=lambda error: error_presenter(
                             "fleet chat", error, False, redactor
                         ),
+                        onboarding_path=path,
+                        create_new=create_new,
                     )
                 )
             warnings = view.get("warnings")
@@ -686,3 +806,5 @@ def register_chat_command(
             )
 
         presenter("fleet chat", json_output, operation, redactor=redactor)
+
+    return chat

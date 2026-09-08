@@ -41,6 +41,8 @@ def _catalog(
     max_calls: int = 3,
     scenario: FakeScenario = FakeScenario.SUCCESS,
     redactor: Redactor | None = None,
+    custom_role: str | None = None,
+    allowed_tools: tuple[str, ...] | None = None,
 ) -> tuple[GatewayRuntimeToolCatalog, RecordingGateway]:
     now = datetime.now(UTC)
     run = Run(
@@ -79,7 +81,8 @@ def _catalog(
         agent_instance_id="agent_" + "7" * 32,
         run_id=run.run_id,
         task_id=task.task_id,
-        role=role,
+        role=custom_role or role,
+        execution_kind=role if custom_role is not None else None,
         status=AgentStatus.RUNNING,
         iteration=0,
         created_at=now,
@@ -109,6 +112,7 @@ def _catalog(
             workspace=workspace,
             sandbox_handle=sandbox,
             max_calls=max_calls,
+            allowed_tools=allowed_tools,
         ),
         gateway,
     )
@@ -135,6 +139,15 @@ def test_tool_definitions_are_role_specific_and_identity_free() -> None:
         "workspace_get_diff",
         "run_verification",
     ]
+    assert {item.name: item.side_effect for item in verifier.definitions} == {
+        "repo_list_files": False,
+        "repo_read_file": False,
+        "repo_search_text": False,
+        "workspace_get_diff": False,
+        "run_verification": True,
+    }
+    approval_verifier, _ = _catalog(AgentRole.VERIFIER, scenario=FakeScenario.APPROVAL)
+    assert approval_verifier.definitions == verifier.definitions
     serialized = str([item.model_dump(mode="json") for item in engineer.definitions])
     for forbidden in ("run_id", "task_id", "agent_instance_id", "sandbox_handle", "host_path"):
         assert forbidden not in serialized
@@ -187,6 +200,63 @@ async def test_specialist_catalog_has_only_reads_and_rejects_hidden_side_effects
         )
     )
     assert len(gateway.calls) == 1
+    assert gateway.calls[0]["scripted"].side_effect is False
+
+
+@pytest.mark.parametrize(
+    ("role", "custom_role", "name", "arguments"),
+    [
+        (
+            AgentRole.ENGINEER,
+            "backend",
+            "workspace_write_file",
+            {"path": "src/canary_calc/core.py", "content": "changed"},
+        ),
+        (
+            AgentRole.VERIFIER,
+            "security",
+            "run_verification",
+            {"command_id": "offline-canary"},
+        ),
+    ],
+)
+async def test_custom_tool_narrowing_rejects_valid_excluded_tools_before_gateway(
+    role: AgentRole,
+    custom_role: str,
+    name: str,
+    arguments: dict[str, JsonValue],
+) -> None:
+    unrestricted, _ = _catalog(role)
+    catalog, gateway = _catalog(role, custom_role=custom_role, allowed_tools=("repo.read_file",))
+    call = RuntimeToolCall(
+        call_id="excluded-tool",
+        name=name,
+        arguments={**arguments, "reason": "Attempt a tool excluded by the reviewed template."},
+    )
+    assert name in {item.name for item in unrestricted.definitions}
+    unrestricted.validate(call)
+    assert [item.name for item in catalog.definitions] == ["repo_read_file"]
+
+    with pytest.raises(FleetError) as validation:
+        catalog.validate(call)
+    assert validation.value.code is ErrorCode.COMMAND_DENIED
+    with pytest.raises(FleetError) as execution:
+        await catalog.execute(call)
+    assert execution.value.code is ErrorCode.COMMAND_DENIED
+    assert gateway.calls == []
+    assert catalog.records == ()
+
+    await catalog.execute(
+        RuntimeToolCall(
+            call_id="allowed-read",
+            name="repo_read_file",
+            arguments={"path": "src/canary_calc/core.py", "reason": "Read the permitted scope."},
+        )
+    )
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0]["agent"].role == custom_role
+    assert gateway.calls[0]["agent"].effective_kind is role
+    assert gateway.calls[0]["scripted"].action == "repo.read_file"
     assert gateway.calls[0]["scripted"].side_effect is False
 
 

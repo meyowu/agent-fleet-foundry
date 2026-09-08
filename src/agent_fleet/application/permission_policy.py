@@ -13,6 +13,7 @@ from agent_fleet.domain.config import FleetSpec
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
+    AgentRole,
     ApprovalChoice,
     ApprovalStatus,
     CapabilityGrant,
@@ -27,6 +28,8 @@ from agent_fleet.domain.models import (
     ToolIntent,
     WorkspaceKind,
 )
+from agent_fleet.domain.paths import path_is_within
+from agent_fleet.domain.role_templates import ResolvedRoleTemplate
 from agent_fleet.domain.security import Redactor, canonical_json_hash, sha256_bytes
 from agent_fleet.domain.trust import (
     ExactPermissionScope,
@@ -239,6 +242,26 @@ class PermissionPolicyService:
         )
         if self.config.snapshot_hash(snapshot) != run.config_snapshot_hash:
             raise _policy_error("The reviewed configuration changed before tool authorization.")
+        role = self.config.role_templates(spec, snapshot).get(intent.principal_role)
+        if role is None:
+            raise _policy_error("The tool principal has no reviewed executable role template.")
+        if intent.principal_role not in {item.value for item in AgentRole}:
+            agent = self.state.get_agent_instance(intent.agent_instance_id)
+            if (
+                agent.role != intent.principal_role
+                or agent.run_id != run.run_id
+                or agent.task_id != task.task_id
+                or agent.execution_kind is not role.execution_kind
+                or not role.delegation_allowed
+                or (
+                    role.allowed_paths is not None
+                    and any(
+                        not path_is_within(path, list(role.allowed_paths))
+                        for path in task.allowed_paths
+                    )
+                )
+            ):
+                raise _policy_error("The custom principal does not match its bound role ceiling.")
         policy = self.trust.load()
         settings = self.settings(project, policy)
         if any(not _within_user_paths(path, settings.allowed_paths) for path in task.allowed_paths):
@@ -271,7 +294,7 @@ class PermissionPolicyService:
             command=command,
             workspace_kind=(
                 WorkspaceKind.VERIFICATION
-                if intent.principal_role == "verifier"
+                if role.execution_kind is AgentRole.VERIFIER
                 else WorkspaceKind.CANDIDATE
             ),
             sandbox_provider=run.sandbox_name,
@@ -592,11 +615,29 @@ class PolicyPermissionBroker:
     ) -> PermissionDecision:
         if is_protected_action(intent.action):
             return _deny("SYSTEM_HARD_DENY", "This protected action cannot be approved.")
-        ceiling = self.baseline.evaluate(intent, task, sandbox)
+        if intent.principal_role in {item.value for item in AgentRole}:
+            # Preserve the cheap deny for malformed built-in intents without
+            # consulting mutable state. Custom kinds never come from the intent.
+            ceiling = self.baseline.evaluate(intent, task, sandbox)
+            if ceiling.outcome is PermissionOutcome.DENY:
+                return ceiling
+        _, spec, settings, trust, scope = self.policy.context(intent, task, sandbox)
+        project = self.policy.state.get_project(self.policy.state.get_run(intent.run_id).project_id)
+        current_spec, snapshot = self.policy.config.load_snapshot(
+            Path(project.canonical_root) / ".fleet/fleet.yaml"
+        )
+        if (
+            current_spec != spec
+            or self.policy.config.snapshot_hash(snapshot) != task.config_snapshot_hash
+        ):
+            raise _policy_error("The role snapshot changed during permission evaluation.")
+        role = self.policy.config.role_templates(spec, snapshot).get(intent.principal_role)
+        if role is None:
+            return _deny("ORGANIZATION_PERMISSION_CEILING", "The role is not declared.")
+        ceiling = self.baseline.evaluate(intent, task, sandbox, execution_kind=role.execution_kind)
         if ceiling.outcome is PermissionOutcome.DENY:
             return ceiling
-        _, spec, settings, trust, scope = self.policy.context(intent, task, sandbox)
-        if not _requested_by_organization(spec, intent):
+        if not _requested_by_organization(spec, intent, template=role):
             return _deny(
                 "ORGANIZATION_PERMISSION_CEILING",
                 "The role or workflow does not request this tool and resource.",
@@ -705,8 +746,10 @@ class PolicyPermissionBroker:
         return grant.scope_sha256 == scope.scope_sha256
 
 
-def _requested_by_organization(spec: FleetSpec, intent: ToolIntent) -> bool:
-    role = spec.spec.agents.get(intent.principal_role)
+def _requested_by_organization(
+    spec: FleetSpec, intent: ToolIntent, *, template: ResolvedRoleTemplate | None = None
+) -> bool:
+    role = template if template is not None else spec.spec.agents.get(intent.principal_role)
     workflow = spec.spec.workflows.get(intent.workflow)
     if role is None or workflow is None:
         return False
@@ -725,14 +768,21 @@ def _requested_by_organization(spec: FleetSpec, intent: ToolIntent) -> bool:
         # current role tools and the same TaskSpec/command ceiling as before.
         return True
     return any(
-        p.principal_role == intent.principal_role
+        p.principal_role
+        == (template.execution_kind.value if template is not None else intent.principal_role)
         and p.action == intent.action
-        and _requested_resource_matches(p.resource, intent)
+        and _requested_resource_matches(
+            p.resource,
+            intent,
+            execution_kind=template.execution_kind if template is not None else None,
+        )
         for p in spec.spec.requested_permissions
     )
 
 
-def _requested_resource_matches(request: str, intent: ToolIntent) -> bool:
+def _requested_resource_matches(
+    request: str, intent: ToolIntent, *, execution_kind: AgentRole | None = None
+) -> bool:
     if intent.action == "fixture.record_side_effect":
         return request == "fixture://approval-proof"
     if intent.action == "command.run":
@@ -740,7 +790,8 @@ def _requested_resource_matches(request: str, intent: ToolIntent) -> bool:
             "command://declared-project-command",
             f"command://{intent.resource.identifier}",
         }
-    workspace = "verification" if intent.principal_role == "verifier" else "candidate"
+    role = intent.principal_role if execution_kind is None else execution_kind.value
+    workspace = "verification" if role == "verifier" else "candidate"
     prefixes = [f"workspace://{workspace}/"]
     if not intent.side_effect:
         prefixes.append("repo://current/")

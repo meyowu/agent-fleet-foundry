@@ -101,22 +101,27 @@ class FakeRuntimeAdapter:
         if services.accounting is not None:
             services.accounting.record_simulated_step()
         scenario = FakeScenario(str(request.input["fake_scenario"]))
-        if request.role == AgentRole.COS:
+        kind = services.execution_kind or AgentRole(request.role)
+        if (request.role in {item.value for item in AgentRole} and kind != request.role) or (
+            request.role != AgentRole.COS and kind is AgentRole.COS
+        ):
+            raise ValueError("fake role and execution kind disagree")
+        if kind == AgentRole.COS:
             if services.tools.definitions:
                 raise ValueError("fake CoS invocation requires an empty tool catalog")
             return AgentInvocationResult(output=self._scope_decision(request, scenario))
-        if request.role == AgentRole.ENGINEER:
+        if kind == AgentRole.ENGINEER:
             engineer_script = self._engineer_script(request, scenario)
             await self._execute_actions(engineer_script.actions, services)
             return AgentInvocationResult(output=engineer_script.report)
-        if request.role == AgentRole.VERIFIER:
+        if kind == AgentRole.VERIFIER:
             verifier_script = self._verifier_script(request, scenario)
             results = await self._execute_actions(verifier_script.actions, services)
             verdict = verifier_script.verdict
             if scenario is FakeScenario.PARALLEL_ENGINEERS:
                 verdict = self._map_verifier_claims(request, verdict, results)
             return AgentInvocationResult(output=verdict)
-        if request.role in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}:
+        if kind in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}:
             await self._execute_actions(
                 (
                     _ScriptedAction(
@@ -131,7 +136,7 @@ class FakeRuntimeAdapter:
             )
             return AgentInvocationResult(
                 output=SpecialistReport(
-                    role="researcher" if request.role == AgentRole.RESEARCHER else "architect",
+                    role=request.role,
                     summary="Read-only scripted repository analysis; not execution evidence.",
                     findings=[
                         "The bounded repository listing was returned by the read-only catalog."

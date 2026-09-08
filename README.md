@@ -6,7 +6,61 @@ It is deliberately not a generic multi-agent chat framework or a permanent roste
 
 This repository implements **Phase 0 through Phase 6**: deterministic repository profiling, all five bounded adaptive strategies, independent exact permissions and user-owned persistent trust, content-addressed evidence, real Git worktrees, guarded patch application, explicit BYOK PydanticAI, a hardened local Docker execution boundary, durable cumulative budgets, persistent CoS chat and reviewed versioned organization evolution. The deterministic fake runtime remains available for offline development and tests; no live model-provider call is required for the bootstrap canary.
 
-Phase7 adds packaged runner/learning assets, fresh-install/upgrade/scale verification, security tooling and platform CI. The [current verification table](#release-candidate-verification-2026-09-05) reports the repaired candidate and distinguishes actual results from pending gates. The CLI's highest fully accepted whole-phase marker remains6: the Phase7 public-release gate still requires an explicitly authorized live-provider canary and an owner-selected license. Neither has been supplied, and neither is inferred from automated tests.
+Phase7 adds packaged runner/learning assets, fresh-install/upgrade/scale verification, security tooling and platform CI. The [historical verification table](#release-candidate-verification-2026-09-05) reports that earlier candidate. The CLI's highest fully accepted whole-phase marker remains6: the Phase7 public-release gate still requires an explicitly authorized live-provider canary and an owner-selected license. Neither has been supplied, and neither is inferred from automated tests.
+
+The Session-first release adds a foreground session entry, exact in-session review, opt-in pre-execution planning approval, immutable per-role model bindings, operational custom role templates and an authenticated local read-only dashboard. Follow the [living release plan](.agent/plans/2026-09-07-session-first-release.md) for current verification; the September5 CI results below do not accept these additions.
+
+## Session-first local verification — 2026-09-07
+
+The final source/test/scripts freeze is `de7ab84636c185e543dfd76b84cc9e97af64aa9ee9ef7ec63f12d3348f4b3135`. All default tests were replayed as exhaustive disjoint partitions: **2283 passed, 19 deliberately skipped**, covering all2302 collected cases. The skipped cases are15 real-Docker,3 fresh-install and1 live-provider cases; optional gates are separate, never inferred from skips. Results below overlap and must not be added as independent test totals.
+
+| Final local gate | Exact result |
+| --- | --- |
+| Unit + contract | 1749 passed in228.82s. |
+| Complete integration, three disjoint file groups | 133 passed in1111.34s;182 passed in1072.79s;186 passed in997.53s —501 total. |
+| Offline E2E + default Docker/release/live directories | 33 passed,19 skipped in742.64s. |
+| Separately enabled real Docker | 15 passed,4 deselected in370.03s. |
+| Standalone offline adversarial replay | 736 passed in459.08s; script elapsed461.966s, no unexpected skips/errors. |
+| Formatting / lint / types / generated contracts | Ruff312 files; mypy260 files;92 schemas and migrations1–10; JavaScript syntax and whitespace passed. Offline lock55/sync53 passed. |
+| Actual local browser | 17 assertions passed twice; desktop/mobile/200-percent text, empty state, real CLI update, disconnect/reconnect and token denial observed. |
+
+The [Session-first acceptance ledger](docs/SESSION_FIRST_ACCEPTANCE.md) records exact commands/reports, retained failed attempts, final wheel/sdist installation and installed Docker/browser results, cleanup and GitHub delivery separately. README and the bundled guide are frozen before that final installation gate; its resulting receipts update the ledger, not these archive inputs. Tests use prepared dependencies and no live provider key/request. Current host proof is macOS arm64/Python3.14.6 with local Colima workers, not new Linux or multi-Python CI. Hosted CI is intentionally not rerun under the owner's Actions-minute constraint; no workflow or protection is weakened. Public license/live-provider gates and future integrations remain open as described below.
+
+## Session-first workflow
+
+In an initialized repository, enter `fleet` once (an actual interactive terminal is required). Bare noninteractive input prints help without initializing state. For an explicit execution-plan gate, use:
+
+```bash
+fleet chat . --review-plan
+```
+
+```text
+> Fix the regression and add a test.
+> /plan
+> /plan approve
+> /confirm <displayed-review-code>
+> /resume
+> /diff
+> /apply
+> /confirm <displayed-review-code>
+```
+
+Plan approval, permission approval, execution resume and code application are separate actions. `/approve` can select an exact pending permission request without copying its ID. Review tickets expire after five minutes, are consumed once and are invalidated by selection or authority changes. An interrupted process cannot silently reclaim or replay an already consumed planning decision. An unregistered interactive session offers public bootstrap preview/confirmation; genuine Docker canary evidence is still required before publishing the configuration.
+
+Named model profiles live in user-owned state. For an offline routing exercise on a registered project with new profile names and no existing model selection:
+
+```bash
+fleet models set planning --runtime fake
+fleet models set coding --runtime fake
+fleet models bind planning --path . --default --revision 0
+fleet models bind coding --path . --role engineer --revision 1
+fleet models selection .
+fleet dashboard .
+```
+
+For existing profiles/selections, inspect their current revisions before updating; the example's revision numbers are not reusable defaults. Real profiles use the existing explicit `--runtime pydantic-ai --provider-model <provider:model> --credential-ref env:NAME` boundary; never put a key value in a command. Each task pins exact profile revisions before CoS dispatch, so editing a profile affects future tasks, not a paused one. Open the dashboard's printed loopback address and paste the current server process's terminal token. It displays persisted root/child agents, selected models, usage, approvals, events and evidence; it cannot start tasks, approve requests or apply patches. Closing the server revokes the token. No cloud account, external asset, browser storage or mandatory hosted service is involved.
+
+Custom `.fleet/agents/roles.yaml` templates inherit only an Engineer, Verifier, Researcher or Architect execution kind. Reviewed FleetPatch changes version the catalog and guidance. Tools, paths and steps can be narrowed, not expanded beyond the base role; names remain exact permission principals. Custom parallel plans must explicitly select a compatible full-parent repair Engineer. See the [Chinese guide](docs/USER_GUIDE.md) and [configuration contract](docs/CONFIG_AND_SCHEMAS.md#12-session-first-model-and-role-contracts).
 
 The [detailed user guide (简体中文)](docs/USER_GUIDE.md), also bundled in the distribution, covers installation, initialization, BYOK, chat, adaptive teams, exact permissions, evidence/code review, organization evolution and both recovery procedures. [PR #5](https://github.com/meyowu/agent-fleet-codex-kit/pull/5), the [completion plan](.agent/plans/2026-09-05-mvp-completion.md) and the [acceptance ledger](docs/MVP_ACCEPTANCE.md) record the accepted local candidate and GitHub delivery separately from public release.
 
@@ -43,7 +97,7 @@ Every command supports `--json`. Code delivery remains separate: `fleet patch sh
 
 A workflow may reference a declarative `.fleet/skills/backend-integration.yaml` that requires named verification commands when a code-change task's allowed paths overlap the backend. Requirements are recomputed from the immutable configuration during both TaskSpec creation and final evidence assembly. They are **requirements, not grants**: the exact command still passes through the PermissionBroker and the selected sandbox. A broad scope such as `src` cannot evade a narrower backend requirement. Skills cannot contain executable scripts, change the fixed stage order, grant network access, or add unregistered agents.
 
-Publication binds both the logical ConfigSnapshot and the complete bounded `.fleet/` tree, including safe unreferenced files, modes and empty directories. The generation increases on apply and rollback, even if previous bytes return. An older ready-for-review code candidate therefore becomes stale; request a new run after changing organization rules. Once a project has an admitted Run/history, `fleet init` cannot replace or rebind that organization, including its credential reference. Moving `.fleet/` aside does not erase the version fence. Protected runtime/sandbox/credential configuration is outside FleetPatch; preserve the existing project/state and use a separately initialized registration when a different protected setup is required.
+Publication binds both the logical ConfigSnapshot and the complete bounded `.fleet/` tree, including safe unreferenced files, modes and empty directories. The generation increases on apply and rollback, even if previous bytes return. An older ready-for-review code candidate therefore becomes stale; request a new run after changing organization rules. Once a project has an admitted Run/history, `fleet init` cannot replace or rebind that organization, including its credential reference. Moving `.fleet/` aside does not erase the version fence. Protected runtime/sandbox/credential configuration is outside FleetPatch. Explicit user-owned model profiles can change runtime/model/reference choices for future tasks; changing the registered sandbox still requires a separate registration with the old project/state preserved.
 
 Supported native publication requires a local macOS or Linux filesystem with same-filesystem atomic directory exchange, writable private staging beside the repository and supported exact metadata. Unsupported ownership, links, ACLs, special flags or extended attributes fail closed. This is local process-crash recovery, not a hardware power-loss or hostile-host guarantee. See [ADR 0006](docs/adr/0006-atomic-organization-publication.md).
 
@@ -141,11 +195,11 @@ uv run --offline pytest -q -m docker_integration tests/docker \
 
 The two registered runtimes are `fake` and `pydantic-ai`. The real adapter accepts only explicit `openai:<model>` and `openai-chat:<model>` identifiers. There is no provider inference or fallback: every other prefix fails closed before credential resolution or network access.
 
-BYOK configuration uses a strict `env:NAME` reference. The reference comes from the user's `fleet init` command and is persisted only in Fleet-owned local state; `.fleet/fleet.yaml` records the runtime and opaque provider/model ID, never the credential reference or value. Resolved values must be 8–16384 bytes of visible ASCII, which rejects control characters before HTTP-header construction. The raw value remains in trusted control-plane memory, is registered with the shared redactor, and is passed explicitly to the provider client. It is not put in repository configuration, prompts, artifacts, events, worker input, or the process environment by Agent Fleet.
+BYOK configuration uses a strict `env:NAME` reference. The reference comes from the user's explicit `fleet init` or `fleet models set` selection and is persisted only in Fleet-owned local state; `.fleet/fleet.yaml` records the original runtime and opaque provider/model ID, never the credential reference or value. Resolved values must be 8–16384 bytes of visible ASCII, which rejects control characters before HTTP-header construction. The raw value remains in trusted control-plane memory, is registered with the shared redactor, and is passed explicitly to the provider client. It is not put in repository configuration, prompts, artifacts, events, worker input, or the process environment by Agent Fleet.
 
-Preview validates the runtime/model/reference shape and the complete proposed `.fleet/` patch, but does not read the referenced environment variable, migrate or write Fleet state, write the repository, construct a provider client, or use the network. Initialization resolves the environment reference before any project state or `.fleet/` write; it does not make a model request. `fleet run` revalidates the exact registered runtime/model/reference, resolves the credential, and only then may cross the trusted control-plane HTTPS boundary to the selected provider.
+Preview validates the runtime/model/reference shape and the complete proposed `.fleet/` patch, but does not read the referenced environment variable, migrate or write Fleet state, write the repository, construct a provider client, or use the network. Initialization resolves the environment reference before any project state or `.fleet/` write; it does not make a model request. `fleet run` preflights and pins effective user-approved per-role bindings before CoS dispatch, or uses the original registration when no model selection exists; it resolves only the selected credential references before any provider request.
 
-Initialization is fail-closed rather than an in-place `.fleet/` reconfiguration command. Before any Run has established an organization head, an identical generated tree can be reused and a credential-reference-only update does not alter repository files. Once a head exists, **all reinitialization is rejected**, including identical bytes and reference-only changes; moving `.fleet/` aside cannot bypass the recorded head. Rotate a key's value through the same recorded environment reference when needed. Supported organization edits use reviewed FleetPatch; a different protected runtime/provider/reference/sandbox setup requires a separately initialized project registration with the old project and state preserved. Fleet never overwrites a mixed or partially changed tree.
+Initialization is fail-closed rather than an in-place `.fleet/` reconfiguration command. Before any Run has established an organization head, an identical generated tree can be reused and a credential-reference-only update does not alter repository files. Once a head exists, **all reinitialization is rejected**, including identical bytes and reference-only changes; moving `.fleet/` aside cannot bypass the recorded head. Rotate a key's value through the same recorded environment reference when needed. Supported organization edits use reviewed FleetPatch. Explicit user-owned model profiles can change runtime/model/reference choices for future tasks; changing the registered sandbox still requires a separate registration with the old project/state preserved. Fleet never overwrites a mixed or partially changed tree.
 
 ```bash
 export AGENT_FLEET_HOME=/path/to/a/disposable/state-directory
@@ -172,6 +226,8 @@ uv run fleet run "Fix the canary behavior" --project /path/to/repo --sandbox doc
 ```
 
 Use `openai-chat:<model>` only when the OpenAI Chat Completions model path is intended; `openai:<model>` uses the Responses model path. Run-time provider flags are optional when they match the reviewed project registration; if supplied, they must match exactly. `--fake-scenario` is rejected for `pydantic-ai`.
+
+`fleet doctor` reports the original project registration, not readiness of every per-role model profile. Effective profile preflight occurs when starting a task. Users selecting profiles should omit legacy runtime override flags.
 
 `fleet doctor` inspects whether the selected environment reference is configured and valid without resolving/returning its value and without contacting a provider. The Phase 2 OpenAI client pins `https://api.openai.com/v1`, disables SDK redirects, retries, and ambient proxy/CA discovery, clears ambient OpenAI organization/project/admin/webhook selections, and supplies the explicitly resolved authorization value. A final request hook validates the SDK-merged method, endpoint, headers, content length, and serialized body before send; a response hook rejects registered-secret material and removes provider-controlled headers before OpenAI SDK parsing/logging. `OPENAI_BASE_URL`, proxy variables, and unrelated OpenAI identity variables cannot redirect the selected BYOK credential. A generated doctor report exits zero even when `data.healthy` is false: exit zero means diagnostics completed, while readiness is expressed by `data.healthy` and the individual required checks. A missing PydanticAI credential is a failed required check; the fake runtime reports `not_selected` and does not require a provider credential. A command-level Fleet error still returns its documented nonzero category.
 
@@ -281,7 +337,7 @@ uv run fleet chat /path/to/repo
 /exit
 ```
 
-Natural-language lines submit a goal; slash commands are deterministic local controls. Approval does not resume automatically. `/deny <request-id>`, `/cancel`, and `/approve <request-id> --run` or `--always --scope project` use the same exact permission service as ordinary CLI commands. `/permissions` without an ID lists the selected project's rules. Inspect and explicitly apply the resulting candidate using `fleet patch show <run-id>` and `fleet patch apply <run-id>` outside chat. A delivered turn does not mean the patch was applied or independently verified: inspect its Run evidence and warnings.
+Natural-language lines submit a goal; slash commands are deterministic local controls. Approval does not resume automatically. `/deny <request-id>`, `/cancel`, and `/approve <request-id> --run` or `--always --scope project` use the same exact permission service as ordinary CLI commands. `/permissions` without an ID lists the selected project's rules. Inspect/apply using session `/diff`, `/apply`, `/confirm`, or the compatible `fleet patch show <run-id>` and `fleet patch apply <run-id>` commands. A delivered turn does not mean the patch was applied or independently verified: inspect its Run evidence and warnings.
 
 Reopening `fleet chat /path/to/repo` selects the latest project-bound conversation. Use `--conversation <conversation-id>` to select an exact conversation or `--new` for a new one. Automation can submit one goal:
 
@@ -301,7 +357,7 @@ While a role is working, `/status` remains responsive. EOF, `/exit`, and repeate
 - strict Pydantic v2 persistent/external models and safe YAML loading;
 - type-specific stable ID prefixes for persistent and public identity fields, including project, run, task, agent, event, approval, grant, artifact, intent, lease, workspace, sandbox, plan, and FleetPatch IDs;
 - explicit workflow transitions with transactional per-run events;
-- SQLite migrations `0001`–`0008`, durable exact once/run/always approval grants, per-action persistent-rule capability receipts, provider/image/daemon-bound Projects and Runs, cumulative budget accounting, graph/conversation ownership and recoverable worktree/sandbox/execution leases;
+- SQLite migrations `0001`–`0010`, durable exact once/run/always approval grants, per-action persistent-rule capability receipts, provider/image/daemon-bound Projects and Runs, immutable per-role model bindings, planning-decision journals, cumulative budget accounting, graph/conversation ownership and recoverable worktree/sandbox/execution leases;
 - repository-aware no-execution profiling with provenance, ambiguity, read/entry/depth limits, and symlink defenses;
 - repository-specific FleetSpec/verification proposals plus immutable profile/knowledge artifacts;
 - exact content-addressed ConfigSnapshot and TaskSpec bindings for each run, status inspection, and patch apply;

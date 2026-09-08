@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import codecs
+import errno
 import json
 import os
+import re
 import selectors
 import signal
 import subprocess
@@ -188,6 +191,268 @@ class InteractiveChat:
         if self.master is not None:
             os.close(self.master)
             self.master = None
+
+
+def test_bare_real_terminal_restores_reviews_and_applies_without_leaving_session(
+    chat_fixture: ChatFixture,
+) -> None:
+    import pty
+
+    first = chat_fixture.message("Fix the canary", "--submission-id", "bare-review")
+    run_id = first["run_id"]
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        [sys.executable, "-u", "-m", "agent_fleet.cli.app"],
+        cwd=chat_fixture.repository,
+        env=chat_fixture.environment,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+    )
+    os.close(slave)
+    selector = selectors.DefaultSelector()
+    selector.register(master, selectors.EVENT_READ)
+    output = ""
+    decoder = codecs.getincrementaldecoder("utf-8")()
+
+    def until(needle: str, *, after: int = 0) -> str:
+        nonlocal output
+        deadline = time.monotonic() + 30
+        while needle not in output[after:]:
+            assert time.monotonic() < deadline, output
+            for key, _ in selector.select(0.2):
+                output += decoder.decode(os.read(key.fd, 16_384))
+                assert len(output) <= 512_000
+        return output
+
+    try:
+        until("Type a goal")
+        assert first["conversation_id"] in output
+        os.write(master, b"/plan\n")
+        until("inspection_only")
+        os.write(master, b"/diff\n")
+        until("diff --git")
+        chat_fixture.unchanged()
+        checkpoint = len(output)
+        os.write(master, b"/apply\n")
+        until('"confirmation_code":', after=checkpoint)
+        # Wait for the complete code even if a descriptor read split its line.
+        until('"expires_at":', after=checkpoint)
+        code = re.search(r'"confirmation_code": "([0-9a-f]{16})"', output[checkpoint:])
+        assert code is not None, output
+        chat_fixture.unchanged()
+        os.write(master, f"/confirm {code.group(1)}\n".encode())
+        until('"status": "completed"', after=checkpoint)
+        os.write(master, b"/exit\n")
+        # A terminal consumer must drain the final result while awaiting exit;
+        # otherwise bounded kernel output backpressure correctly blocks it.
+        deadline = time.monotonic() + 30
+        while process.poll() is None:
+            assert time.monotonic() < deadline, output
+            for key, _ in selector.select(0.2):
+                try:
+                    chunk = os.read(key.fd, 16_384)
+                except OSError as error:
+                    assert error.errno == errno.EIO
+                    chunk = b""  # A closed PTY reports EIO on supported POSIX hosts.
+                output += decoder.decode(chunk)
+                assert len(output) <= 512_000
+        assert process.returncode == 0
+        container = chat_fixture.reopen()
+        run = container.state.get_run(run_id)
+        assert run.status is RunStatus.COMPLETED and run.applied_revision is not None
+        assert chat_fixture.git("diff") == container.patches.show(run_id)
+        assert (
+            sum(
+                event.event_type == "patch.applied" for event in container.state.list_events(run_id)
+            )
+            == 1
+        )
+        assert "Traceback" not in output
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        selector.close()
+        os.close(master)
+
+
+def test_plan_review_session_restart_confirms_only_then_explicitly_resumes(
+    chat_fixture: ChatFixture,
+) -> None:
+    first = chat_fixture.message("Fix the canary", "--review-plan")
+    run_id = first["run_id"]
+    assert first["run"]["status"] == "paused_for_plan" and first["turn_status"] == "waiting"
+    chat = InteractiveChat(chat_fixture, conversation=first["conversation_id"])
+    try:
+        chat.read_until("Type a goal")
+        chat.send("/plan")
+        chat.read_until('"mode": "pre_execution_gate"')
+        before = len(chat.output)
+        chat.send("/plan approve")
+        chat.read_until('"confirmation_code":', after=before)
+        chat.read_until('"expires_at":', after=before)
+        match = re.search(r'"confirmation_code": "([0-9a-f]{16})"', chat.output[before:])
+        assert match is not None
+        chat_fixture.unchanged()
+        before = len(chat.output)
+        chat.send(f"/confirm {match.group(1)}")
+        chat.read_until('"status": "approved"', after=before)
+        container = chat_fixture.reopen()
+        assert container.state.get_run(run_id).status is RunStatus.PAUSED_FOR_PLAN
+        assert container.state.list_leases(run_id) == []
+        chat_fixture.unchanged()
+        before = len(chat.output)
+        chat.send("/resume")
+        chat.read_until("ready_for_review / presenting", after=before)
+        chat.send("/exit")
+        chat.finish()
+        container = chat_fixture.reopen()
+        assert container.plan_reviews.inspect(container.state.get_run(run_id)).status == "consumed"
+        assert (
+            sum(
+                event.event_type == "fleet.plan_accepted"
+                for event in container.state.list_events(run_id)
+            )
+            == 1
+        )
+        chat_fixture.unchanged()
+    finally:
+        chat.close()
+
+
+def test_one_shot_review_plan_cli_requires_exact_hash_and_explicit_resume(
+    chat_fixture: ChatFixture,
+) -> None:
+    run = chat_fixture.invoke(
+        "run", "Fix the canary", "--project", str(chat_fixture.repository), "--review-plan"
+    )
+    run_id = run["run_id"]
+    assert run["status"] == "paused_for_plan"
+    shown = chat_fixture.invoke("plan", "show", run_id)
+    assert shown["mode"] == "pre_execution_gate" and shown["task"] and shown["plan"]
+    digest = shown["checkpoint"]["checkpoint_sha256"]
+    chat_fixture.invoke("plan", "approve", run_id, "--expected-sha256", "0" * 64, success=False)
+    approved = chat_fixture.invoke("plan", "approve", run_id, "--expected-sha256", digest)
+    assert approved["checkpoint"]["status"] == "approved"
+    container = chat_fixture.reopen()
+    assert container.state.get_run(run_id).status is RunStatus.PAUSED_FOR_PLAN
+    assert container.state.list_leases(run_id) == []
+    chat_fixture.invoke("plan", "approve", run_id, "--expected-sha256", digest, success=False)
+    result = chat_fixture.invoke("resume", run_id)
+    assert result["status"] == "ready_for_review"
+    chat_fixture.unchanged()
+
+
+def test_no_id_permission_choice_requires_confirmation_and_explicit_resume(
+    chat_fixture: ChatFixture,
+) -> None:
+    first = chat_fixture.message("Fix the canary", "--fake-scenario", "approval")
+    run_id = first["run_id"]
+    request_id = first["run"]["pending_approval_id"]
+    assert request_id is not None
+    chat = InteractiveChat(chat_fixture, conversation=first["conversation_id"])
+    try:
+        chat.read_until("Type a goal")
+        chat.send("/approve")
+        chat.read_until("Choose /approve --once")
+        checkpoint = len(chat.output)
+        chat.send("/approve --once")
+        chat.read_until('"confirmation_code":', after=checkpoint)
+        chat.read_until('"expires_at":', after=checkpoint)
+        code = re.search(r'"confirmation_code": "([0-9a-f]{16})"', chat.output[checkpoint:])
+        assert code is not None
+        assert chat_fixture.reopen().state.get_approval(request_id).status is ApprovalStatus.PENDING
+        chat.send(f"/confirm {code.group(1)}")
+        chat.read_until('"grant_id":', after=checkpoint)
+        rebuilt = chat_fixture.reopen()
+        assert rebuilt.state.get_approval(request_id).status is ApprovalStatus.APPROVED
+        assert rebuilt.state.get_run(run_id).status is RunStatus.PAUSED_FOR_APPROVAL
+        checkpoint = len(chat.output)
+        chat.send("/resume")
+        chat.read_until("ready_for_review / presenting", after=checkpoint)
+        chat.send("/exit")
+        chat.finish()
+        assert chat_fixture.reopen().state.get_run(run_id).status is RunStatus.READY_FOR_REVIEW
+        chat_fixture.unchanged()
+    finally:
+        chat.close()
+
+
+def test_unregistered_pipe_does_not_consume_setup_answers_or_publish(
+    chat_fixture: ChatFixture,
+    tmp_path: Path,
+) -> None:
+    target = GitRepositoryAdapter(tmp_path, UuidIdGenerator()).create_canary_fixture(
+        tmp_path / "unregistered-pipe"
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "agent_fleet.cli.app", "chat", str(target)],
+        env=chat_fixture.environment,
+        input="yes\nfake\nfleet-local:prepared\nsafe\n.\n",
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "PROJECT_NOT_INITIALIZED" in output and "Review initialization" not in output
+    assert not (target / ".fleet").exists()
+    assert chat_fixture.reopen().state.get_project_by_root(str(target)) is None
+
+
+def test_bare_unregistered_terminal_previews_then_cancels_without_publication(
+    chat_fixture: ChatFixture,
+    tmp_path: Path,
+) -> None:
+    import pty
+
+    target = GitRepositoryAdapter(tmp_path, UuidIdGenerator()).create_canary_fixture(
+        tmp_path / "unregistered-tty"
+    )
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        [sys.executable, "-u", "-m", "agent_fleet.cli.app"],
+        cwd=target,
+        env=chat_fixture.environment,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+    )
+    os.close(slave)
+    selector = selectors.DefaultSelector()
+    selector.register(master, selectors.EVENT_READ)
+    output = ""
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    sent = False
+    try:
+        deadline = time.monotonic() + 30
+        while process.poll() is None:
+            assert time.monotonic() < deadline, output
+            for key, _ in selector.select(0.2):
+                try:
+                    chunk = os.read(key.fd, 16_384)
+                except OSError as error:
+                    assert error.errno == errno.EIO
+                    chunk = b""
+                output += decoder.decode(chunk)
+                assert len(output) <= 512_000
+            if not sent and "Review initialization" in output:
+                os.write(master, b"yes\nfake\nfleet-local:prepared\nsafe\n.\n\n")
+                sent = True
+        assert process.returncode == 0, output
+        assert "+++ b/.fleet/fleet.yaml" in output and "Type initialize" in output
+        assert "Setup stopped" in output and "Traceback" not in output
+        assert not (target / ".fleet").exists()
+        assert chat_fixture.reopen().state.get_project_by_root(str(target)) is None
+        assert not (chat_fixture.state_root / "bootstrap").exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        selector.close()
+        os.close(master)
 
 
 def test_message_retry_reopens_same_turn_and_normal_artifacts_without_reexecution(

@@ -80,7 +80,7 @@ def test_schema7_upgrade_is_atomic_and_does_not_fabricate_legacy_conversations(
             == []
         )
     assert state.get_run(run.run_id) == run
-    assert state.migrate() == 8
+    assert state.migrate() == sqlite_module.SUPPORTED_SCHEMA_VERSION
     store = SqliteConversationStore(
         state.database_path, state.clock, state.ids, state.redactor, state
     )

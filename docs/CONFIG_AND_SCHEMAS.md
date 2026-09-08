@@ -889,3 +889,102 @@ Complete-tree OrganizationFile/Directory models preserve safe unreferenced conte
 OrganizationPublicationResult reports `proposal_id`, `operation_id`, committed/aborted status, its version when committed, `changed` for this invocation, and nullable `cleanup_complete`. The CLI puts warnings in the envelope's `warnings` field. A committed repeat is read-only and returns its historical version with cleanup not inspected; a rollback is a new inverse/current-head operation and advances revision even when bytes repeat. Old admitted code candidates remain stale. Read-only exact duplicate chat submissions use their original durable goal/options/turn/Run binding without provider preflight, current-generation admission, owner settlement or budget resets.
 
 See [ADR 0006](adr/0006-atomic-organization-publication.md) for complete-tree bounds, supported native metadata, whole-directory exchange, cross-state locking, durable preparation and explicit recovery semantics. FleetPatch cannot be used to bypass headed-project initialization restrictions or mutate user trust.
+
+## 12. Session-first model and role contracts
+
+Implementation/acceptance status is maintained in
+`.agent/plans/2026-09-07-session-first-release.md`; this section defines the new
+contracts, not a claim that every release milestone has passed.
+
+`ModelProfile` aliases are lowercase ASCII, 1–64 characters. Their user-owned
+monotonic versions contain enabled state and a RuntimeConfiguration with only an
+explicit credential reference. `ProjectModelSelection` binds the exact registered
+project/repository and its default, role overrides and permitted aliases.
+Resolution is exact user role override, explicitly permitted repository
+preference, reviewed default, then genuinely legacy configuration only when no
+selection exists. `RunModelBindings` pins the entire effective role set; a
+non-null `Run.model_bindings_sha256` is required authority, not a hint. Schema9
+stores profiles, selections, immutable run bindings and mutation audit records.
+Inspection never returns references or values. Removal preserves historical
+versions and fails while active selections refer to the profile.
+
+An optional `.fleet/agents/roles.yaml` uses this shape:
+
+```yaml
+apiVersion: agentfleet.dev/v1alpha1
+kind: RoleCatalog
+roles:
+  backend:
+    baseRole: engineer
+    description: Implement bounded backend changes
+    instructions: agents/backend.md
+    allowedPaths: [src/backend]
+    maxSteps: 12
+    modelProfile: coding
+```
+
+The catalog permits at most 32 custom IDs and cannot replace built-ins or CoS.
+`allowedTools` is an optional unique subset of both the supported kind and
+declared base tools. `maxSteps` cannot exceed the base. Markdown guidance plus
+base instructions is bounded to 32768 UTF-8 bytes. Missing/unsafe references,
+protected paths, duplicate IDs and unknown fields fail validation. `modelProfile`
+is a preference requiring prior user permission, not a credential declaration.
+Use reviewed FleetPatch publication for catalog/instruction changes; root
+fleet.yaml, trust and credentials remain protected. Catalog absence preserves the
+original ConfigSnapshot bytes exactly.
+
+ScopeDecision may select `role_selections` by engineer/verifier/researcher/architect
+slot; parallel WriterAssignment may select `role_id` individually. The planner
+derives each custom node's `execution_kind` from the snapshot, validates delegation,
+path/step ceilings and graph structure, and retains actual principal identity.
+The new optional fields are omitted when absent to preserve existing canonical
+records. See [ADR 0007](adr/0007-session-model-role-bindings.md).
+
+Custom parallel plans additionally set `FleetPlan.repair_role_id` from the explicit
+engineer role selection. It must cover the full parent TaskSpec/verifier scope,
+not only the narrower initial writers. The joined repair preserves this actual
+principal and never widens its template. Legacy all-built-in plans omit the field.
+
+`Run.plan_review_required` is omitted when false. Opt-in runs pause at
+`paused_for_plan` after CoS scope/plan artifacts and before workers/tools.
+Migration10 stores three immutable `PlanReviewCheckpoint` revisions: pending,
+approved and consumed. Exact Run/task/config/plan/model/repository/organization
+bindings accompany each revision. Human approval changes no execution state;
+single-winner consumption and the resume event are atomic. Missing required
+records or uncertain consumed ownership fail closed. Cancellation retains the
+journal, and pending plans block organization publication.
+
+## 13. Local dashboard observation contract
+
+`fleet dashboard [path] --port 0` starts a foreground IPv4 loopback listener for
+one exact registered repository. The generated bearer token is printed once in
+the trusted terminal; no credential/token is embedded in URLs or static assets.
+The page holds it only in memory. Every API route requires authentication and an
+exact Host; supplied Origin must match. There are no cookies, CORS or write routes.
+
+Static resources are exact packaged paths. Authenticated reads are
+`/api/catalog`, `/api/runs/<root-id>`, `/api/runs/<root-id>/events` and
+`/api/runs/<root-id>/artifacts/<artifact-id>`. Catalog pagination uses `before`.
+Events use bounded fetch-SSE and `X-Fleet-Cursors`, a JSON map of at most17 exact
+Run IDs to nonnegative safe-integer sequence values. Roots expose only their own
+project/child family. Unknown/future/foreign cursors explicitly resync; sequence
+gaps fail closed. Metadata SHA-256 describes stored bytes, not a redacted browser
+rendering. Prompts, guidance, credential references and dispatch claims are not
+published.
+
+Bounds: eight request handlers; absolute three-second header deadline; 4096-byte
+header lines/16384-byte aggregate; 8192-byte request line; GET with no request
+body; ten-second streams, at most1MiB per frame/4MiB per stream; fifty roots per
+catalog page, twenty recent sessions, sixteen children,128 agent instances,
+fifty events per source per frame and200 displayed events. The query-only reader
+uses snapshot transactions and query work/deadline limits. Existing independent
+evidence/model inspection is a separate source: timestamps and per-run cursors
+are observational, not a globally atomic progress meter. Requests never migrate
+or initialize state. Closing the server interrupts its owned connections and
+revokes the token; it does not stop workers in other foreground sessions.
+
+The browser detects a silent stream within seven seconds, visibly marks stale
+state and reconnects. All repository-controlled text is rendered as text, under
+local-only CSP and no framing. Large artifacts exceeding512KiB must be inspected
+in the terminal. This is not multi-user authentication or protection against a
+hostile same-user process reading terminal/browser memory.

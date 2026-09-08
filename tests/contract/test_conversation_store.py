@@ -16,7 +16,7 @@ from threading import Barrier
 import pytest
 
 from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
-from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
+from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION, SqliteStateStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.domain.budgets import RunBudgetLimits
 from agent_fleet.domain.conversation import (
@@ -161,7 +161,7 @@ class ConversationHarness:
 def conversation_harness(tmp_path: Path) -> ConversationHarness:
     clock = TickingClock()
     state = SqliteStateStore(tmp_path / "state.db", clock, UuidIdGenerator(), Redactor())
-    assert state.migrate() == 8
+    assert state.migrate() == SUPPORTED_SCHEMA_VERSION
     now = clock.now()
     project = Project(
         project_id=state.ids.new(IdPrefix.PROJECT),
@@ -651,7 +651,7 @@ def test_terminal_run_with_unresolved_resource_keeps_conversation_blocked(
     assert settled.status is ConversationTurnStatus.DELIVERED
 
 
-@pytest.mark.parametrize("version", [6, 9])
+@pytest.mark.parametrize("version", [6, SUPPORTED_SCHEMA_VERSION + 1])
 def test_missing_or_future_schema_history_fails_closed(
     conversation_harness: ConversationHarness,
     version: int,

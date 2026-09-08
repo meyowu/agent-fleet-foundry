@@ -1127,7 +1127,7 @@ def test_schema7_upgrade_preserves_legacy_project_and_run_bytes(
                 connection.execute(f"SELECT data_json FROM {table}").fetchone()[0]
                 for table in ("projects", "runs")
             ]
-    assert state.migrate() == 8
+    assert state.migrate() == sqlite_adapter.SUPPORTED_SCHEMA_VERSION
     with state._connect() as connection:
         after = [
             connection.execute(f"SELECT data_json FROM {table}").fetchone()[0]

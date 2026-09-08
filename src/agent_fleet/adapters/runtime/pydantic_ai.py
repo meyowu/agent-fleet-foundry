@@ -488,6 +488,7 @@ class PydanticAIRuntimeAdapter:
                 self._model_override,
                 self._model_override_metadata,
                 services.accounting,
+                services.execution_kind,
             )
 
         provider, model_name = self._require_provider_model(configuration.provider_model)
@@ -540,6 +541,7 @@ class PydanticAIRuntimeAdapter:
                         model=configuration.provider_model,
                     ),
                     services.accounting,
+                    services.execution_kind,
                 )
         finally:
             # The transport is caller-owned when supplied to the SDK. Close it even
@@ -554,8 +556,18 @@ class PydanticAIRuntimeAdapter:
         model: Model,
         provider_metadata: RuntimeProviderMetadata,
         accounting: RuntimeAccounting | None = None,
+        execution_kind: AgentRole | None = None,
     ) -> AgentInvocationResult:
-        output_contract = _OUTPUT_BY_ROLE.get(str(request.role))
+        kind = str(request.role) if execution_kind is None else execution_kind.value
+        if (request.role in _OUTPUT_BY_ROLE and kind != request.role) or (
+            request.role != AgentRole.COS and kind == AgentRole.COS
+        ):
+            raise _runtime_error(
+                ErrorCode.RUNTIME_OUTPUT_INVALID,
+                "The runtime role and trusted execution kind disagree.",
+                "Use the control-plane-bound role template.",
+            )
+        output_contract = _OUTPUT_BY_ROLE.get(kind)
         if output_contract is None:
             raise _runtime_error(
                 ErrorCode.RUNTIME_CAPABILITY_MISSING,

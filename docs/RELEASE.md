@@ -61,6 +61,12 @@ job IDs/conclusions and tool versions; a YAML matrix alone proves no platform.
 Windows, remote/TCP Docker, remote filesystems and unsupported metadata remain
 outside the supported full-workflow boundary.
 
+For the Session-first candidate, the complete default selection may be replayed
+as exhaustive disjoint partitions: `tests/unit tests/contract`, `tests/integration`,
+`tests/e2e tests/docker tests/release`, and `tests/live`. Preserve separate reports
+and counts; the enabled optional suites overlap these default skips. This does
+not imply new Linux/platform CI when only local macOS checks ran.
+
 Record realistic schema7→8 preservation (including paused approval, leases,
 budgets, chat/graph ownership), current organization history reopen, older-binary
 refusal and bounded scale metrics. A projected prior-schema fixture is not execution
@@ -80,6 +86,15 @@ conclusions and merge only passing changes. Verify remote main's resulting commi
 and tree and run post-merge smoke. Do not infer merge from a push or PR URL. A
 private repository remains private. Record package/tag publication separately;
 never publish automatically as a consequence of merge.
+
+When the owner explicitly prohibits Actions-minute spending, a transparently
+CI-skipped merge is permissible only after local acceptance and live read-back
+confirm that no required check/rule would be bypassed. Preserve normal protection
+and workflow configuration. Feature-head and merge commit messages must include
+GitHub's skip marker before the corresponding push/PR trigger; draft PRs alone do
+not suppress runs. Use an exact-head normal merge, never admin bypass or fabricated
+statuses. Recheck rules immediately before merge; a required pending check is a
+blocker, not permission to disable it. Record that hosted CI was not rerun.
 
 ## Rollback / incident response
 

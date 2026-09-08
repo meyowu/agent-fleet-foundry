@@ -128,7 +128,12 @@ def _boundary[**Params, Result](operation: Callable[Params, Result]) -> Callable
 
 def _run_hash(run: Run) -> str:
     value = run.model_dump(mode="json", warnings=False)
-    return canonical_json_hash({key: value[key] for key in _RUN_IDENTITY})
+    identity = {key: value[key] for key in _RUN_IDENTITY}
+    if run.model_bindings_sha256 is not None:
+        identity["model_bindings_sha256"] = run.model_bindings_sha256
+    if run.plan_review_required:
+        identity["plan_review_required"] = True
+    return canonical_json_hash(identity)
 
 
 def _goal_hash(run: Run) -> str:
@@ -1031,7 +1036,12 @@ class SqliteConversationStore:
             if (
                 turn.status is not ConversationTurnStatus.WAITING
                 or turn.active_claim_id is not None
-                or run.status not in {RunStatus.PAUSED_FOR_APPROVAL, RunStatus.WAITING_FOR_CHILDREN}
+                or run.status
+                not in {
+                    RunStatus.PAUSED_FOR_PLAN,
+                    RunStatus.PAUSED_FOR_APPROVAL,
+                    RunStatus.WAITING_FOR_CHILDREN,
+                }
             ):
                 raise ConversationOwnershipUnavailableError()
             conversation = self._conversation(
@@ -1072,7 +1082,11 @@ class SqliteConversationStore:
         if summary is not None:
             summary = self._validated(ConversationSummary, summary)
         now = self.clock.now()
-        if run.status in {RunStatus.PAUSED_FOR_APPROVAL, RunStatus.WAITING_FOR_CHILDREN}:
+        if run.status in {
+            RunStatus.PAUSED_FOR_PLAN,
+            RunStatus.PAUSED_FOR_APPROVAL,
+            RunStatus.WAITING_FOR_CHILDREN,
+        }:
             status = ConversationTurnStatus.WAITING
         elif run.status is RunStatus.READY_FOR_REVIEW or is_terminal(run.status):
             if self._outstanding(connection, run):

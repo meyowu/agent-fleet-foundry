@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlsplit
 import pytest
 
 from agent_fleet.domain.offline_canary import BROKEN_CANARY, FIXED_CANARY
+from agent_fleet.schemas.generate import SCHEMAS
 
 pytestmark = pytest.mark.installed_distribution
 _ROOT = Path(__file__).parents[2]
@@ -42,11 +43,13 @@ if hasattr(socket.socket, "sendmsg"):
     socket.socket.sendmsg = deny
 """
 _SMOKE = """import importlib.metadata as metadata
-import json, pathlib, socket, sys
+import hashlib, json, pathlib, socket, sys
 from importlib.resources import files
 import agent_fleet
 import pydantic_ai.models
-from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
+from agent_fleet.adapters.dashboard.http import DashboardServer
+from agent_fleet.cli.dashboard import dashboard_service
+from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION, SqliteStateStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.domain.security import Redactor
 from agent_fleet.schemas.generate import SCHEMAS
@@ -64,11 +67,18 @@ for name, model in SCHEMAS.items():
     observed = json.loads(files("agent_fleet.schemas").joinpath(name).read_text())
     assert observed == model.model_json_schema()
 state = SqliteStateStore(pathlib.Path(sys.argv[1]), SystemClock(), UuidIdGenerator(), Redactor())
-assert state.migrate() == state.migrate() == 8
+assert state.migrate() == state.migrate() == SUPPORTED_SCHEMA_VERSION
+assert callable(DashboardServer) and callable(dashboard_service)
+dashboard = files("agent_fleet").joinpath("assets", "dashboard")
+dashboard_assets = {
+    name: hashlib.sha256(dashboard.joinpath(name).read_bytes()).hexdigest()
+    for name in ("index.html", "dashboard.css", "dashboard.js", "favicon.svg")
+}
 print(json.dumps({
     "package": str(pathlib.Path(agent_fleet.__file__)),
     "assets": str(files("agent_fleet").joinpath("assets")),
     "schemas": len(SCHEMAS),
+    "dashboard_assets": dashboard_assets,
     "distributions": {
         d.metadata["Name"].lower().replace("_", "-"): d.version
         for d in metadata.distributions()
@@ -286,7 +296,7 @@ def _install(root: Path, wheelhouse: Path, archive_kind: str) -> InstalledFleet:
     report = json.loads(smoke.stdout)
     assert Path(report["package"]).is_relative_to(virtual)
     assert not Path(report["package"]).is_relative_to(_ROOT)
-    assert report["schemas"] == 82
+    assert report["schemas"] == len(SCHEMAS)
     locked_versions = {
         package["name"]: package["version"]
         for package in tomllib.loads((_ROOT / "uv.lock").read_text())["package"]
@@ -296,6 +306,10 @@ def _install(root: Path, wheelhouse: Path, archive_kind: str) -> InstalledFleet:
         locked_versions[name] == version for name, version in report["distributions"].items()
     )
     assets = Path(report["assets"])
+    assert report["dashboard_assets"] == {
+        name: hashlib.sha256((assets / "dashboard" / name).read_bytes()).hexdigest()
+        for name in ("index.html", "dashboard.css", "dashboard.js", "favicon.svg")
+    }
     assert (
         assets.joinpath("USER_GUIDE.md").read_bytes() == (_ROOT / "docs/USER_GUIDE.md").read_bytes()
     )
@@ -357,6 +371,168 @@ def _project(installed: InstalledFleet, name: str = "learning-project") -> Path:
     )
     assert not sentinel.exists()
     return target
+
+
+def _test_seed_without_canary(installed: InstalledFleet, target: Path) -> None:
+    # Private test seed is intentionally not a supported public initialization shortcut.
+    installed.process(
+        [
+            str(installed.python),
+            "-I",
+            "-c",
+            "from pathlib import Path; from agent_fleet.bootstrap import build_container; "
+            "import sys; build_container(Path(sys.argv[2])).projects._initialize_without_canary("
+            "Path(sys.argv[1]), runtime_name='fake', sandbox_name='fake')",
+            str(target),
+            str(installed.root / "state"),
+        ]
+    )
+
+
+def _assert_plan_has_no_execution_effects(installed: InstalledFleet, run_id: str) -> None:
+    # Read actual persisted authority through the installed package, never source imports.
+    installed.process(
+        [
+            str(installed.python),
+            "-I",
+            "-c",
+            """
+from pathlib import Path
+import sys
+from agent_fleet.bootstrap import build_container
+from agent_fleet.domain.models import RunStatus, WorkflowStage
+container = build_container(Path(sys.argv[1]))
+run = container.state.get_run(sys.argv[2])
+assert run.plan_review_required and run.status is RunStatus.PAUSED_FOR_PLAN
+assert run.stage is WorkflowStage.SCOPING and run.model_bindings_sha256
+assert container.state.list_leases(run.run_id) == []
+assert container.state.list_grants(run.run_id) == []
+assert container.graphs.get(run.run_id) is None
+assert container.graphs.descendants(run.run_id) == ()
+assert run.engineer_checkpoint is None and run.specialist_checkpoint is None
+assert run.verifier_agent_instance_id is None and run.verification_checkpoint is None
+assert run.command_evidence_artifact_ids == [] and run.patch_artifact_id is None
+assert run.verifier_verdict_artifact_id is None
+""",
+            str(installed.root / "state"),
+            run_id,
+        ]
+    )
+
+
+def _installed_models_and_reviewed_plan(installed: InstalledFleet) -> None:
+    help_result = installed.process([str(installed.executable), "dashboard", "--help"])
+    assert "Observe local agents and evidence" in help_result.stdout
+    target = _project(installed, "reviewed-plan-project")
+    _test_seed_without_canary(installed, target)
+    repository_configuration = {
+        path.relative_to(target): path.read_bytes()
+        for path in (target / ".fleet").rglob("*")
+        if path.is_file()
+    }
+    base = installed.invoke(["models", "set", "release-default", "--runtime", "fake"])
+    verifier = installed.invoke(
+        ["models", "set", "release-verifier", "--runtime", "fake", "--max-requests", "6"]
+    )
+    assert base["revision"] == verifier["revision"] == 1
+    assert base["credential_required"] is verifier["credential_required"] is False
+    rejected = installed.invoke(
+        ["models", "set", "release-default", "--runtime", "fake"], expected=2
+    )
+    assert rejected["code"] == "CONFIG_INVALID"
+    assert installed.invoke(["models", "show", "release-default"]) == base
+    default = installed.invoke(
+        ["models", "bind", "release-default", "--default", "--path", str(target)]
+    )
+    assert default["revision"] == 1
+    bound = installed.invoke(
+        [
+            "models",
+            "bind",
+            "release-verifier",
+            "--role",
+            "verifier",
+            "--revision",
+            "1",
+            "--path",
+            str(target),
+        ]
+    )
+    assert installed.invoke(["models", "selection", str(target)]) == bound
+    assert bound["revision"] == 2 and bound["default_profile"] == "release-default"
+    assert bound["role_overrides"] == {"verifier": "release-verifier"}
+    result = installed.invoke(
+        ["run", "Fix the canary behavior", "--project", str(target), "--review-plan"]
+    )
+    run_id = str(result["run_id"])
+    assert result["status"] == "paused_for_plan"
+    bindings = cast(dict[str, object], result["model_bindings"])
+    assert bindings["selection_revision"] == 2
+    roles = cast(dict[str, dict[str, object]], bindings["roles"])
+    assert roles["cos"]["profile_name"] == roles["engineer"]["profile_name"] == "release-default"
+    assert roles["verifier"]["profile_name"] == "release-verifier"
+    assert all(role["profile_revision"] == 1 for role in roles.values())
+    assert "credential_ref" not in json.dumps(bindings)
+    shown = installed.invoke(["plan", "show", run_id])
+    assert shown["mode"] == "pre_execution_gate"
+    assert cast(dict[str, object], shown["task"])["run_id"] == run_id
+    assert cast(dict[str, object], shown["plan"])["strategy"] == "engineer_verifier"
+    checkpoint = cast(dict[str, object], shown["checkpoint"])
+    assert checkpoint["status"] == "pending" and checkpoint["revision"] == 1
+    assert checkpoint["model_bindings_sha256"] == bindings["bindings_sha256"]
+    _assert_plan_has_no_execution_effects(installed, run_id)
+    assert installed.invoke(["resume", run_id])["status"] == "paused_for_plan"
+    wrong = installed.invoke(["plan", "approve", run_id, "--expected-sha256", "0" * 64], expected=4)
+    assert wrong["code"] == "APPROVAL_INVALID"
+    assert installed.invoke(["plan", "show", run_id]) == shown
+    approved = installed.invoke(
+        ["plan", "approve", run_id, "--expected-sha256", str(checkpoint["checkpoint_sha256"])]
+    )
+    decision = cast(dict[str, object], approved["checkpoint"])
+    assert decision["status"] == "approved" and decision["revision"] == 2
+    assert decision["binding_sha256"] == checkpoint["binding_sha256"]
+    assert decision["checkpoint_sha256"] != checkpoint["checkpoint_sha256"]
+    _assert_plan_has_no_execution_effects(installed, run_id)
+    # Later user configuration is not allowed to rebind the already approved run.
+    updated = installed.invoke(
+        [
+            "models",
+            "set",
+            "release-verifier",
+            "--runtime",
+            "fake",
+            "--revision",
+            "1",
+            "--max-requests",
+            "7",
+        ]
+    )
+    assert updated["revision"] == 2
+    result = installed.invoke(["resume", run_id])
+    assert result["status"] == "ready_for_review" and result["verified_complete"] is False
+    assert result["model_bindings"] == bindings
+    consumed = installed.invoke(["plan", "show", run_id])
+    final_checkpoint = cast(dict[str, object], consumed["checkpoint"])
+    assert final_checkpoint["status"] == "consumed" and final_checkpoint["revision"] == 3
+    assert final_checkpoint["binding_sha256"] == checkpoint["binding_sha256"]
+    assert consumed["task"] == shown["task"] and consumed["plan"] == shown["plan"]
+    events = installed.listing(["logs", run_id])
+    assert sum(event["event_type"] == "fleet.plan_accepted" for event in events) == 1
+    assert sum(event["event_type"] == "plan_review.consumed" for event in events) == 1
+    assert installed.invoke(["resume", run_id])["status"] == "ready_for_review"
+    assert installed.listing(["logs", run_id]) == events
+    stale = installed.invoke(
+        ["plan", "approve", run_id, "--expected-sha256", str(decision["checkpoint_sha256"])],
+        expected=4,
+    )
+    assert stale["code"] == "APPROVAL_INVALID"
+    assert installed.listing(["logs", run_id]) == events
+    assert (target / "src/canary_calc/core.py").read_text() == BROKEN_CANARY
+    assert repository_configuration == {
+        path.relative_to(target): path.read_bytes()
+        for path in (target / ".fleet").rglob("*")
+        if path.is_file()
+    }
 
 
 def _run_and_apply(installed: InstalledFleet, target: Path, *, isolated: bool) -> None:
@@ -566,20 +742,9 @@ def test_fresh_distribution_offline_resources_and_test_seeded_workflow(
     )
     assert error["code"] == "BOOTSTRAP_CANARY_FAILED" and not (target / ".fleet").exists()
     assert (target / "src/canary_calc/core.py").read_bytes() == before
-    # Private test seed is intentionally not a supported public initialization shortcut.
-    installed.process(
-        [
-            str(installed.python),
-            "-I",
-            "-c",
-            "from pathlib import Path; from agent_fleet.bootstrap import build_container; "
-            "import sys; build_container(Path(sys.argv[2])).projects._initialize_without_canary("
-            "Path(sys.argv[1]), runtime_name='fake', sandbox_name='fake')",
-            str(target),
-            str(installed.root / "state"),
-        ]
-    )
+    _test_seed_without_canary(installed, target)
     _run_and_apply(installed, target, isolated=False)
+    _installed_models_and_reviewed_plan(installed)
 
 
 @pytest.mark.docker_integration

@@ -23,7 +23,6 @@ from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     AgentExecutionCheckpoint,
     AgentInstance,
-    AgentRole,
     AgentStatus,
     ApprovalStatus,
     ArtifactKind,
@@ -96,6 +95,7 @@ class GraphWorkflowExecution:
                 runtime_name=parent.runtime_name,
                 provider_model=parent.provider_model,
                 credential_ref=parent.credential_ref,
+                model_bindings_sha256=parent.model_bindings_sha256,
                 sandbox_name=parent.sandbox_name,
                 sandbox_configuration=parent.sandbox_configuration,
                 sandbox_requirements=parent.sandbox_requirements,
@@ -292,6 +292,9 @@ class GraphWorkflowExecution:
             )
             await engine.resources.cleanup_run(rejected)
             return rejected
+        # Register every pinned selected credential before any untrusted role
+        # context or policy parser can render an error.
+        engine._runtime_configuration(child)
         spec, _ = engine._active_role_configuration(child)
         if engine.permission_policy is not None:
             engine.permission_policy.validate_run_target(child)
@@ -316,7 +319,7 @@ class GraphWorkflowExecution:
 
     async def _specialist(self, child: Run, node: GraphNodeRecord) -> None:
         engine = self.engine
-        if child.task_id is None or node.node.role_id not in {"researcher", "architect"}:
+        if child.task_id is None or node.node.effective_kind not in {"researcher", "architect"}:
             raise _invalid()
         if any(
             item.kind is ArtifactKind.SPECIALIST_REPORT
@@ -324,7 +327,8 @@ class GraphWorkflowExecution:
         ):
             raise _invalid()
         task = engine.state.get_task(child.task_id)
-        role = AgentRole(node.node.role_id)
+        template = engine._execution_role(child, node.node.effective_kind)
+        role = template.role_id
         workspace = engine.resources.candidate_workspace(child.run_id)
         handle = engine.resources.engineer_sandbox(child.run_id)
         before = engine.repository.workspace_status_fingerprint(workspace)
@@ -355,11 +359,12 @@ class GraphWorkflowExecution:
             run_id=child.run_id,
             task_id=child.task_id,
             role=role,
+            execution_kind=(node.node.execution_kind),
             status=AgentStatus.RUNNING,
             iteration=0,
             created_at=checkpoint.created_at,
         )
-        configuration = engine._runtime_configuration(child)
+        configuration = engine._runtime_configuration(child, agent.role)
         catalog = GatewayRuntimeToolCatalog(
             gateway=engine.gateway,
             redactor=engine.redactor,
@@ -369,6 +374,9 @@ class GraphWorkflowExecution:
             workspace=workspace,
             sandbox_handle=handle,
             max_calls=configuration.max_tool_calls,
+            allowed_tools=(
+                template.allowed_tools if node.node.execution_kind is not None else None
+            ),
         )
         request = engine._build_invocation(
             run_id=child.run_id,
@@ -377,10 +385,8 @@ class GraphWorkflowExecution:
             role=role,
             stage=WorkflowStage.IMPLEMENTING,
             iteration=0,
-            max_steps=min(
-                node.node.max_steps, engine._active_role_max_steps(child, role, ceiling=10)
-            ),
-            instructions=engine._active_role_guidance(child, role),
+            max_steps=min(node.node.max_steps, template.max_steps, 10),
+            instructions=template.instructions,
             context_artifact_ids=self.context_artifact_ids(child),
             input=engine._runtime_input(
                 child,
@@ -388,33 +394,41 @@ class GraphWorkflowExecution:
                     "task_spec": task.model_dump(mode="json"),
                     "graph_context": self.model_context(child),
                 },
+                runtime_name=configuration.runtime_name,
             ),
         )
         engine.state.save_agent_instance(agent)
-        engine._emit(child, "agent.started", {"role": role.value}, agent_id=agent.agent_instance_id)
+        engine._emit(
+            child,
+            "agent.started",
+            {"role": role, "execution_kind": template.execution_kind.value},
+            agent_id=agent.agent_instance_id,
+        )
         result = await engine._invoke_runtime_agent(
             child,
             agent,
             engine.runtimes.get(configuration.runtime_name),
             request,
-            RuntimeInvocationServices(configuration=configuration, tools=catalog),
+            RuntimeInvocationServices(
+                configuration=configuration, tools=catalog, execution_kind=template.execution_kind
+            ),
         )
         report = cast(SpecialistReport, result.output)
         if (
-            report.role != role.value
+            report.role != role
             or engine.repository.workspace_status_fingerprint(workspace) != before
             or engine.repository.compute_patch(workspace).changed_paths
         ):
             raise _invalid()
         child = engine._persist_runtime_observation(
-            child, task.task_id, agent.agent_instance_id, role.value, result
+            child, task.task_id, agent.agent_instance_id, role, result
         )
         engine.artifacts.create_text(
             kind=ArtifactKind.SPECIALIST_REPORT,
             project_id=child.project_id,
             run_id=child.run_id,
             task_id=child.task_id,
-            producer=f"{child.runtime_name}-runtime:{role.value}",
+            producer=f"{configuration.runtime_name}-runtime:{role}",
             content=report.model_dump_json(indent=2),
             mime_type="application/json",
             reject_secret=True,
@@ -423,7 +437,7 @@ class GraphWorkflowExecution:
         engine.state.save_run(
             child.model_copy(update={"specialist_checkpoint": None}),
             "specialist.reported",
-            {"role": role.value},
+            {"role": role},
         )
 
     def context_artifact_ids(self, run: Run) -> list[str]:

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet · Local observer</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/dashboard.css">
+  <script src="/dashboard.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#detail">Skip to selected task</a>
+  <header class="topbar">
+    <div class="brand">Fleet <span class="tag">LOCAL OBSERVER</span></div>
+    <div class="connection"><span id="connection" role="status">Disconnected</span><button id="disconnect" hidden>Disconnect</button></div>
+  </header>
+  <section class="access" id="access" aria-labelledby="access-title">
+    <div><h1 id="access-title">Your fleet, in view.</h1><p>Observe this project's agents and delivery evidence. All changes stay in the terminal.</p></div>
+    <form id="connect-form">
+      <label for="token">Access token from <code>fleet dashboard</code></label>
+      <div class="input-row"><input id="token" type="password" autocomplete="off" spellcheck="false" required maxlength="128"><button class="primary" type="submit">Connect</button></div>
+      <p class="hint">Kept in this page's memory only. Closing the page forgets it.</p>
+    </form>
+  </section>
+  <p id="error" class="notice error" role="alert" hidden></p>
+  <main class="workspace" id="workspace" hidden>
+    <aside class="sidebar" aria-label="Project tasks">
+      <div class="section-heading"><div><span class="eyebrow">PROJECT</span><h1 id="project-name">Project</h1></div><button id="refresh">Refresh</button></div>
+      <p id="session-count" class="hint"></p>
+      <h2>Tasks</h2>
+      <div id="runs" class="run-list"></div>
+      <button id="older" hidden>Older tasks</button>
+      <p class="hint">Foreground sessions run independently. This view never starts or resumes work.</p>
+    </aside>
+    <section id="detail" class="detail" tabindex="-1" aria-label="Selected task">
+      <div id="empty" class="empty"><h2>No task selected</h2><p>Select a task to inspect its agents, events and evidence.</p></div>
+      <div id="task-detail" hidden>
+        <div class="task-heading"><div><span id="run-id" class="eyebrow mono"></span><h2 id="goal"></h2></div><span id="run-status" class="badge"></span></div>
+        <p id="task-meta" class="hint"></p>
+        <p id="approval" class="notice" hidden></p>
+        <div class="metrics"><div><span class="eyebrow">DELIVERY</span><strong id="delivery">No verdict yet</strong></div><div><span class="eyebrow">MODEL USAGE</span><strong id="usage">Not recorded</strong></div><div><span class="eyebrow">OBSERVATION</span><strong id="observed">Waiting</strong></div></div>
+        <section aria-labelledby="agents-title"><div class="section-heading"><h3 id="agents-title">Agents</h3><span id="agent-count" class="hint"></span></div><div id="agents" class="agent-grid"></div></section>
+        <section id="graph-section" hidden aria-labelledby="graph-title"><h3 id="graph-title">Child tasks</h3><ol id="graph" class="graph"></ol></section>
+        <div class="lower-grid">
+          <section aria-labelledby="evidence-title"><div class="section-heading"><h3 id="evidence-title">Delivery evidence</h3><span class="tag">READ ONLY</span></div><div id="evidence"></div><div id="artifacts" class="artifact-list"></div></section>
+          <section aria-labelledby="events-title"><div class="section-heading"><h3 id="events-title">Event timeline</h3><button id="replay">Replay from start</button></div><p id="event-note" class="hint"></p><ol id="events" class="events"></ol></section>
+        </div>
+        <section id="artifact-view" hidden aria-labelledby="artifact-title"><div class="section-heading"><h3 id="artifact-title">Artifact</h3><button id="close-artifact">Close artifact</button></div><p id="artifact-hash" class="mono hint"></p><pre id="artifact-content" tabindex="0"></pre></section>
+      </div>
+    </section>
+  </main>
+  <footer>Local-first · Read-only · Evidence, not promises <span>No keys, prompts or access tokens are intentionally published by this observer.</span></footer>
+</body>
+</html>
