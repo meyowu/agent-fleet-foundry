@@ -20,6 +20,7 @@ from rich.text import Text
 from agent_fleet import __version__
 from agent_fleet.bootstrap import build_container
 from agent_fleet.cli.chat import register_chat_command
+from agent_fleet.cli.dashboard import register_dashboard_command
 from agent_fleet.cli.evolution import register_evolution_commands
 from agent_fleet.cli.models import register_models_commands
 from agent_fleet.domain.errors import ErrorCode, FleetError
@@ -932,6 +933,8 @@ _launch_chat = register_chat_command(
     presenter=_present_with_warnings,
     error_presenter=_present_error,
 )
+
+register_dashboard_command(app)
 
 register_models_commands(
     app,

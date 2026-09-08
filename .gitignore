@@ -9,5 +9,7 @@ __pycache__/
 *.py[cod]
 .coverage
 htmlcov/
+output/playwright/
+.playwright-cli/
 dist/
 build/
