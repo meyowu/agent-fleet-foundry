@@ -4,7 +4,11 @@
 
 文档状态：本版本实现六项核心能力及本地 release-candidate 工具。全新 wheel/sdist、真实 Docker 练习、跨平台检查与 GitHub 交付的确切结果，见 [MVP acceptance ledger](MVP_ACCEPTANCE.md) 和 [README](../README.md#release-candidate-verification-2026-09-05)；不要把示例命令当成执行记录。CLI 的完整阶段标记保持6，因为 Phase7 的公开发布门槛还包括尚未执行的真实模型 canary 和 owner 许可证决定。当前没有公开包/镜像发布或已获授权的开源许可证。安装包附带本指南全文；跨文档相对链接请在同版本源码仓库中浏览。
 
+本次新增的 Session-first 功能见下一节；其交付进度与新的验收边界以 [Session-first living plan](../.agent/plans/2026-09-07-session-first-release.md) 和最终 README 为准。旧 MVP 账本不代表本次功能已经通过全部验收。
+
 ## 目录
+
+新增：[Session-first 使用](#session-first-使用本次版本新增)。原有分项教程继续保留：
 
 1. [产品是什么](#1-产品是什么)
 2. [安装与环境](#2-安装与环境)
@@ -22,6 +26,165 @@
 14. [常见问题](#14-常见问题)
 15. [验证与贡献](#15-验证与贡献)
 16. [实现边界与下一步](#16-实现边界与下一步)
+
+## Session-first 使用（本次版本新增）
+
+以下是当前实现的使用接口，不是测试执行记录。模型 ID、路径和 review code 都必须替换为你实际选择或看到的值。浏览器、安全、Docker 与安装包的精确验收结果见 README 和 living ExecPlan；不能由命令存在推断通过。
+
+### 1. 进入一个会话
+
+先完成下文的安装、独立状态目录与本地 runner 准备。在项目的真实交互终端中：
+
+```bash
+cd /absolute/path/to/repo
+fleet
+```
+
+已经初始化的项目会恢复最近的会话，之后输入目标和 `/` 命令即可，不需要反复输入 `fleet`。非交互式的裸 `fleet` 只显示帮助，不打开会话或自动初始化；脚本继续使用明确的子命令和 `--json`。
+
+未注册的 Git 仓库会进入有界的初始化引导。明确选择是否继续、runtime、必要的 provider/model 与凭证引用、**已经存在的本地 Docker 镜像**、trust mode 和允许修改的相对路径。Fake runtime 仅用于受支持的确定性练习；任意真实项目任务需要明确的 BYOK 模型配置。
+
+引导先展示完整生成文件补丁和权限预览，再要求输入它实际显示的 `initialize <code>`。只有此时才调用公开 Bootstrap 流程和真实 Docker Canary；不自动拉镜像、构建镜像或安装项目依赖。空白初始选择、EOF 或 `/exit` 停止引导。若 Canary 已经启动，再取消应检查其本地证据，不能把界面退出误认作从未发生任何操作。
+
+初始化引导没有私有 FakeSandbox 快捷入口。真正首次初始化仍必须满足第3节的隔离验证和清理条件。
+
+### 2. 先审计划，再执行，再审补丁
+
+默认裸入口和旧 one-shot 行为保持兼容。要让这个会话的新任务在 CoS 完成计划后、创建工作区或调度执行 Agent **之前**暂停，显式启动：
+
+```bash
+fleet chat . --review-plan
+```
+
+然后在同一会话内：
+
+```text
+修复 src/calculator 中的除零错误，保留正常除法行为并验证。
+/plan
+/plan approve
+/confirm <本次计划审查显示的-code>
+/resume
+```
+
+`/plan` 显示冻结的 TaskSpec、FleetPlan、内容哈希及 gate 状态。只有带 `--review-plan` 的任务具有真实的 `pre_execution_gate`；普通任务显示 `inspection_only`，不能把事后查看计划当成执行前审批。生成计划的 CoS 请求已经发生，可能产生模型费用；门禁暂停的是后续执行，不是首次模型调用。
+
+`/plan approve` 只准备审批，`/confirm` 只把精确检查点记为 approved，不授予命令权限，也不开始执行。`/resume` 原子地消费一次批准并执行原计划，不重跑 CoS。缺失、被篡改、过期或已消费的身份不能靠重复点击恢复执行资格。
+
+如果 Safe 权限模式又要求某项具体命令批准：
+
+```text
+/approve
+/approve --once
+/confirm <本次权限审查显示的-code>
+/resume
+```
+
+无 ID 的 `/approve` 先展示当前 pending scope；只有一个请求时，期限选择会生成精确确认码。并行任务有多个请求时列出选择，不猜测。也可以继续用兼容语法 `/approve <request-id> --once` 直接批准明确请求；它仍不会自动 resume。
+
+收到候选后：
+
+```text
+/diff
+/apply
+/confirm <本次代码审查显示的-code>
+/status
+/exit
+```
+
+`/diff` 展示完整候选 patch、哈希和证据；`/apply` 仅准备这份候选的精确审查。确认会重新检查项目、会话、Run、Artifact、目标仓库和组织代际。代码应用不自动提交或 push。使用 `/dismiss` 丢弃当前准备；确认码为进程内一次性能力，五分钟后、切换会话后或重启后需要重新审查。
+
+同一门禁也支持明确的 one-shot 接口：
+
+```text
+fleet run "修复明确的回归" --project /absolute/path/to/repo --review-plan --json
+fleet plan show <run-id> --json
+fleet plan approve <run-id> --expected-sha256 <checkpoint_sha256> --json
+fleet resume <run-id> --json
+```
+
+保存 `plan show` 输出中的 checkpoint hash，不要用 task/patch hash 代替。计划批准后的 `RUNNING` 若因崩溃失去 owner，不允许通过第二次 public resume 接管或重放；确认原 owner 停止后使用第10节的 exact-run recovery。等待计划审批的任务也会阻止组织版本发布。
+
+### 3. 给不同角色绑定不同模型
+
+模型 profiles 是用户状态中的显式配置，不由仓库 Prompt 发现或选择任意凭证。通过正常的安全环境配置方式准备所选引用的 key，以下仅传引用名称。示例假设三个 profile 和该项目的模型选择均尚未创建：
+
+```bash
+fleet models set planning --runtime pydantic-ai \
+  --provider-model 'openai:YOUR_PLANNING_MODEL' --credential-ref env:FLEET_PLANNING_KEY
+fleet models set coding --runtime pydantic-ai \
+  --provider-model 'openai:YOUR_CODING_MODEL' --credential-ref env:FLEET_CODING_KEY
+fleet models set reviewing --runtime pydantic-ai \
+  --provider-model 'openai:YOUR_REVIEW_MODEL' --credential-ref env:FLEET_REVIEW_KEY
+fleet models bind planning --default --path . --revision 0
+fleet models bind coding --role engineer --path . --revision 1
+fleet models bind reviewing --role verifier --path . --revision 2
+fleet models list --json
+fleet models selection . --json
+```
+
+`set`/`bind` 是显式配置操作，不进行模型推理。新任务会在 CoS 调用前预检整个有效角色集合，冻结 profile revision、每个角色的实际配置与 binding hash；暂停后改 profile 不会重绑当前 Run。未配置新 selection 的项目保留原注册 runtime；显式模型 profiles 可以为未来任务选择新的受支持 runtime/model/reference，不必重新 init，也不能改变已注册 sandbox。
+
+已有配置应先用 `fleet models show <name>` 或 `fleet models selection .` 查看当前 revision，再把该版本传给更新命令的 `--revision`；不要照抄上述首次创建用的数字。Profile 更新提交的是完整配置，未明确传入的选项使用 CLI 默认值。移除使用 `fleet models remove <name> --revision <当前版本>`；仍被当前项目选择引用时会拒绝，不删除历史 Run 的快照。
+
+模型 profile 管理当前是独立 CLI 子命令，不是会话内 `/models` 命令；可在使用相同 `AGENT_FLEET_HOME` 的另一终端操作，修改只影响未来任务。`fleet doctor` 检查原始项目注册，不代表所有 per-role profiles 已通过预检；有效模型组合在启动任务时完整预检。
+
+显式 role override 优先于已许可的仓库 `modelProfile` 偏好，然后才是已审阅 default。仓库只能请求用户已经明确 permit 的别名；未许可、缺失、不支持或被禁用的选择失败，不自动换模型或凭证。实际路由与累计预算可在 `/status` / `fleet status <run-id> --json` 中检查。不同模型本身不构成独立验证证明。
+
+### 4. 自定义职责模板，保留版本和权限边界
+
+内置 CoS/Engineer/Verifier/Researcher/Architect 模板继续可用。新增模板通过受审查的 `.fleet/agents/roles.yaml` 与其引用的指导文件加入组织，例如要求 CoS：
+
+> 提议 backend writer 和 security reviewer 两个职责模板。backend 基于 engineer，security 基于 verifier；都仅覆盖 src。补齐各自的指导文件，保留内置模板和权限上限。只生成 FleetPatch，不应用。
+
+目录结构的 schema 示例（应作为完整 FleetPatch 内容提议，不直接修改活动组织）：
+
+```yaml
+apiVersion: agentfleet.dev/v1alpha1
+kind: RoleCatalog
+roles:
+  backend:
+    baseRole: engineer
+    description: Backend changes within the reviewed scope
+    instructions: agents/backend.md
+    maxSteps: 8
+    allowedPaths: [src]
+  security:
+    baseRole: verifier
+    description: Independent review of the complete candidate
+    instructions: agents/security.md
+    maxSteps: 8
+    allowedPaths: [src]
+```
+
+指导文件必须随提议提供且引用完整；示例路径应换成真实项目范围。可选 `allowedTools`/`maxSteps`/`allowedPaths` 只能收紧相应执行种类、workflow 和用户的上限。自定义 ID 是实际权限 principal，不是绕过审查的昵称；Verifier 不能写入候选，没有任意新增 execution kind 或替换 CoS 的入口。
+
+如果本会话使用 `--review-plan`，组织提议的只读源任务也会暂停。先用 `/plan`、`/plan approve`、本次 `/confirm` 和 `/resume` 让源任务正常交付，再审查并发布 FleetPatch；等待计划门禁时不能发布组织版本。
+
+在会话中审查并发布：
+
+```text
+/fleet-patch list
+/fleet-patch show <proposal-id>
+/fleet-patch diff <proposal-id>
+/fleet-patch apply <proposal-id>
+/confirm <本次组织审查显示的-code>
+```
+
+提议明确发布后，CoS 可在未来任务的最小团队中选择这些职责实例，而非永久启动所有模板。若已有上节的 revision 3 模型选择，可显式绑定 `fleet models bind coding --role backend --path . --revision 3`；用查询获得后续实际 revision 再绑定其他角色。模板里的可选 `modelProfile` 仍需要用户显式许可，不能指定原始 key 或新 endpoint。
+
+`/fleet-patch rollback <当前头-proposal-id>` 同样先展示审查，再用新的 `/confirm` 执行。没有 ID 时仅选择当前 turn 的唯一提议或项目唯一提议；不唯一就列出 ID。回滚增加新代际，不恢复旧 Run 的执行或应用资格。
+
+### 5. 在另一终端观察 Dashboard
+
+保持相同的 `AGENT_FLEET_HOME`，在另一终端运行：
+
+```bash
+fleet dashboard /absolute/path/to/repo
+```
+
+它启动当前进程拥有的 loopback-only 观察服务，默认选择空闲端口，也可显式 `--port 8765`。打开终端打印的本地地址，把同一终端显示的本次进程 access token 粘贴到页面连接；不要把 token 放进 URL、共享日志或截图。保持该终端打开，Ctrl-C 停止服务并使本次访问凭证失效。
+
+Dashboard 读取同一份项目、会话、父/子 Run、Agent、模型绑定、预算、权限请求、事件和证据，不启动另一个 worker。页面是只读观察界面；提交任务、批准、resume、apply 和组织演进仍在 CLI 中完成。断开连接应按页面连接状态判断，不把旧画面当成仍在实时更新。它不是托管服务、远程多用户控制台或后台 daemon。
 
 ## 1. 产品是什么
 
@@ -202,7 +365,7 @@ Canary 使用确定性的假模型，不消耗真实模型调用；这里的 Doc
 
 ## 4. 配置 BYOK
 
-假模型只能执行受支持的确定性 fixture 场景，不能理解任意软件需求。真正使用 CoS 处理项目，需要在**最初注册该项目时**选择 `pydantic-ai`。
+假模型只能执行受支持的确定性 fixture 场景，不能理解任意软件需求。真正使用 CoS 处理项目，需要显式选择 `pydantic-ai`：可以在最初注册时指定，也可以通过上文的用户模型 profiles 为未来任务配置。
 
 当前支持显式 `openai:<model-id>` 或 `openai-chat:<model-id>`。前者选择 Responses 路径，后者选择 Chat Completions 路径。模型 ID 由操作者明确提供；示例中的占位符不能直接当成可用模型。其他 provider 前缀会被拒绝，不会自动选择替代供应商。
 
@@ -221,10 +384,10 @@ fleet init /absolute/path/to/new-project \
 重要边界：
 
 - `env:OPENAI_API_KEY` 是引用，不是 key 本身；引用保存在 Fleet 用户状态中，不写入 `.fleet/fleet.yaml`。
-- 只解析注册时明确选择的引用；环境中的其他 key 不会成为默认 fallback。
+- 只解析注册时或用户模型 profiles 中明确批准的引用；环境中的其他 key 不会成为默认 fallback。
 - Provider endpoint 固定在支持的官方边界；`OPENAI_BASE_URL`、代理等环境值不能把 key 重定向到任意端点。
 - 实际 key 不被挂载进容器，不允许模型读取，也不作为项目配置或 Artifact 留存。
-- 项目一旦已有组织版本头，不能通过再次 init 改 runtime、模型、credential reference 或 sandbox；移动 `.fleet/` 也不能绕过这个约束。需要不同受保护配置时，保留旧项目和状态，创建独立注册。
+- 项目一旦已有组织版本头，不能通过再次 init 改 runtime、模型、credential reference 或 sandbox；移动 `.fleet/` 也不能绕过这个约束。未来任务的模型选择使用显式用户 profiles；不同 sandbox 仍需要保留旧项目和状态并创建独立注册。
 - 在同一个已记录的环境引用下轮换 key 的**值**不需要修改组织配置。换成另一个引用名称是不同操作。
 
 本地离线 FunctionModel 测试验证接口、输出检查和控制流，不等于真实供应商可用性或模型质量验收。当前未提供/使用实际验收凭证。
@@ -250,8 +413,13 @@ fleet chat /absolute/path/to/repo
 | `/help` | 查看真实支持的交互命令。 |
 | `/status` | 查看当前 turn/run、计划、结果和暂停信息。 |
 | `/artifacts` | 查看当前任务的交付记录。 |
+| `/plan`、`/plan approve` | 检查冻结计划；只有显式开启的门禁可准备计划批准。 |
+| `/diff`、`/apply` | 查看完整候选与证据，或准备精确代码应用确认。 |
+| `/confirm <code>`、`/dismiss` | 消费或丢弃本次短期精确审查。 |
+| `/fleet-patch list\|show\|diff\|apply\|rollback [id]` | 检查组织提议；应用和回滚还需确认。 |
 | `/permissions` 或 `/permissions <id>` | 列出或解释当前上下文的权限。 |
 | `/approve <request-id> --once` | 批准这一次精确操作；其他期限见权限章节。 |
+| `/approve`、`/approve --once` | 先显示 pending scope；唯一请求的无 ID 期限选择还需精确确认。 |
 | `/deny <request-id>` | 拒绝当前请求。 |
 | `/resume` | 在批准后恢复当前任务。批准本身不会偷偷恢复。 |
 | `/cancel` | 取消当前任务并等待受控清理。 |
@@ -275,7 +443,7 @@ fleet chat /absolute/path/to/repo \
 fleet run 'Fix the bounded backend validation bug.' --project /absolute/path/to/repo --json
 ```
 
-运行时默认使用已经审查的注册配置；不能靠 `--runtime` 或 `--sandbox` 临时切换执行边界。
+运行时默认使用显式用户模型 selection，未设置则保留已经审查的注册配置；不能靠 `--runtime` 或 `--sandbox` 临时切换执行边界。
 
 ## 6. Adaptive Fleet 如何工作
 
@@ -458,6 +626,7 @@ fleet fleet-patch rollback <current-applied-proposal-id> --json
 
 | 当前情况 | 正常操作 |
 | --- | --- |
+| `PAUSED_FOR_PLAN` | 查看精确计划并批准，再显式 resume；不继续时 cancel，批准不等于命令授权。 |
 | `PAUSED_FOR_APPROVAL` | 检查 request，approve/deny；批准后 resume，不继续时 cancel。 |
 | `WAITING_FOR_CHILDREN` | 检查父 Run 的子请求；逐项批准后 resume 父 Run。 |
 | 正在本进程执行，用户想停止 | `fleet cancel <run-id>` 或 chat `/cancel`，等待受控清理。 |
@@ -534,7 +703,7 @@ API key 值不应被持久化；显式引用会保留。不要公开 key、完�
 
 ### 升级与回退
 
-迁移是版本化的前向升级。升级前保留一致备份，旧二进制不应读取新 schema。Phase 6 引入 migration 8，保留旧 Run/Task/对话的 wire identity，并增加独立 organization journal/admission。
+迁移是版本化的前向升级。升级前保留一致备份，旧二进制不应读取新 schema。Phase 6 引入 migration 8 的 organization journal/admission；Session-first 增加 migration 9 的用户模型 profiles/bindings 与 migration 10 的持久计划决策。旧 Run 的缺省新字段不进入旧 canonical payload；这不意味着旧二进制可以写新数据库。
 
 FleetPatch rollback 是组织配置回滚，**不是数据库降级**。回退程序必须遵循发布说明、匹配的备份与资源处置记录，不能把旧程序直接放回去继续写新数据库。
 

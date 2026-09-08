@@ -500,6 +500,17 @@ uv run pytest -q -m live_provider tests/live/test_provider_smoke.py
 
 Also record the complete real-provider+Docker user journey required by U3/U4, using a disposable fixture and the normal CLI path. If the repaired smoke covers only a fake sandbox, it proves provider integration only. The real-Docker combined journey must independently validate patch behavior and canary/report/evidence/cleanup bindings. Record provider/model metadata and reported usage without storing credentials or unredacted prompts. Live model quality, Docker enforcement and packaging are separate claims.
 
+## Session-first extension — 2026-09-07
+
+The confirmed Session/per-role-model/custom-role/local-dashboard extension has
+its own [current acceptance ledger](SESSION_FIRST_ACCEPTANCE.md),
+[living ExecPlan](../.agent/plans/2026-09-07-session-first-release.md) and exact
+disjoint integration selections. Frozen default matrix:2283 passed,19 explicit
+optional skips; separately enabled Docker15 passed; standalone adversarial736
+passed. Package installation and GitHub delivery have their own receipts in that
+ledger. Historical Phase6/7 CI or the package's0.1.0 label does not accept this
+extension; L1/L2 and unperformed platform/provider checks remain separate.
+
 ## External gates and genuine post-MVP deferrals
 
 - **L1 — owner license: unproven.** The active plan records no supplied license choice. Selecting a license or publishing a package is outside the current implementation authorization. Complete independent implementation and release artifacts first; do not label the public OSS release ready until the owner's exact license decision is recorded.

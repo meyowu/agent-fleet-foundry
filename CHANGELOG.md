@@ -2,6 +2,22 @@
 
 ## 0.1.0 — unreleased local-first release candidate
 
+Session-first additions (2026-09-07; acceptance tracked in the living release plan):
+
+- Bare interactive `fleet` entry and public initialization wizard; exact in-session
+  patch/FleetPatch review, one-use confirmation and no-ID approval selection.
+- Opt-in durable execution-plan review with non-replayable one-winner resume,
+  retained cancellation history and organization publication fences.
+- User-owned versioned per-role model profiles, immutable run bindings, actual
+  SDK request/model/credential routing and cumulative accounting.
+- Bounded operational custom role templates with exact permission principals,
+  scoped graph/specialist/repair/verifier execution and reviewed evolution.
+- Authenticated, foreground, loopback-only read-only Dashboard with packaged
+  assets, root/child/agent state, evidence, bounded SSE replay and stale indicators.
+- Forward-only migrations9–10 and old canonical record compatibility.
+
+Existing release-candidate foundations:
+
 - Repository-aware static profiling, bounded command discovery, ProjectKnowledge,
   reviewed FleetSpec and isolated disposable bootstrap canary with evidence.
 - Adaptive CoS direct/single/pair/parallel/specialist strategies, ephemeral role

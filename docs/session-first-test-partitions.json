@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "reason": "Exhaustive disjoint integration partitions balanced from the retained first full integration JUnit. File order matches the executed pytest commands; these are not additional tests.",
+  "source_test_scripts_sha256": "de7ab84636c185e543dfd76b84cc9e97af64aa9ee9ef7ec63f12d3348f4b3135",
+  "partitions": [
+    {
+      "id": "final-integration-1",
+      "pytest_paths": [
+        "tests/integration/test_workflow.py",
+        "tests/integration/test_adaptive_graph_safety.py",
+        "tests/integration/test_fleet_patch_recovery.py",
+        "tests/integration/test_model_profile_workflow.py",
+        "tests/integration/test_verifier_approval_resume.py",
+        "tests/integration/test_criterion_assembly.py",
+        "tests/integration/test_conversations.py",
+        "tests/integration/test_task_spec_binding.py",
+        "tests/integration/test_runtime_budget_workflow.py",
+        "tests/integration/test_execution_recovery.py",
+        "tests/integration/test_security_gateway.py",
+        "tests/integration/test_state_scale.py",
+        "tests/integration/test_pydantic_ai_workflow.py"
+      ]
+    },
+    {
+      "id": "final-integration-2",
+      "pytest_paths": [
+        "tests/integration/test_graph_delivery_audit.py",
+        "tests/integration/test_conversation_safety.py",
+        "tests/integration/test_session_plan_gate.py",
+        "tests/integration/test_graph_scheduling.py",
+        "tests/integration/test_approval_recovery.py",
+        "tests/integration/test_dashboard.py",
+        "tests/integration/test_cli.py",
+        "tests/integration/test_plan_review_service.py",
+        "tests/integration/test_fleet_patch_interfaces.py",
+        "tests/integration/test_fleet_patch_proposals.py",
+        "tests/integration/test_bootstrap_report.py",
+        "tests/integration/test_session_onboarding.py",
+        "tests/integration/test_verifier_verdict_semantics.py",
+        "tests/integration/test_worktree_preparation.py",
+        "tests/integration/test_distribution.py"
+      ]
+    },
+    {
+      "id": "final-integration-3",
+      "pytest_paths": [
+        "tests/integration/test_session_review.py",
+        "tests/integration/test_custom_role_workflow.py",
+        "tests/integration/test_persistent_permissions.py",
+        "tests/integration/test_adaptive_workflow.py",
+        "tests/integration/test_config_snapshot_binding.py",
+        "tests/integration/test_workflow_role_bounds.py",
+        "tests/integration/test_canonical_new_files.py",
+        "tests/integration/test_pydantic_ai_approvals.py",
+        "tests/integration/test_verification_skill_workflow.py",
+        "tests/integration/test_release_upgrades.py",
+        "tests/integration/test_permission_cli.py",
+        "tests/integration/test_gateway_concurrency.py",
+        "tests/integration/test_repository_fsmonitor.py",
+        "tests/integration/test_verifier_mutation_evidence.py",
+        "tests/integration/test_model_profile_service.py"
+      ]
+    }
+  ]
+}

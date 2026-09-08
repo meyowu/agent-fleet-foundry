@@ -4,6 +4,24 @@
 
 Permit useful autonomous software work inside a narrow, enforced task boundary while preventing a model, malicious repository, compromised dependency, or buggy adapter from silently expanding authority over the host, secrets, external services, or protected policy.
 
+### Local observer boundary
+
+The optional Dashboard is a read-only loopback adapter, not a second execution or
+approval plane. Every private route requires a fresh terminal-delivered bearer
+token, exact Host and same-origin browser context. There are no write routes,
+cookies, CORS, remote assets or browser-persisted credentials. Provider keys,
+credential references, prompts and dispatch claims are excluded from projections;
+repository text is rendered as text under restrictive CSP. A bounded query-only
+reader cannot initialize/migrate state. Per-run cursors and independently checked
+evidence are observations, not a global atomic progress or completion assertion.
+
+Absolute header deadlines, pre-parser byte ceilings, bounded streams/handlers and
+owned-socket shutdown prevent slow input from indefinitely retaining the observer.
+A receive watchdog marks silent streams stale. Closing this observer revokes its
+token, not another session's worker ownership. This is not protection against a
+hostile same-user process or browser extension. See [ADR0008](adr/0008-local-read-only-observer.md)
+and the [bounded HTTP contract](CONFIG_AND_SCHEMAS.md#13-local-dashboard-observation-contract).
+
 ### Persistent conversation invariants
 
 Conversation identity is coordination context, never permission. Atomic registration binds the exact root Run, project/repository, goal/context, config and initial budget before a model request. A duplicate key cannot acquire a second owner or reset usage. The shared WorkflowEngine enforces claims for public `resume` as well as chat, including graph children through their exact parent. Unknown owners never expire into replay authority, and a paused display state alone cannot release an uncertain claim. Explicit owner-stopped recovery fences without replay and requires exact root/descendant cleanup before another turn is admitted.
@@ -564,6 +582,24 @@ When MCP support is added:
 Approval-pause recovery preserves both Engineer and Verifier identity. Their checkpoints bind agent/workspace/sandbox/iteration; Verifier additionally binds patch hash and baseline fingerprint, with exact patch-byte validation on resume and final mutation detection. Checkpoints clear after the role completes. Logical sandbox rehydration is permitted only for known active parent leases with matching Run/workspace/provider/image/daemon bindings and successful inspection; it never recreates an interrupted execution. Outstanding execution leases require recovery. A logical retry preserves the original reviewed reason while all execution-bearing fields retain the canonical intent hash. Phase 5 durably preserves reported usage, outstanding/unknown requests and aggregate budgets across these pauses; unknown dispatches are not replayable or refunded. General raw provider-history restoration remains unimplemented.
 
 Legacy once-only Engineer pauses without a checkpoint can restore only their exact original persisted agent after validated run/task/role lookup. Compatibility never transfers a grant to a new principal or widens its duration.
+
+Session review confirmation is an additional human-control boundary, not a new
+permission source. Tickets expire, are consumed once, and pin the exact action,
+conversation revision and patch/proposal/request identity. Confirmation must
+revalidate inside the existing application guard. Changed selection, concurrent
+turns, stale organization generations and repeated/failed confirmations require
+new review. Tool approval does not automatically resume execution.
+
+For the session-first role/model extension (acceptance tracked in its ExecPlan),
+custom role IDs remain exact principals in all user rules and grants. Their
+trusted execution kind selects only a supported existing ceiling. Template tools,
+steps and paths may narrow the base, never extend it; repository requests do not
+grant access. Inherited base permission requests do not inherit user grants.
+The Broker verifies the actual persisted custom agent against its exact reviewed
+configuration. Model bindings are user-owned and pinned for the entire root and
+descendants; missing required bindings fail closed, never fall back to a legacy
+or ambient key. Inspection registers only relevant explicitly stored references
+for redaction and never exposes references/values in safe projections.
 
 ## 15. Idempotency and side effects
 
