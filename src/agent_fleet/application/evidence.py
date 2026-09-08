@@ -21,8 +21,9 @@ from agent_fleet.domain.evidence import (
     ResourceCleanupReceipt,
     assess_criterion_results,
 )
-from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy
+from agent_fleet.domain.fleet_plan import FleetPlan, FleetStrategy, validate_fleet_plan
 from agent_fleet.domain.models import (
+    AgentRole,
     ArtifactKind,
     ArtifactMetadata,
     CommandSpec,
@@ -33,6 +34,7 @@ from agent_fleet.domain.models import (
     VerifierVerdict,
 )
 from agent_fleet.domain.paths import path_is_within
+from agent_fleet.domain.role_templates import validate_role_plan
 from agent_fleet.domain.security import canonical_json_hash, sha256_bytes
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
@@ -118,6 +120,29 @@ class EvidenceAssembler:
             raise _integrity_error("FleetPlan artifact does not match its schema.") from error
         if plan.run_id != run.run_id or plan.task_id != task.task_id:
             raise _integrity_error("FleetPlan identity does not match the current run and task.")
+        validate_fleet_plan(plan, task)
+        verifier_role = next(
+            (node.role_id for node in plan.nodes if node.independent_verifier), "verifier"
+        )
+        if (
+            any(node.execution_kind is not None for node in plan.nodes)
+            or plan.repair_role_id is not None
+        ):
+            spec, rebuilt = self.config.snapshot_from_files(
+                {item.path: item.content for item in config_snapshot.files}
+            )
+            if rebuilt != config_snapshot:
+                raise _integrity_error("Role configuration does not match its snapshot closure.")
+            validate_role_plan(plan, self.config.role_templates(spec, config_snapshot))
+        if run.verifier_agent_instance_id is not None and verifier_role != "verifier":
+            verifier_agent = self.state.get_agent_instance(run.verifier_agent_instance_id)
+            if (
+                verifier_agent.role != verifier_role
+                or verifier_agent.effective_kind is not AgentRole.VERIFIER
+                or verifier_agent.run_id != run.run_id
+                or verifier_agent.task_id != task.task_id
+            ):
+                raise _integrity_error("The verifier principal does not match its reviewed plan.")
 
         cleanup_complete = False
         if run.cleanup_receipt_artifact_id is not None:
@@ -336,6 +361,7 @@ class EvidenceAssembler:
                 run_id=run.run_id,
                 task_id=task.task_id,
                 verifier_agent_instance_id=run.verifier_agent_instance_id,
+                verifier_role=verifier_role,
                 base_revision=run.base_revision,
                 config_snapshot_sha256=task.config_snapshot_hash,
                 patch_sha256=run.patch_sha256,
@@ -394,6 +420,7 @@ class EvidenceAssembler:
             changed_paths=changed_paths,
             command_evidence=command_evidence,
             verifier_agent_instance_id=run.verifier_agent_instance_id,
+            verifier_role=verifier_role if verifier_role != "verifier" else None,
             verifier_verdict_artifact_id=run.verifier_verdict_artifact_id,
             verifier_evidence_artifact_ids=verifier_evidence_artifact_ids,
             verifier_workspace_mutated=run.verifier_workspace_mutated,

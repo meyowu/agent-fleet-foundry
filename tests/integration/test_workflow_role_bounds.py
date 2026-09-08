@@ -165,7 +165,7 @@ async def test_missing_actual_delegate_fails_before_workers_or_workspaces(
         await harness.start()
 
     assert captured.value.code is ErrorCode.COMMAND_DENIED
-    assert "delegation ceiling" in captured.value.message
+    assert "reviewed template or delegation scope" in captured.value.message
     assert [request.role for request in runtime.requests] == [AgentRole.COS]
     run_id = str(captured.value.details["run_id"])
     assert harness.container.state.get_run(run_id).status is RunStatus.FAILED

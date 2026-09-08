@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
-from pydantic import JsonValue, ValidationError
+from pydantic import Field, JsonValue, ValidationError
 
 from agent_fleet.application.approvals import ApprovalService
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.bootstrap import BootstrapService
 from agent_fleet.application.conversation_results import bounded_summary
 from agent_fleet.application.inspection import InspectionService
+from agent_fleet.application.model_profiles import ModelProfileService
 from agent_fleet.application.permission_policy import PermissionPolicyService
 from agent_fleet.application.resources import CancellationService
+from agent_fleet.application.session_review import SessionReviewService
 from agent_fleet.application.workflow import WorkflowEngine
 from agent_fleet.domain.conversation import (
     Conversation,
@@ -32,6 +37,7 @@ from agent_fleet.domain.models import (
     ApprovalChoice,
     ApprovalStatus,
     FakeScenario,
+    FrozenStrictModel,
     Project,
     Run,
     RunStatus,
@@ -39,6 +45,8 @@ from agent_fleet.domain.models import (
     jsonable,
 )
 from agent_fleet.domain.security import Redactor, sha256_bytes
+from agent_fleet.domain.session_review import SessionSelection
+from agent_fleet.domain.trust import TrustMode
 from agent_fleet.ports.conversation import ConversationStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
@@ -57,6 +65,27 @@ class ChatExecutionOptions:
     credential_ref: str | None = None
     fake_scenario: FakeScenario | None = None
     allow_unsafe_local: bool = False
+    review_plan: bool = False
+
+
+class SessionBootstrapOptions(FrozenStrictModel):
+    runtime_name: Literal["fake", "pydantic-ai"] = "fake"
+    provider_model: str | None = Field(default=None, max_length=256)
+    credential_ref: str | None = Field(default=None, max_length=256)
+    docker_image: str = Field(min_length=1, max_length=512)
+    trust_mode: TrustMode = TrustMode.SAFE
+    allowed_paths: tuple[str, ...] = Field(default=(".",), min_length=1, max_length=32)
+
+
+@dataclass(frozen=True)
+class _BootstrapReview:
+    code: str
+    root: Path
+    options: SessionBootstrapOptions
+    proposal_sha256: str
+    trust_revision: int
+    issued_at: datetime
+    expires_at: datetime
 
 
 class ConversationService:
@@ -74,6 +103,9 @@ class ConversationService:
         ids: IdGenerator,
         redactor: Redactor,
         secrets: SecretStore,
+        reviews: SessionReviewService,
+        bootstrap: BootstrapService,
+        model_profiles: ModelProfileService | None = None,
     ) -> None:
         self.store = store
         self.state = state
@@ -87,6 +119,10 @@ class ConversationService:
         self.ids = ids
         self.redactor = redactor
         self.secrets = secrets
+        self.reviews = reviews
+        self.bootstrap = bootstrap
+        self.model_profiles = model_profiles
+        self._bootstrap_review: _BootstrapReview | None = None
         self._selected: dict[str, str] = {}
         self._executions: dict[str, asyncio.Task[Run]] = {}
         self._cancellations: dict[str, asyncio.Task[None]] = {}
@@ -124,6 +160,9 @@ class ConversationService:
             )
         if conversation.repository_identity != project.identity_hash:
             raise _invalid("The conversation does not belong to this repository identity.")
+        # Changing the foreground selection requires another review even when
+        # later returning to the same conversation (selection ABA).
+        self.reviews.invalidate_selection()
         self._selected[conversation.conversation_id] = project.project_id
         return self.status(conversation.conversation_id)
 
@@ -141,15 +180,20 @@ class ConversationService:
     def _register_redaction(self, project: Project) -> None:
         # Read only the previously reviewed exact reference; do not discover
         # ambient provider keys or make a provider/model request for inspection.
-        if project.credential_ref is None:
+        if self.model_profiles is not None and self.model_profiles.prepare_project(project):
             return
-        inspection = self.secrets.inspect(project.credential_ref)
+        self._register_credential(project.credential_ref)
+
+    def _register_credential(self, reference: str | None) -> None:
+        if reference is None:
+            return
+        inspection = self.secrets.inspect(reference)
         if inspection.status is SecretStatus.MISSING:
             return
         failed = inspection.status is SecretStatus.INVALID
         if not failed:
             try:
-                self.secrets.resolve(project.credential_ref)
+                self.secrets.resolve(reference)
             except SecretStoreError:
                 failed = True
         if failed:
@@ -160,12 +204,104 @@ class ConversationService:
             ) from None
 
     def _turn(self, conversation: Conversation) -> ConversationTurn | None:
+        turn: ConversationTurn | None
         if conversation.active_turn_id is not None:
-            return self.store.get_turn(conversation.project_id, conversation.active_turn_id)
-        turns = self.store.list_turns(
-            conversation.project_id, conversation.conversation_id, limit=1
+            turn = self.store.get_turn(conversation.project_id, conversation.active_turn_id)
+        else:
+            turns = self.store.list_turns(
+                conversation.project_id, conversation.conversation_id, limit=1
+            )
+            turn = turns[0] if turns else None
+        if turn is not None:
+            self._register_run_redaction(turn.binding.run_id)
+            # Read persisted summaries again after registering pinned keys.
+            turn = self.store.get_turn(conversation.project_id, turn.binding.turn_id)
+        return turn
+
+    def _register_run_redaction(self, run_id: str) -> None:
+        run = self.state.get_run(run_id)
+        if self.model_profiles is not None and run.model_bindings_sha256 is not None:
+            self.model_profiles.inspect_bindings(
+                self.state.get_project(run.project_id),
+                root_run_id=run.run_id,
+                expected_sha256=run.model_bindings_sha256,
+            )
+        else:
+            self._register_credential(run.credential_ref)
+
+    def preview_initialization(
+        self, project_path: Path, *, options: SessionBootstrapOptions
+    ) -> ConversationView:
+        """Prepare exactly one foreground public bootstrap, never a fake registration."""
+        self._bootstrap_review = None
+        info = self.repository.inspect(project_path)
+        if self.state.get_project_by_root(info.root) is not None:
+            raise _invalid(
+                "This repository is already registered; initialization is not an update path."
+            )
+        policy = self.permission_service.review_initialization(
+            Path(info.root), mode=options.trust_mode, allowed_paths=options.allowed_paths
         )
-        return turns[0] if turns else None
+        preview = self.bootstrap.projects.preview(
+            Path(info.root),
+            runtime_name=options.runtime_name,
+            provider_model=options.provider_model,
+            credential_ref=options.credential_ref,
+            sandbox_name="docker",
+            docker_image=options.docker_image,
+        )
+        proposal_hash = preview.get("proposal_sha256")
+        revision = policy.get("policy_revision")
+        if not isinstance(proposal_hash, str) or type(revision) is not int:
+            raise _invalid("Public bootstrap returned an invalid review identity.")
+        code = secrets.token_hex(8)
+        issued_at = self.artifact_service.clock.now()
+        expires_at = issued_at + timedelta(minutes=5)
+        result = cast(
+            ConversationView,
+            jsonable(
+                {
+                    **preview,
+                    "proposed_user_policy": policy,
+                    "confirmation_code": code,
+                    "expires_at": expires_at.isoformat(),
+                    "instruction": (
+                        f"Enter initialize {code} to run the disposable Docker canary and publish "
+                        "only after its patch, verification and cleanup evidence pass."
+                    ),
+                }
+            ),
+        )
+        self._reject_secret(result)
+        self._bootstrap_review = _BootstrapReview(
+            code, Path(info.root), options, proposal_hash, revision, issued_at, expires_at
+        )
+        return result
+
+    async def initialize(self, *, code: str) -> ConversationView:
+        reviewed, self._bootstrap_review = self._bootstrap_review, None
+        if (
+            reviewed is None
+            or reviewed.code != code
+            or not reviewed.issued_at <= self.artifact_service.clock.now() < reviewed.expires_at
+        ):
+            raise _invalid("Initialization review is missing, expired or no longer matches.")
+        options = reviewed.options
+        result = await self.bootstrap.initialize(
+            reviewed.root,
+            runtime_name=options.runtime_name,
+            provider_model=options.provider_model,
+            credential_ref=options.credential_ref,
+            sandbox_name="docker",
+            docker_image=options.docker_image,
+            expected_proposal_hash=reviewed.proposal_sha256,
+            trust_mode=options.trust_mode,
+            allowed_paths=options.allowed_paths,
+            expected_trust_revision=reviewed.trust_revision,
+        )
+        view = cast(ConversationView, jsonable(result))
+        self._reject_secret(view)
+        return view
 
     def status(self, conversation_id: str) -> ConversationView:
         conversation = self._conversation(conversation_id)
@@ -173,6 +309,8 @@ class ConversationService:
 
     def _view(self, conversation: Conversation, turn: ConversationTurn | None) -> ConversationView:
         conversation_id = conversation.conversation_id
+        if turn is not None:
+            self._register_run_redaction(turn.binding.run_id)
         run_data = self.inspection.status(turn.binding.run_id) if turn is not None else None
         warnings: list[str] = []
         if run_data is not None:
@@ -181,7 +319,14 @@ class ConversationService:
             elif run_data["sandbox"] == "fake":
                 warnings.append("FakeSandbox simulates commands and cannot prove completion.")
             if run_data["status"] == "ready_for_review":
-                warnings.append("Candidate patch is not applied; review it with fleet patch show.")
+                warnings.append(
+                    "Candidate patch is not applied; use /diff and /apply to review it."
+                )
+            elif run_data["status"] == "paused_for_plan":
+                warnings.append(
+                    "Paused before execution. Use /plan to inspect, /plan approve and /confirm "
+                    "to approve only, then /resume to continue the exact frozen plan."
+                )
         retained_owner = bool(
             turn is not None
             and turn.active_claim_id is not None
@@ -269,6 +414,7 @@ class ConversationService:
             if (
                 sha256_bytes(redacted.encode("utf-8")) != prior.binding.user_goal_sha256
                 or submission.user_summary != prior.user_summary
+                or options.review_plan != historical.plan_review_required
                 or any(
                     requested is not None and requested != recorded
                     for requested, recorded in (
@@ -297,6 +443,7 @@ class ConversationService:
                 fake_scenario=options.fake_scenario,
                 allow_unsafe_local=options.allow_unsafe_local,
                 conversation_submission=submission,
+                review_plan=options.review_plan,
             )
         )
         result = await self._await_execution(conversation_id, execution)
@@ -314,6 +461,7 @@ class ConversationService:
         )
         entries: list[ConversationContextEntry] = []
         for turn in sorted(turns, key=lambda item: item.binding.sequence, reverse=True):
+            self._register_run_redaction(turn.binding.run_id)
             if turn.status in {
                 ConversationTurnStatus.RUNNING,
                 ConversationTurnStatus.WAITING,
@@ -435,6 +583,49 @@ class ConversationService:
             ),
         }
 
+    def _review_selection(self, conversation_id: str) -> SessionSelection:
+        conversation = self._conversation(conversation_id)
+        turn = self._turn(conversation)
+        return SessionSelection(
+            project_id=conversation.project_id,
+            conversation_id=conversation_id,
+            conversation_revision=conversation.revision,
+            run_id=turn.binding.run_id if turn is not None else None,
+        )
+
+    def review(
+        self, conversation_id: str, *, action: str, arguments: tuple[str, ...] = ()
+    ) -> dict[str, JsonValue]:
+        """Human control entry only; no model text is parsed as a review command."""
+        selection = self._review_selection(conversation_id)
+        if action == "plan" and not arguments:
+            view = self.reviews.plan(selection)
+        elif action == "plan" and arguments == ("approve",):
+            view = self.reviews.plan(selection, prepare=True)
+        elif action in {"diff", "apply"} and not arguments:
+            view = self.reviews.diff(selection, prepare=action == "apply")
+        elif action == "fleet-patch" and 1 <= len(arguments) <= 2:
+            view = self.reviews.fleet_patch(
+                selection,
+                action=arguments[0],
+                proposal_id=arguments[1] if len(arguments) == 2 else None,
+            )
+        elif action == "confirm" and len(arguments) == 1:
+            view = self.reviews.confirm(
+                selection,
+                arguments[0],
+                current_selection=lambda: self._review_selection(conversation_id),
+                approve_request=lambda request_id, choice: self.approve(
+                    conversation_id, request_id, choice=choice
+                ),
+            )
+        elif action == "dismiss" and not arguments:
+            view = self.reviews.dismiss(selection)
+        else:
+            raise _invalid("Invalid session review command; use /help for its exact syntax.")
+        self._reject_secret(view)
+        return view
+
     def permissions(
         self, conversation_id: str, *, identifier: str | None = None
     ) -> dict[str, JsonValue]:
@@ -465,9 +656,50 @@ class ConversationService:
             )
 
     def approve(
-        self, conversation_id: str, request_id: str, *, choice: ApprovalChoice
+        self,
+        conversation_id: str,
+        request_id: str | None = None,
+        *,
+        choice: ApprovalChoice | None = None,
     ) -> dict[str, JsonValue]:
+        if request_id is None:
+            selection = self._review_selection(conversation_id)
+            run_ids = [] if selection.run_id is None else [selection.run_id]
+            if selection.run_id is not None:
+                run_ids.extend(
+                    item.child_run_id for item in self.workflow.graphs.descendants(selection.run_id)
+                )
+            requests = [
+                self.state.get_approval(run.pending_approval_id)
+                for run_id in run_ids
+                if (run := self.state.get_run(run_id)).pending_approval_id is not None
+            ]
+            pending = [request for request in requests if request.status is ApprovalStatus.PENDING]
+            if len(pending) != 1:
+                return {
+                    "selection_required": len(pending) > 1,
+                    "pending_requests": [request.model_dump(mode="json") for request in pending],
+                    "notice": (
+                        "No sole pending request was selected. "
+                        "Use an exact ID when several are waiting."
+                    ),
+                }
+            request_id = pending[0].request_id
+            self._require_request(conversation_id, request_id)
+            if choice is None:
+                return {
+                    **self.permissions(conversation_id, identifier=request_id),
+                    "instruction": (
+                        "Choose /approve --once, --run, or --always --scope project; "
+                        "then confirm the exact review code."
+                    ),
+                }
+            view = self.reviews.prepare_approval(selection, request_id, choice)
+            self._reject_secret(view)
+            return view
         self._require_request(conversation_id, request_id)
+        if choice is None:
+            return self.permissions(conversation_id, identifier=request_id)
         return self.approvals.approve(request_id, choice=choice).model_dump(mode="json")
 
     def deny(

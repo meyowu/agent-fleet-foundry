@@ -301,7 +301,7 @@ def _legacy_credential_state(harness: FleetHarness) -> Path:
     """Build an isolated pre8 database fixture; never remove a live project's fence.
 
     The ordinary fake workflow supplies valid historical Run/artifact/event rows.
-    A separate test-owned copy omits only migration8 additions, reproducing the
+    A separate test-owned copy omits migration8 and later additions, reproducing the
     old credential-rotation case without bypassing headed production writes.
     The malformed-config rejection must happen before any artifact content read.
     """
@@ -316,6 +316,14 @@ def _legacy_credential_state(harness: FleetHarness) -> Path:
         original.backup(legacy)
         legacy.execute("PRAGMA foreign_keys=OFF")
         for table in (
+            "plan_review_heads",
+            "plan_review_versions",
+            "run_model_bindings",
+            "project_model_selection_heads",
+            "project_model_selection_versions",
+            "model_profile_heads",
+            "model_profile_versions",
+            "model_configuration_audit",
             "organization_run_admissions",
             "organization_operations",
             "organization_proposals",
@@ -325,7 +333,7 @@ def _legacy_credential_state(harness: FleetHarness) -> Path:
             "organization_events",
         ):
             legacy.execute(f"DROP TABLE {table}")
-        legacy.execute("DELETE FROM schema_migrations WHERE version=8")
+        legacy.execute("DELETE FROM schema_migrations WHERE version>=8")
         assert legacy.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 7
     return state_root
 

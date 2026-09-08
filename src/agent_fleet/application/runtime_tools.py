@@ -163,6 +163,7 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         workspace: Workspace,
         sandbox_handle: SandboxHandle,
         max_calls: int,
+        allowed_tools: tuple[str, ...] | None = None,
     ) -> None:
         if max_calls < 0:
             raise ValueError("runtime tool budget cannot be negative")
@@ -174,16 +175,34 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         self._workspace = workspace
         self._sandbox_handle = sandbox_handle
         self._max_calls = max_calls
+        self._allowed_tools = allowed_tools
         self._records: list[RuntimeToolExecutionRecord] = []
         self._completed: dict[str, tuple[RuntimeToolCall, RuntimeToolResult]] = {}
 
     @property
     def definitions(self) -> tuple[RuntimeToolDefinition, ...]:
+        definitions = self._kind_definitions()
+        if self._allowed_tools is None:
+            return definitions
+        actions = {
+            "repo_list_files": "repo.list_files",
+            "repo_read_file": "repo.read_file",
+            "repo_search_text": "repo.search_text",
+            "workspace_get_diff": "workspace.get_diff",
+            "workspace_write_file": "workspace.write_file",
+            "workspace_apply_edit": "workspace.apply_edit",
+            "workspace_delete_file": "workspace.delete_path",
+            "run_verification": "command.run",
+            "record_approval_probe": "fixture.record_side_effect",
+        }
+        return tuple(item for item in definitions if actions[item.name] in self._allowed_tools)
+
+    def _kind_definitions(self) -> tuple[RuntimeToolDefinition, ...]:
         read_tools = [_LIST_FILES, _READ_FILE, _SEARCH_TEXT, _GET_DIFF]
-        if self._agent.role in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}:
+        if self._agent.effective_kind in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}:
             return tuple(read_tools)
         run_verification = self._run_verification_definition()
-        if self._agent.role == AgentRole.ENGINEER:
+        if self._agent.effective_kind == AgentRole.ENGINEER:
             definitions = [
                 *read_tools,
                 _WRITE_FILE,
@@ -194,7 +213,7 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
             if self._run.fake_scenario is FakeScenario.APPROVAL:
                 definitions.append(_APPROVAL_PROBE)
             return tuple(definitions)
-        if self._agent.role == AgentRole.VERIFIER:
+        if self._agent.effective_kind == AgentRole.VERIFIER:
             return (*read_tools, run_verification)
         return ()
 
@@ -203,9 +222,13 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         return tuple(self._records)
 
     def validate(self, call: RuntimeToolCall) -> None:
-        if self._agent.role in {AgentRole.RESEARCHER, AgentRole.ARCHITECT} and call.name not in {
-            definition.name for definition in self.definitions
-        }:
+        # Keep recognized built-in writer/verifier attempts on the Broker path
+        # so rejected mutations retain an exact denied intent and audit decision.
+        # Custom ceilings and read-only specialists still reject unexposed tools.
+        if (
+            self._allowed_tools is not None
+            or self._agent.effective_kind in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}
+        ) and call.name not in {definition.name for definition in self.definitions}:
             raise FleetError(
                 ErrorCode.COMMAND_DENIED,
                 "Read-only specialists may use only bounded repository observation tools.",

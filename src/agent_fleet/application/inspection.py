@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.model_profiles import ModelProfileService
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evidence import EvidenceBundle
 from agent_fleet.domain.models import ApprovalStatus, ArtifactKind, Run, RunStatus
@@ -19,14 +20,17 @@ class InspectionService:
         artifacts: ArtifactService,
         budgets: RuntimeBudgetStore | None = None,
         graphs: GraphStore | None = None,
+        model_profiles: ModelProfileService | None = None,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
         self.budgets = budgets
         self.graphs = graphs
+        self.model_profiles = model_profiles
 
     def status(self, run_id: str) -> dict[str, object]:
         run = self.state.get_run(run_id)
+        models = self._model_bindings(run)
         graph = self.graphs.get(run_id) if self.graphs is not None else None
         pending_children: list[str] = []
         if graph is not None:
@@ -68,6 +72,7 @@ class InspectionService:
             "evidence": self._evidence_summary(run),
             "runtime": run.runtime_name,
             "provider_model": run.provider_model,
+            "model_bindings": models,
             "runtime_usage_artifact_ids": run.runtime_usage_artifact_ids,
             "runtime_budget": (
                 self.budgets.snapshot(run_id).model_dump(mode="json")
@@ -83,6 +88,21 @@ class InspectionService:
             "sandbox_configuration_sha256": run.sandbox_configuration_hash,
             "sandbox_capabilities_sha256": run.sandbox_capabilities_hash,
         }
+
+    def _model_bindings(self, run: Run) -> dict[str, object] | None:
+        root = self.state.get_run(run.parent_run_id) if run.parent_run_id else run
+        if root.model_bindings_sha256 != run.model_bindings_sha256:
+            raise _integrity_error("Child model selection differs from its registered root.")
+        if run.model_bindings_sha256 is None:
+            return None
+        if self.model_profiles is None:
+            raise _integrity_error("The required model binding service is unavailable.")
+        snapshot = self.model_profiles.inspect_bindings(
+            self.state.get_project(run.project_id),
+            root_run_id=root.run_id,
+            expected_sha256=run.model_bindings_sha256,
+        )
+        return snapshot.safe_projection()
 
     def _evidence_summary(self, run: Run) -> dict[str, object] | None:
         if run.evidence_bundle_artifact_id is None:

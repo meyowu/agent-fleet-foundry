@@ -13,6 +13,7 @@ from typing import TypeVar
 from pydantic import ValidationError
 
 from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION
+from agent_fleet.domain.config import ConfigSnapshot
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evidence import CleanupLeaseRecord, ResourceCleanupReceipt
 from agent_fleet.domain.fleet_plan import (
@@ -53,9 +54,11 @@ from agent_fleet.domain.models import (
     WorkflowStage,
 )
 from agent_fleet.domain.paths import path_is_within
+from agent_fleet.domain.role_templates import validate_role_plan
 from agent_fleet.domain.security import Redactor, canonical_json_hash
 from agent_fleet.ports.artifact_store import ArtifactStore
 from agent_fleet.ports.clock import Clock
+from agent_fleet.ports.config import ConfigurationPort
 from agent_fleet.ports.id_generator import IdGenerator
 
 _Model = TypeVar("_Model", bound=StrictModel)
@@ -74,6 +77,7 @@ _TERMINAL_NODES = {
     GraphNodeStatus.CANCELLED,
 }
 _INHERITED_RUN_FIELDS = (
+    "model_bindings_sha256",
     "project_id",
     "base_revision",
     "target_status_fingerprint",
@@ -145,7 +149,10 @@ def _boundary[**Params, Result](operation: Callable[Params, Result]) -> Callable
 
 def _run_hash(run: Run) -> str:
     payload = run.model_dump(mode="json", warnings=False)
-    return canonical_json_hash({key: payload[key] for key in _IDENTITY_RUN_FIELDS})
+    identity = {key: payload[key] for key in _IDENTITY_RUN_FIELDS if key in payload}
+    if run.plan_review_required:
+        identity["plan_review_required"] = True
+    return canonical_json_hash(identity)
 
 
 class SqliteGraphStore:
@@ -156,12 +163,15 @@ class SqliteGraphStore:
         ids: IdGenerator,
         redactor: Redactor,
         artifact_store: ArtifactStore,
+        *,
+        config: ConfigurationPort | None = None,
     ) -> None:
         self.database_path = database_path
         self.clock = clock
         self.ids = ids
         self.redactor = redactor
         self.artifact_store = artifact_store
+        self.config = config
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -280,6 +290,35 @@ class SqliteGraphStore:
         )
         plan = self._decode(FleetPlan, raw.decode())
         validate_fleet_plan(plan, self._task(connection, parent.task_id))
+        if (
+            any(node.execution_kind is not None for node in plan.nodes)
+            or plan.repair_role_id is not None
+        ):
+            if (
+                self.config is None
+                or parent.config_snapshot_artifact_id is None
+                or parent.config_snapshot_hash is None
+            ):
+                raise _invalid()
+            snapshot = ConfigSnapshot.model_validate_json(
+                self._artifact(
+                    connection,
+                    GraphArtifactRef(
+                        artifact_id=parent.config_snapshot_artifact_id,
+                        sha256=parent.config_snapshot_hash,
+                        run_id=parent.run_id,
+                        kind=ArtifactKind.CONFIG_SNAPSHOT,
+                    ),
+                    project_id=parent.project_id,
+                    task_id=parent.task_id,
+                ).decode(),
+            )
+            spec, rebuilt = self.config.snapshot_from_files(
+                {item.path: item.content for item in snapshot.files}
+            )
+            if rebuilt != snapshot:
+                raise _invalid()
+            validate_role_plan(plan, self.config.role_templates(spec, snapshot))
         if plan.strategy not in _ADVANCED or parent.fleet_strategy != plan.strategy.value:
             raise _invalid()
         return plan
@@ -847,7 +886,7 @@ class SqliteGraphStore:
             raise _invalid()
         if node.can_write:
             if (
-                node.role_id != "engineer"
+                node.effective_kind != "engineer"
                 or child_task.change_kind != "code_change"
                 or set(child_task.required_evidence) != {"canonical_patch", "command_evidence"}
             ):
@@ -859,7 +898,7 @@ class SqliteGraphStore:
             ):
                 raise _invalid()
         elif (
-            node.role_id not in {"researcher", "architect"}
+            node.effective_kind not in {"researcher", "architect"}
             or child_task.change_kind != "read_only"
             or child_task.required_evidence != ["control_plane_plan"]
             or child_task.verification_commands

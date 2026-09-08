@@ -485,6 +485,12 @@ def _run_binding(run: Run) -> str:
             "parent_node_id": run.parent_node_id,
             "parent_iteration": run.parent_iteration,
             "created_at": run.created_at.isoformat(),
+            **({"plan_review_required": True} if run.plan_review_required else {}),
+            **(
+                {"model_bindings_sha256": run.model_bindings_sha256}
+                if run.model_bindings_sha256 is not None
+                else {}
+            ),
         }
     )
 
@@ -1232,6 +1238,7 @@ class SqliteOrganizationStore:
                 "created",
                 "running",
                 "waiting_for_children",
+                "paused_for_plan",
                 "paused_for_approval",
                 "applying",
             }:

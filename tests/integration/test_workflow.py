@@ -23,10 +23,13 @@ from agent_fleet.domain.models import (
     ArtifactKind,
     FakeScenario,
     ImplementationReport,
+    IntentStatus,
+    PermissionOutcome,
     RunStatus,
     SandboxCapabilities,
     SandboxSecurityLevel,
     ScopeDecision,
+    WorkflowStage,
 )
 from agent_fleet.domain.offline_canary import BROKEN_CANARY, FIXED_CANARY
 from agent_fleet.domain.repository_profile import (
@@ -424,12 +427,40 @@ async def test_verifier_mutation_is_detected_discarded_and_absent_from_patch(
     assert run.verifier_workspace_mutated is False
     assert "verifier-untrusted-note" not in harness.container.patches.show(run.run_id)
     assert not (harness.repository_root / "verifier-untrusted-note.txt").exists()
-    decisions = [
+    denials = [
         event
         for event in harness.container.state.list_events(run.run_id)
         if event.event_type == "permission.decision"
+        and event.payload["outcome"] == PermissionOutcome.DENY.value
     ]
-    assert decisions[-1].payload["decision_code"] == "PHASE1_DEFAULT_DENY"
+    assert len(denials) == 1
+    denial = denials[0]
+    stored = harness.container.state.get_intent(str(denial.payload["intent_id"]))
+    intent = stored.intent
+    assert stored.status is IntentStatus.DENIED
+    assert stored.approval_request_id is None
+    assert stored.result is None
+    assert intent.run_id == run.run_id
+    assert intent.task_id == run.task_id
+    assert intent.principal_role == AgentRole.VERIFIER
+    assert intent.stage is WorkflowStage.VERIFYING
+    assert intent.action == "workspace.write_file"
+    assert intent.resource.model_dump(mode="json") == {
+        "kind": "workspace_path",
+        "identifier": "verifier-untrusted-note.txt",
+    }
+    assert intent.parameters == {"content": "This verifier mutation must be denied.\n"}
+    assert intent.side_effect is True
+    assert stored.intent_hash == canonical_json_hash(intent.model_dump(mode="json"))
+    assert denial.project_id == run.project_id
+    assert denial.run_id == run.run_id
+    assert denial.task_id == intent.task_id
+    assert denial.agent_instance_id == intent.agent_instance_id
+    assert denial.payload["intent_hash"] == stored.intent_hash
+    assert denial.payload["action"] == intent.action
+    assert denial.payload["resource"] == intent.resource.model_dump(mode="json")
+    assert denial.payload["decision_code"] == "PHASE1_DEFAULT_DENY"
+    assert denial.payload["grant_id"] is None
     assert harness.container.state.active_leases(run.run_id) == []
 
 

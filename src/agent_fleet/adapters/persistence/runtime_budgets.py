@@ -12,6 +12,8 @@ from typing import TypeVar
 
 from pydantic import ValidationError
 
+from agent_fleet.adapters.persistence.model_profiles import SqliteModelProfileStore
+from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.domain.budgets import (
     ModelRequestAccounting,
     ModelRequestReservation,
@@ -286,7 +288,34 @@ class SqliteRuntimeBudgetStore:
         owner = self._owner(connection, attempt.run_id)
         if owner is None or owner[0] != attempt.owner_run_id:
             raise _invalid()
+        if attempt.runtime_name != self._runtime_name(
+            connection, self._run(connection, attempt.run_id), attempt.role
+        ):
+            raise _invalid()
         return attempt
+
+    def _runtime_name(self, connection: sqlite3.Connection, run: Run, role: str) -> str:
+        root = self._run(connection, run.parent_run_id) if run.parent_run_id else run
+        if (
+            root.parent_run_id is not None
+            or root.project_id != run.project_id
+            or root.model_bindings_sha256 != run.model_bindings_sha256
+        ):
+            raise _invalid()
+        if run.model_bindings_sha256 is None:
+            return run.runtime_name
+        # Reuse the profile adapter's full identity/hash/audit checks within
+        # this existing transaction; never open a second connection or infer
+        # a model from current mutable selections.
+        state = SqliteStateStore(self.database_path, self.clock, self.ids, self.redactor)
+        bindings = SqliteModelProfileStore(state)._bindings(connection, run.project_id, root.run_id)
+        if (
+            bindings is None
+            or bindings.bindings_sha256 != run.model_bindings_sha256
+            or role not in bindings.roles
+        ):
+            raise _invalid()
+        return bindings.roles[role].configuration.runtime_name
 
     def _active(self, connection: sqlite3.Connection, attempt_id: str) -> RuntimeAttempt:
         attempt = self._attempt(connection, attempt_id)
@@ -355,7 +384,7 @@ class SqliteRuntimeBudgetStore:
                 stage=request.stage,
                 iteration=request.iteration,
                 max_steps=request.max_steps,
-                runtime_name=run.runtime_name,
+                runtime_name=self._runtime_name(connection, run, request.role),
                 started_at=self.clock.now(),
             )
             previous = connection.execute(

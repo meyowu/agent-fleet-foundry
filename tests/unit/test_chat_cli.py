@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import os
 from collections.abc import Callable
@@ -11,7 +12,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from agent_fleet.application.conversations import ChatExecutionOptions
+from agent_fleet.application.conversations import ChatExecutionOptions, SessionBootstrapOptions
 from agent_fleet.cli.app import _present_error, _present_with_warnings
 from agent_fleet.cli.chat import PosixLineInput, View, register_chat_command, run_session
 from agent_fleet.domain.errors import ErrorCode, FleetError
@@ -80,6 +81,14 @@ class StrictService:
         self.calls.append(("status", conversation_id))
         return self._view()
 
+    def preview_initialization(
+        self, project_path: Path, *, options: SessionBootstrapOptions
+    ) -> View:
+        raise AssertionError("Registered chat must not initialize a project.")
+
+    async def initialize(self, *, code: str) -> View:
+        raise AssertionError("Registered chat must not initialize a project.")
+
     async def submit(
         self,
         conversation_id: str,
@@ -124,13 +133,23 @@ class StrictService:
         self.calls.append(("artifacts", conversation_id))
         return {"artifact_id": "art_" + "d" * 32}
 
+    def review(self, conversation_id: str, *, action: str, arguments: tuple[str, ...] = ()) -> View:
+        self.calls.append(("review", conversation_id, action, arguments))
+        return {"action": action, "patch": "--- before\n+++ after\n+safe [text]\x1b[31m"}
+
     def permissions(self, conversation_id: str, *, identifier: str | None = None) -> View:
         self.calls.append(("permissions", conversation_id, identifier))
         return {"rules": []}
 
-    def approve(self, conversation_id: str, request_id: str, *, choice: ApprovalChoice) -> View:
+    def approve(
+        self,
+        conversation_id: str,
+        request_id: str | None = None,
+        *,
+        choice: ApprovalChoice | None = None,
+    ) -> View:
         self.calls.append(("approve", conversation_id, request_id, choice))
-        return {"request_id": request_id, "choice": choice.value}
+        return {"request_id": request_id, "choice": choice.value if choice is not None else None}
 
     def deny(self, conversation_id: str, request_id: str, *, reason: str | None = None) -> View:
         self.calls.append(("deny", conversation_id, request_id, reason))
@@ -216,6 +235,59 @@ async def test_session_keeps_status_cancel_responsive_and_never_queues_second_go
     assert service.cancelled == 1 and service.worker is not None and service.worker.done()
     rendered = "\n".join(output)
     assert "SECRET" not in rendered and "\x1b" not in rendered and "\\x1b" in rendered
+
+
+@pytest.mark.asyncio
+async def test_review_commands_are_explicit_and_render_full_escaped_diff() -> None:
+    service, reader = StrictService(), QueuedInput()
+    output: list[str] = []
+    errors: list[FleetError] = []
+    task = _session(service, reader, output, errors)
+    commands = [
+        "/plan",
+        "/diff",
+        "/apply",
+        "/fleet-patch list",
+        "/fleet-patch diff exact-id",
+        "/confirm 0123456789abcdef",
+        "/dismiss",
+    ]
+    for command in commands:
+        reader.send(command)
+    reader.send("/exit")
+    await asyncio.wait_for(task, 3)
+    reviews = [call for call in service.calls if call[0] == "review"]
+    assert len(reviews) == len(commands) and not errors
+    assert reviews[-2][2:] == ("confirm", ("0123456789abcdef",))
+    assert any(text == "--- before\n+++ after\n+safe [text]\\x1b[31m" for text in output)
+    assert all("\x1b" not in text for text in output)
+    assert not any(call[0] in {"submit", "approve"} for call in service.calls)
+
+
+def test_bare_noninteractive_help_does_not_create_application_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module("agent_fleet.cli.app")
+    monkeypatch.setattr(module, "build_container", lambda **_: pytest.fail("container created"))
+    monkeypatch.setattr(module, "_launch_chat", lambda: pytest.fail("chat launched"))
+    for arguments in ([], ["--help"]):
+        result = CliRunner().invoke(
+            module.app, arguments, env={"AGENT_FLEET_HOME": str(tmp_path / "state")}
+        )
+        assert result.exit_code == 0 and "Usage:" in result.stdout
+    assert not (tmp_path / "state").exists()
+
+
+def test_bare_terminal_uses_registered_chat_launcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = importlib.import_module("agent_fleet.cli.app")
+    calls: list[bool] = []
+    monkeypatch.setattr(module, "_interactive_terminal", lambda: True)
+    monkeypatch.setattr(module, "_launch_chat", lambda: calls.append(True))
+    assert CliRunner().invoke(module.app, []).exit_code == 0
+    assert calls == [True]
+    assert CliRunner().invoke(module.app, ["version", "--json"]).exit_code == 0
+    assert calls == [True]
 
 
 @pytest.mark.asyncio
