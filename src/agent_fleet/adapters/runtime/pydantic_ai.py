@@ -592,6 +592,7 @@ class PydanticAIRuntimeAdapter:
                 ),
                 services.accounting,
                 services.execution_kind,
+                require_openai_verifier_strict=True,
             )
 
     async def _invoke_model(
@@ -603,6 +604,8 @@ class PydanticAIRuntimeAdapter:
         provider_metadata: RuntimeProviderMetadata,
         accounting: RuntimeAccounting | None = None,
         execution_kind: AgentRole | None = None,
+        *,
+        require_openai_verifier_strict: bool = False,
     ) -> AgentInvocationResult:
         kind = str(request.role) if execution_kind is None else execution_kind.value
         if (request.role in _OUTPUT_BY_ROLE and kind != request.role) or (
@@ -622,6 +625,16 @@ class PydanticAIRuntimeAdapter:
                 details={"role": str(request.role)},
             )
         output_model, output_tool_name, prompt_name = output_contract
+        strict_verifier = require_openai_verifier_strict and output_model is VerifierVerdict
+        if (
+            strict_verifier
+            and model.profile.get("openai_supports_strict_tool_definition", True) is not True
+        ):
+            raise _runtime_error(
+                ErrorCode.RUNTIME_CAPABILITY_MISSING,
+                "The selected OpenAI model profile cannot enforce strict Verifier output.",
+                "Select a profile with strict tool support; Fleet did not dispatch a request.",
+            )
         fleet_patch_enabled = request.role == AgentRole.COS and isinstance(
             request.input.get("organization_context"), dict
         )
@@ -637,7 +650,9 @@ class PydanticAIRuntimeAdapter:
         )
         toolsets = _external_toolsets(definitions)
         output_spec = [
-            ToolOutput(output_model, name=output_tool_name),
+            ToolOutput(
+                output_model, name=output_tool_name, strict=True if strict_verifier else None
+            ),
             DeferredToolRequests,
         ]
         if fleet_patch_enabled:

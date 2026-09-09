@@ -584,6 +584,11 @@ CLI 的 runtime/sandbox 提示只说明配置与能力，不证明已联系供�
 缺少有效 Verifier 结论时任务仍失败，系统不会为修复格式自动重放操作。
 先审查现有 Patch、命令与清理证据，再决定是否另开一个明确授权的任务。
 
+生产 PydanticAI 的 OpenAI Responses/Chat Verifier 会请求严格的输出工具 Schema，
+并继续进行本地校验；这不保证模型结论或证据正确。若所选模型的 SDK profile 明确不支持
+strict，Fleet 会在请求发出前返回 `RUNTIME_CAPABILITY_MISSING`，不会自动换模型或降级。
+这一约束不改变其他 Provider、角色、离线模型或现有证据判定规则。
+
 审查清单：
 
 1. 任务范围与验收条件是否准确，是否遗漏需求？

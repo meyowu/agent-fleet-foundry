@@ -713,6 +713,23 @@ revalidates allowed shapes, finite labels and bounds before adding them to
 retries nor establish whether an unknown request was transmitted, charged or
 completed. Failure after a side-effect attempt remains a failure without replay.
 
+The production PydanticAI OpenAI branch requests strict output-tool arguments for
+the exact VerifierVerdict contract, on both Responses and Chat Completions. This
+requirement comes from the owned client/model construction branch, not model
+metadata, repository text or an injected test model's name. An explicitly
+unsupported strict-tool profile fails before model dispatch instead of silently
+downgrading. Other providers, roles, output contracts and explicit offline model
+overrides retain their existing behavior.
+
+The SDK's wire projection is not the local acceptance schema: all eight top-level
+fields become required on the wire, but structured_criterion_results still permits
+null. Length constraints moved into wire descriptions remain enforced locally.
+Requested provider strictness does not authenticate evidence, prove criterion
+coverage, replace CompletionGate or authorize a retry after side effects. Existing
+single-criterion compatibility behavior is unchanged; null is not universally
+equivalent to a failed gate. Model-returned arguments remain untrusted and undergo
+the original local validation even when the request specified strict output.
+
 The explicit OpenAI client uses a per-client reject-all cookie policy. Untrusted Set-Cookie responses must not create client state or add Cookie to later requests; response-header clearing occurs too late to prevent HTTP client extraction by itself. Cookie remains prohibited by the final request guard, and no new header or endpoint authority is granted. Trusted request/response guard failures have separate fixed diagnostic causes without exposing header names or values.
 
 Action-tool strict generation is an additional output-shape constraint, never permission. The corrective implementation requests strict external function arguments while retaining the original, independently validated catalog schemas. Provider-incompatible string-length keywords may move to descriptive text in a copied wire schema; original local Pydantic limits, exact command IDs and whole-batch validation must still reject invalid arguments before reservation or execution. No missing command ID is inferred, no incompatible-schema non-strict fallback is allowed, and no verification tool is advertised without an admitted command. Fixed `tool_arguments` diagnostics distinguish this boundary from final-output validation without exposing validation records. Output-model configuration, budgets, retry prohibitions, PermissionBroker and CompletionGate remain unchanged. Fresh live acceptance is separately recorded in README; strict generation alone does not prove task success.
