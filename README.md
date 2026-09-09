@@ -12,38 +12,116 @@ The Session-first release adds a foreground session entry, exact in-session revi
 
 ## S1–S3 development status — 2026-09-09 UTC
 
-Current local checkpoint: `21700932dcd8c262c16f00b17eb7355db6d5357a77aff5597b91bf1215ae9de5`.
+Latest locally tested checkpoint: `3fe0cafe09486ffc6f7c68d9580a3d3388db3ef9e47121d92948dda08d200468`.
 This accepts the implemented local foundations, **not completion of all S1–S3 OKRs**.
+The diagnostic and configuration-warning corrections are commits `8afffe7`
+and `864ad43`. Those and strict-output commit `a4952dd` are pushed to the development
+branch; draft PR7 remains open and unmerged. The target-bound CoS hash correction
+is commit `584c551`, with a fresh passing whole offline suite and independent
+component/pre-key package acceptance; its latest live regression failed. Exact
+result-document packaging and GitHub readback are recorded in the living plan.
 
-**Latest live regression did not pass (17:41:48 UTC).** On this exact checkpoint,
+**Latest live regression did not pass (20:44:18 UTC).** On current `3fe0cafe`,
+one bounded `openai:gpt-5-nano` / PydanticAI / Docker CLI attempt completed CoS
+and Engineer and reached Verifier. Both roles executed `python-test`; afterward
+Verifier requested `repo.read_file` on `.fleet`, outside the immutable task's
+allowed path. The Broker correctly returned protected `PHASE1_DEFAULT_DENY`;
+that intent had zero dispatch claims. The run failed with `COMMAND_DENIED`, with
+no accepted VerifierVerdict or verified completion. This is not an API-key or
+connection failure. Eight requests reported38976 input+11584 output=50560 tokens,
+five charged tools and zero unknown/outstanding/reserved requests. Monetary cost
+was not reported. Pytest failed/102.36s, launcher104.009s, outer105.663s. Source
+bytes remained unchanged; no automatic retry, budget increase, permission
+relaxation or patch application occurred. Independent readback sealed21:00:24UTC:
+42 physical Artifact bindings,113 live and91 bootstrap events,12 released leases,
+four absent worktree paths/four exact containers and an empty installation scope.
+The target remains unchanged and unapplied. The failed bundle predates cleanup;
+it is not rewritten as passing. Passing commands alone are not accepted task
+delivery, and this attempt does not qualify S1–S3.
+
+**Previous CoS regression did not pass (19:29:48 UTC).** On predecessor `092b8228`,
+one real `openai:gpt-5-nano` / PydanticAI / Docker CLI attempt stopped in CoS
+SCOPING with `RUNTIME_BUDGET_EXCEEDED` / `usage_limit`. It produced no accepted
+TaskSpec,patch,Engineer or Verifier result,so it did not exercise the strict
+Verifier correction. Four responses reported33403 input+6174 output=39577 tokens,
+exceeding the32768-token invocation profile while the65536-token root remained
+unexhausted. Token reservations are not pre-spend invoice caps. Three model tool
+batches were charged; authorized provider-log inspection shows repeated pure
+`fleet_content_sha256` calls on invented source text,not source writes or command
+execution. The last response requested the same helper again; budget rejection
+prevented that fourth helper dispatch. Monetary cost was not reported.
+Pytest failed/62.86s,launcher64.649s,outer66.390s. Independent physical readback
+confirms complete cleanup: six bootstrap leases released,two worktree paths and
+two exact native containers absent,and the installation scope empty. All28 checked
+Artifacts,the two Docker command receipts and the accepted CompletionGate belong
+to Fake bootstrap or project context—not this failed live run. The live run has
+zero Gateway intents/dispatches,resource leases or command receipts; target
+HEAD/status/source remains unchanged. No automatic paid retry,model
+upgrade,budget increase or target patch application occurred. This failure remains
+separate from both offline strict-wire acceptance and the historical passing canary.
+Strict-output code/tests/security guidance are pushed commit `a4952dd`; no GitHub
+Actions run was created. A target-bound proposal-hash correction now passes local
+checks under its [ExecPlan](.agent/plans/2026-09-09-organization-hash-targets.md),
+but the later current canary also failed as recorded above. It requires `operation`, an allowed `.fleet/`
+path and content; ordinary business-source paths are rejected. This is not a
+guarantee of correct model intent or elimination of all repeated calls.
+
+**Previous live regression also failed (17:41:48 UTC).** On predecessor `21700932`,
 one real `openai:gpt-5-nano` / PydanticAI / Docker CLI attempt reached Verifier but
 failed strict structured-output validation after its independent command execution.
 No VerifierVerdict was accepted. The safe diagnostic is
-`structured_output_after_side_effect` / `schema_validation`; the invalid response
-was not retained, so its particular invalid field is unknown. Ten requests reported
+`structured_output_after_side_effect` / `schema_validation`. The local record does
+not retain raw model output. Subsequent authorized read-only inspection of the
+[exact provider response](https://platform.openai.com/logs/resp_0fe1fc2b3e5c6371006aa19a4c84e887d091c42d0023f0dd53)
+showed a criterion object placed in `criterion_results` (which accepts narrative
+strings), with `structured_criterion_results` omitted. The verdict was lowercase
+`pass` and rationale was present; those fields were not the observed fault. This
+private dashboard link requires the project's access and is not public evidence.
+Ten requests reported
 37173 input +12514 output =49687 tokens, seven tools and zero unknown/outstanding
 reservations. Monetary cost was not reported. Pytest failed in107.98s; the launcher
 finished in109.681s and reported cleanup complete. No automatic retry or target
 patch application occurred. The earlier passing canary below remains historical
-evidence, not a passing result for this latest attempt.
+evidence, not a passing result for this prior attempt.
 
 | Gate | Exact result and boundary |
 | --- | --- |
-| Default unit/contract/integration/offline E2E collection | **3591 passed,23 optional skips**,3614 unique identities. Independent reconciliation combines870 freshly executed successor cases (867 passed/3 skipped) with2744 byte-identical predecessor cases (2724 passed/20 skipped). This is not3614 fresh reruns. |
-| Named adversarial replay | **737 passed/218.40s**, no skips; overlaps the default collection. |
-| Format/lint/types/schema/lock | Ruff format429 files and lint passed; mypy363 files passed;108 exact schemas;99-package offline lock check passed/21ms. |
-| Real Docker selection | **29 passed/462.21s**:19 actual Docker cases and10 helper cases.199 terminal leases,66 absent paths and19 empty installation scopes independently checked. |
-| Fresh installation journeys | **3 passed/484.59s**, using95 prepared locked wheels. Three environments/six archives matched316 runtime/guide files;54 leases released and18 paths absent. The optional entry's later strict-origin correction separately passed three full-entry positives,three symlink negatives andthree distinguishing old-entry controls. |
+| Default unit/contract/integration/offline E2E collection | **3811 passed,23 optional skips**,3834 exact unique identities,all freshly executed on3fe0cafe. Five disjoint groups completed at20:29:35 UTC with zero failures/errors/missing/duplicate/extra cases or code/dependency drift. The unchanged timing-sensitive cancellation case ran alone after the heavy groups. Independent exact collection/JUnit and six-static-command readback passed20:31:48UTC; the final pre-key prerequisite seal passed20:39:01UTC. |
+| Current pre-key archives | **1 passed/2.54s**, launcher4.519s. Independent readback matched316 runtime/guide files in each archive and exact README/guide bytes. Subsequent result-document edits require their own final archive refresh; this does not claim a fresh dependency installation. |
+| Target-bound CoS hash independent checks | **524 unique passes**:324 focused/40.57s,168 legacy/.69s,26 independent/.31s and6 additional installed SDK/LangGraph controls. Exact path/type/budget/replay/secret boundaries,ordinary scoping and real persisted organization proposals were checked.103 databases,78 Artifact bindings,zero leases and18 original-only Git registries were read back. Retain94 inert running Run records and10 direct-adapter running attempts with settled requests/closed clients; these are not completed product Runs. Component coverage overlaps the default suite and is not live proof. |
+| Prior strict Verifier independent checks | **507 unique passes**:294 related/20.09s,197 provider/86.69s and16 independent controls/2.35s. Both real SDK MockTransport wire formats,unsupported-profile zero dispatch,physical client cleanup,no effect replay and unchanged local validation were checked on092.89 databases and251 Artifact hashes were read back;49 leases released and19 paths absent. Three intentional paused-approval fixtures retain three private worktrees and three nonexecuting Fake leases. Strict Verifier bytes remain unchanged; this prior component coverage is not new live-provider proof. |
+| Diagnostic and warning independent checks | **280 unique diagnostic checks** (253/16.66s plus27 malicious controls/1.21s), and36 warning cases/0.05s. These component counts overlap full default coverage. |
+| Format/lint/types/schema/lock | Current Ruff format433 files and lint passed; mypy365 files passed;108 exact schemas;99-package offline lock check and whitespace check passed. All six commands exited0 at20:18:27 UTC with no code drift. |
+| Historical named adversarial replay | **737 passed/218.40s** on the earlier checkpoint, no skips; not a new execution of the diagnostic/warning successor. |
+| Historical real Docker selection | **29 passed/462.21s**:19 actual Docker cases and10 helper cases.199 terminal leases,66 absent paths and19 empty installation scopes independently checked. |
+| Historical fresh installation journeys | **3 passed/484.59s**, using95 prepared locked wheels. Three environments/six archives matched316 runtime/guide files;54 leases released and18 paths absent. The optional entry's later strict-origin correction separately passed three full-entry positives,three symlink negatives andthree distinguishing old-entry controls. |
 
-Docker and installation executions belong to predecessor `afb64027`; the successor
-changes only five test files, with every production/dependency byte unchanged.
-The predecessor's eight failures are retained: old schema/provider fixtures and
-missing parent-budget setup, all independently replayed successfully after repair.
+Docker and installation executions belong to predecessor `afb64027`; they were
+accepted at `21700932`, which changed only five test files and preserved every
+production/dependency byte. The current hash-target successor has fresh offline
+tests and the failed real-provider attempt above, but no new whole optional Docker
+suite or fresh installation journey. The failed CoS-only live attempt belongs
+to092. The earlier
+eight fixture failures and the later warning-wrap failure remain retained, with
+independent successful replacement replays rather than rewritten results. Prior
+c0c36e24 acceptance was3702 passed/23 skips via34 fresh CLI cases plus3691
+byte-identical carried identities; the092 matrix was3743 passed/23 skips and the
+current3fe0cafe matrix is3811 passed/23 skips,both fully fresh. The SDK receiver
+fixture failure and two independent-auditor expectation failures are retained,
+with corrected complete replays and no candidate validator relaxation.
 All23 default skips remain explicit (19 Docker,3 installation,1 live); optional
 successes do not turn the skipped live test into a new provider run. Known Google
 Python3.14 deprecation and test-property/JUnit warnings remain recorded. Final
 documentation/archive readback and GitHub delivery are separate entries in the
 [living plan](.agent/plans/2026-09-09-s1-s3-system-development.md).
+
+Production PydanticAI requests strict OpenAI output-tool arguments for the exact
+Verifier contract on Responses and Chat Completions. Unsupported strict profiles
+fail before a request; other providers,roles and offline overrides remain unchanged.
+Strict generation does not replace local validators or CompletionGate,and nullable
+structured mapping retains its existing compatibility semantics. The separately
+planned model-free business baseline is being developed in an isolated clone and
+is not part of this accepted source or an available CLI feature yet.
 
 The first S1 evaluation slice is implemented: immutable preregistered manifests,
 outcome records and deterministic reports preserve first-round denominators,
