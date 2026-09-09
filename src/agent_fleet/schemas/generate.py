@@ -35,6 +35,22 @@ from agent_fleet.domain.conversation import (
     ConversationSummary,
     ConversationTurn,
 )
+from agent_fleet.domain.evaluation import EvaluationManifest
+from agent_fleet.domain.evaluation_campaign import (
+    CampaignRegistration,
+    EvaluationLedgerSnapshot,
+    EvaluationReservation,
+)
+from agent_fleet.domain.evaluation_execution import (
+    CommittedSource,
+    EvaluationAdmission,
+    EvaluationClaim,
+    EvaluationExecutionBinding,
+    EvaluationExecutionRecord,
+    EvaluationRegistration,
+    EvaluationSubmission,
+)
+from agent_fleet.domain.evaluation_metrics import EvaluationReport
 from agent_fleet.domain.evidence import (
     CommandEvidence,
     EvidenceBundle,
@@ -106,9 +122,12 @@ from agent_fleet.domain.organization_tree import (
     PreparedPublication,
     PublicationObservation,
 )
+from agent_fleet.domain.outcomes import OutcomeRecord
 from agent_fleet.domain.plan_review import PlanReviewBinding, PlanReviewCheckpoint
+from agent_fleet.domain.readiness import ReadinessReport
 from agent_fleet.domain.repository_boundary import OrganizationRepositoryBoundary
 from agent_fleet.domain.repository_profile import ProjectKnowledge, RepositoryProfile
+from agent_fleet.domain.role_bundles import RoleBundleDefinition, RoleBundlePreview
 from agent_fleet.domain.role_templates import ResolvedRoleTemplate, RoleCatalog, RoleTemplate
 from agent_fleet.domain.trust import (
     ExactPermissionScope,
@@ -118,6 +137,22 @@ from agent_fleet.domain.trust import (
 )
 
 SCHEMAS: dict[str, type[BaseModel]] = {
+    "role-bundle-definition.schema.json": RoleBundleDefinition,
+    "role-bundle-preview.schema.json": RoleBundlePreview,
+    "committed-source.schema.json": CommittedSource,
+    "evaluation-submission.schema.json": EvaluationSubmission,
+    "evaluation-admission.schema.json": EvaluationAdmission,
+    "evaluation-execution-binding.schema.json": EvaluationExecutionBinding,
+    "evaluation-claim.schema.json": EvaluationClaim,
+    "evaluation-execution-record.schema.json": EvaluationExecutionRecord,
+    "evaluation-registration.schema.json": EvaluationRegistration,
+    "campaign-registration.schema.json": CampaignRegistration,
+    "evaluation-reservation.schema.json": EvaluationReservation,
+    "evaluation-ledger-snapshot.schema.json": EvaluationLedgerSnapshot,
+    "readiness-report.schema.json": ReadinessReport,
+    "evaluation-manifest.schema.json": EvaluationManifest,
+    "outcome-record.schema.json": OutcomeRecord,
+    "evaluation-report.schema.json": EvaluationReport,
     "role-catalog.schema.json": RoleCatalog,
     "role-template.schema.json": RoleTemplate,
     "resolved-role-template.schema.json": ResolvedRoleTemplate,

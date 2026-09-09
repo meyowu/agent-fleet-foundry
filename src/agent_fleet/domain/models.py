@@ -318,8 +318,10 @@ def _validate_runtime_selection(
             raise ValueError("provider_model must use a canonical non-empty provider:model ID")
     if runtime_name == "fake" and (provider_model is not None or credential_ref is not None):
         raise ValueError("fake runtime cannot carry provider model or credential metadata")
-    if runtime_name == "pydantic-ai" and (provider_model is None or credential_ref is None):
-        raise ValueError("pydantic-ai runtime requires provider_model and credential_ref")
+    if runtime_name in {"pydantic-ai", "openai-agents", "langgraph"} and (
+        provider_model is None or credential_ref is None
+    ):
+        raise ValueError(f"{runtime_name} runtime requires provider_model and credential_ref")
 
 
 class AgentRole(StrEnum):
@@ -814,8 +816,17 @@ class Run(StrictModel):
 
 
 class AcceptanceCriterion(StrictModel):
-    criterion_id: CriterionId
-    description: BoundedText
+    criterion_id: CriterionId = Field(
+        description="Stable identifier for one requested task outcome."
+    )
+    description: BoundedText = Field(
+        description=(
+            "Observable task outcome, not a delivery-evidence category copied from "
+            "required_evidence. "
+            "For code changes, describe requested behavior that admitted independent checks can "
+            "support; preserve requested scope and report unsupported proof rather than invent it."
+        )
+    )
 
 
 class WriterAssignment(StrictModel):
@@ -845,18 +856,61 @@ class ScopeDecision(StrictModel):
 
     normalized_goal: BoundedSummary
     response: BoundedSummary | None = None
-    workflow: WorkflowId = "code-change"
-    change_kind: Literal["read_only", "code_change"] = "code_change"
-    fleet_strategy: FleetStrategyName
-    role_selections: dict[Literal["engineer", "verifier", "researcher", "architect"], RoleId] = (
-        Field(default_factory=dict, max_length=4, exclude_if=lambda value: not value)
+    workflow: WorkflowId = Field(
+        default="code-change",
+        description=(
+            "Exact declared workflow identifier from available_workflows, such as code-change. "
+            "This is not a fleet strategy: engineer_verifier selects a team, not a workflow."
+        ),
     )
-    writer_assignments: list[WriterAssignment] = Field(default_factory=list, max_length=8)
+    change_kind: Literal["read_only", "code_change"] = "code_change"
+    fleet_strategy: FleetStrategyName = Field(
+        description=(
+            "Smallest sufficient team strategy, independent of the declared workflow identifier. "
+            "The control plane constructs its fixed role nodes; only parallel_engineers "
+            "accepts writer_assignments."
+        )
+    )
+    role_selections: dict[Literal["engineer", "verifier", "researcher", "architect"], RoleId] = (
+        Field(
+            default_factory=dict,
+            max_length=4,
+            exclude_if=lambda value: not value,
+            description="Declared role overrides as a dictionary; use {} when unused, not null.",
+        )
+    )
+    writer_assignments: list[WriterAssignment] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "Parallel Engineer shards only. Must be [] for direct, single_engineer, "
+            "engineer_verifier, and research_architect_engineer_verifier. Do not list fixed "
+            "Engineer or Verifier nodes here: the control plane constructs them. A Verifier "
+            "is independent and never a writer. For parallel_engineers provide 2-8 bounded "
+            "writers with unique node IDs, disjoint scopes, and exact criterion coverage."
+        ),
+    )
     max_parallel_agents: int = Field(default=2, ge=1, le=8)
     allowed_paths: list[LogicalRepoPath] = Field(max_length=128)
     forbidden_paths: list[LogicalRepoPath] = Field(max_length=128)
-    acceptance_criteria: list[AcceptanceCriterion] = Field(min_length=1, max_length=128)
-    required_evidence: list[EvidenceRequirementId] = Field(min_length=1, max_length=32)
+    acceptance_criteria: list[AcceptanceCriterion] = Field(
+        min_length=1,
+        max_length=128,
+        description=(
+            "Observable outcomes of the requested task. Do not blindly copy delivery requirements "
+            "such as canonical_patch into behavioral criteria. Code-change proof requires admitted "
+            "independent command evidence; unsupported outcomes remain explicit proof gaps."
+        ),
+    )
+    required_evidence: list[EvidenceRequirementId] = Field(
+        min_length=1,
+        max_length=32,
+        description=(
+            "Required delivery/proof types, distinct from acceptance_criteria task outcomes: "
+            "for example canonical_patch, command_evidence, independent_verifier_verdict. "
+            "Direct read-only tasks retain control_plane_plan."
+        ),
+    )
 
     @field_validator("allowed_paths", "forbidden_paths")
     @classmethod
@@ -1483,22 +1537,73 @@ class SpecialistReport(StrictModel):
 
 
 class CriterionResult(StrictModel):
-    criterion_id: CriterionId
+    criterion_id: CriterionId = Field(
+        description="One exact criterion_id from TaskSpec.acceptance_criteria; cover each once."
+    )
     verdict: Verdict
-    evidence_artifact_ids: list[ArtifactId] = Field(max_length=64)
-    command_ids: list[ActionId] = Field(max_length=32)
-    explanation: BoundedText
+    evidence_artifact_ids: list[ArtifactId] = Field(
+        max_length=64,
+        description=(
+            "For passing code-change proof, use only current independent CommandEvidence IDs from "
+            "your run_verification result content.command_evidence_artifact_id, one uniquely "
+            "latest "
+            "receipt per distinct command_id in the same current Verifier workspace/sandbox. "
+            "Not generic artifact_ids, transcripts, patches or Engineer receipts. "
+            "Empty or unsupported mappings remain proof gaps."
+        ),
+    )
+    command_ids: list[ActionId] = Field(
+        max_length=32,
+        description=(
+            "Exact admitted command_id values used by your verification calls, paired one-to-one "
+            "with evidence_artifact_ids. Select the relevant subset for this criterion, not "
+            "mechanically every admitted command. Each passing criterion needs a nonempty mapping; "
+            "do not "
+            "infer an ID from prose or cite a command without its own current receipt."
+        ),
+    )
+    explanation: BoundedText = Field(
+        description=(
+            "Explain how the selected independent command evidence supports this task outcome. "
+            "A current receipt may support multiple genuinely relevant criteria. A later failed "
+            "or timed-out receipt cannot be replaced by an earlier pass; inspection alone "
+            "is not independently executed command proof. Preserve inadequate-proof gaps."
+        )
+    )
 
 
 class VerifierVerdict(StrictModel):
     verdict: Verdict
-    criterion_results: list[BoundedText] = Field(max_length=128)
-    evidence_artifact_ids: list[ArtifactId] = Field(max_length=256)
+    criterion_results: list[BoundedText] = Field(
+        max_length=128,
+        description=(
+            "Narrative findings; these do not replace structured_criterion_results mappings."
+        ),
+    )
+    evidence_artifact_ids: list[ArtifactId] = Field(
+        max_length=256,
+        description=(
+            "Current independent command receipt IDs cited by structured_criterion_results, taken "
+            "from content.command_evidence_artifact_id of your verification results. Do not copy "
+            "generic artifact_ids or include transcript, patch, Engineer or stale receipt IDs. "
+            "The control plane independently binds observed records; this list grants no proof."
+        ),
+    )
     regressions: list[BoundedText] = Field(max_length=128)
     required_repairs: list[BoundedText] = Field(max_length=128)
     proof_gaps: list[BoundedText] = Field(max_length=128)
     rationale: BoundedSummary
-    structured_criterion_results: list[CriterionResult] | None = Field(default=None, max_length=128)
+    structured_criterion_results: list[CriterionResult] | None = Field(
+        default=None,
+        max_length=128,
+        description=(
+            "Explicitly map every TaskSpec acceptance criterion once to your own current "
+            "independent "
+            "command receipts and exact command IDs. Passing code-change mappings require nonempty "
+            "one-to-one command/receipt lists. Missing or inadequate proof remains inconclusive; "
+            "never invent, repair or copy unrelated evidence references."
+        ),
+    )
 
     @field_validator("evidence_artifact_ids")
     @classmethod

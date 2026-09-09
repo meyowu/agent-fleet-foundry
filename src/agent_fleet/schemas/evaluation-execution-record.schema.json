@@ -1,0 +1,281 @@
+{
+  "$defs": {
+    "EvaluationClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Binding Sha256",
+          "type": "string"
+        },
+        "claim_id": {
+          "pattern": "^corr_[0-9a-f]{32}$",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "root_run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Root Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root_run_id",
+        "binding_sha256",
+        "claim_id"
+      ],
+      "title": "EvaluationClaim",
+      "type": "object"
+    },
+    "EvaluationCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "sha256"
+      ],
+      "title": "EvaluationCommand",
+      "type": "object"
+    },
+    "EvaluationExecutionBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "admitted_at": {
+          "format": "date-time",
+          "title": "Admitted At",
+          "type": "string"
+        },
+        "case_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Case Sha256",
+          "type": "string"
+        },
+        "commands": {
+          "items": {
+            "$ref": "#/$defs/EvaluationCommand"
+          },
+          "maxItems": 32,
+          "title": "Commands",
+          "type": "array"
+        },
+        "commit_sha": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "title": "Commit Sha",
+          "type": "string"
+        },
+        "configuration_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Configuration Sha256",
+          "type": "string"
+        },
+        "dependencies_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Dependencies Sha256",
+          "type": "string"
+        },
+        "image_identity": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Image Identity"
+        },
+        "limits": {
+          "$ref": "#/$defs/RunBudgetLimits"
+        },
+        "model_bindings_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Model Bindings Sha256",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "repository_identity": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Repository Identity",
+          "type": "string"
+        },
+        "root_run_id": {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "title": "Root Run Id",
+          "type": "string"
+        },
+        "run_binding_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Run Binding Sha256",
+          "type": "string"
+        },
+        "source_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Sha256",
+          "type": "string"
+        },
+        "submission": {
+          "$ref": "#/$defs/EvaluationSubmission"
+        }
+      },
+      "required": [
+        "submission",
+        "project_id",
+        "repository_identity",
+        "root_run_id",
+        "run_binding_sha256",
+        "case_sha256",
+        "source_sha256",
+        "commit_sha",
+        "configuration_sha256",
+        "model_bindings_sha256",
+        "image_identity",
+        "dependencies_sha256",
+        "commands",
+        "limits",
+        "admitted_at"
+      ],
+      "title": "EvaluationExecutionBinding",
+      "type": "object"
+    },
+    "EvaluationSubmission": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_id": {
+          "pattern": "^attempt_[0-9a-f]{32}$",
+          "title": "Attempt Id",
+          "type": "string"
+        },
+        "campaign_id": {
+          "pattern": "^campaign_[0-9a-f]{32}$",
+          "title": "Campaign Id",
+          "type": "string"
+        },
+        "case_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Manifest Sha256",
+          "type": "string"
+        },
+        "repetition": {
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Repetition",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "campaign_id",
+        "manifest_sha256",
+        "case_id",
+        "repetition",
+        "attempt_id"
+      ],
+      "title": "EvaluationSubmission",
+      "type": "object"
+    },
+    "RunBudgetLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_active_seconds": {
+          "default": 3600,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Max Active Seconds",
+          "type": "integer"
+        },
+        "max_agent_invocations": {
+          "default": 64,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Max Agent Invocations",
+          "type": "integer"
+        },
+        "max_model_requests": {
+          "default": 128,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Max Model Requests",
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 512,
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Max Tool Calls",
+          "type": "integer"
+        },
+        "max_total_tokens": {
+          "default": 262144,
+          "maximum": 100000000,
+          "minimum": 1,
+          "title": "Max Total Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "RunBudgetLimits",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "binding": {
+      "$ref": "#/$defs/EvaluationExecutionBinding"
+    },
+    "claim": {
+      "$ref": "#/$defs/EvaluationClaim"
+    },
+    "revision": {
+      "default": 1,
+      "maximum": 3,
+      "minimum": 1,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "status": {
+      "default": "active",
+      "enum": [
+        "active",
+        "settled",
+        "fenced"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "binding",
+    "claim",
+    "updated_at"
+  ],
+  "title": "EvaluationExecutionRecord",
+  "type": "object"
+}

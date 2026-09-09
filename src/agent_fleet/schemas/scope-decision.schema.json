@@ -4,6 +4,7 @@
       "additionalProperties": false,
       "properties": {
         "criterion_id": {
+          "description": "Stable identifier for one requested task outcome.",
           "maxLength": 100,
           "minLength": 1,
           "pattern": "^[a-z][a-z0-9_-]*$",
@@ -11,6 +12,7 @@
           "type": "string"
         },
         "description": {
+          "description": "Observable task outcome, not a delivery-evidence category copied from required_evidence. For code changes, describe requested behavior that admitted independent checks can support; preserve requested scope and report unsupported proof rather than invent it.",
           "maxLength": 4096,
           "minLength": 1,
           "title": "Description",
@@ -95,6 +97,7 @@
   "description": "Untrusted CoS proposal accepted only after control-plane validation.",
   "properties": {
     "acceptance_criteria": {
+      "description": "Observable outcomes of the requested task. Do not blindly copy delivery requirements such as canonical_patch into behavioral criteria. Code-change proof requires admitted independent command evidence; unsupported outcomes remain explicit proof gaps.",
       "items": {
         "$ref": "#/$defs/AcceptanceCriterion"
       },
@@ -124,6 +127,7 @@
       "type": "string"
     },
     "fleet_strategy": {
+      "description": "Smallest sufficient team strategy, independent of the declared workflow identifier. The control plane constructs its fixed role nodes; only parallel_engineers accepts writer_assignments.",
       "enum": [
         "direct",
         "single_engineer",
@@ -159,6 +163,7 @@
       "type": "string"
     },
     "required_evidence": {
+      "description": "Required delivery/proof types, distinct from acceptance_criteria task outcomes: for example canonical_patch, command_evidence, independent_verifier_verdict. Direct read-only tasks retain control_plane_plan.",
       "items": {
         "enum": [
           "canonical_patch",
@@ -194,6 +199,7 @@
         "pattern": "^[a-z][a-z0-9_-]*$",
         "type": "string"
       },
+      "description": "Declared role overrides as a dictionary; use {} when unused, not null.",
       "maxProperties": 4,
       "propertyNames": {
         "enum": [
@@ -208,6 +214,7 @@
     },
     "workflow": {
       "default": "code-change",
+      "description": "Exact declared workflow identifier from available_workflows, such as code-change. This is not a fleet strategy: engineer_verifier selects a team, not a workflow.",
       "maxLength": 64,
       "minLength": 1,
       "pattern": "^[a-z][a-z0-9_-]*$",
@@ -215,6 +222,7 @@
       "type": "string"
     },
     "writer_assignments": {
+      "description": "Parallel Engineer shards only. Must be [] for direct, single_engineer, engineer_verifier, and research_architect_engineer_verifier. Do not list fixed Engineer or Verifier nodes here: the control plane constructs them. A Verifier is independent and never a writer. For parallel_engineers provide 2-8 bounded writers with unique node IDs, disjoint scopes, and exact criterion coverage.",
       "items": {
         "$ref": "#/$defs/WriterAssignment"
       },

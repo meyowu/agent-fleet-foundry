@@ -1,0 +1,110 @@
+{
+  "$defs": {
+    "EvaluationRunBudget": {
+      "additionalProperties": false,
+      "properties": {
+        "max_active_seconds": {
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Max Active Seconds",
+          "type": "integer"
+        },
+        "max_agent_invocations": {
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Max Agent Invocations",
+          "type": "integer"
+        },
+        "max_model_requests": {
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Max Model Requests",
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "maximum": 100000,
+          "minimum": 0,
+          "title": "Max Tool Calls",
+          "type": "integer"
+        },
+        "max_total_tokens": {
+          "maximum": 100000000,
+          "minimum": 1,
+          "title": "Max Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_agent_invocations",
+        "max_model_requests",
+        "max_tool_calls",
+        "max_total_tokens",
+        "max_active_seconds"
+      ],
+      "title": "EvaluationRunBudget",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attempt_id": {
+      "pattern": "^attempt_[0-9a-f]{32}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "campaign_id": {
+      "pattern": "^campaign_[0-9a-f]{32}$",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "case_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "commitment": {
+      "$ref": "#/$defs/EvaluationRunBudget"
+    },
+    "execution_authorized": {
+      "const": false,
+      "default": false,
+      "title": "Execution Authorized",
+      "type": "boolean"
+    },
+    "idempotency_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Idempotency Sha256",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "repetition": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Repetition",
+      "type": "integer"
+    },
+    "reserved_at": {
+      "format": "date-time",
+      "title": "Reserved At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "campaign_id",
+    "manifest_sha256",
+    "case_id",
+    "repetition",
+    "attempt_id",
+    "idempotency_sha256",
+    "reserved_at",
+    "commitment"
+  ],
+  "title": "EvaluationReservation",
+  "type": "object"
+}

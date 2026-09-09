@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "binding_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Binding Sha256",
+      "type": "string"
+    },
+    "claim_id": {
+      "pattern": "^corr_[0-9a-f]{32}$",
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "root_run_id": {
+      "pattern": "^run_[0-9a-f]{32}$",
+      "title": "Root Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "root_run_id",
+    "binding_sha256",
+    "claim_id"
+  ],
+  "title": "EvaluationClaim",
+  "type": "object"
+}

@@ -4,6 +4,7 @@
       "additionalProperties": false,
       "properties": {
         "command_ids": {
+          "description": "Exact admitted command_id values used by your verification calls, paired one-to-one with evidence_artifact_ids. Select the relevant subset for this criterion, not mechanically every admitted command. Each passing criterion needs a nonempty mapping; do not infer an ID from prose or cite a command without its own current receipt.",
           "items": {
             "maxLength": 100,
             "minLength": 1,
@@ -15,6 +16,7 @@
           "type": "array"
         },
         "criterion_id": {
+          "description": "One exact criterion_id from TaskSpec.acceptance_criteria; cover each once.",
           "maxLength": 100,
           "minLength": 1,
           "pattern": "^[a-z][a-z0-9_-]*$",
@@ -22,6 +24,7 @@
           "type": "string"
         },
         "evidence_artifact_ids": {
+          "description": "For passing code-change proof, use only current independent CommandEvidence IDs from your run_verification result content.command_evidence_artifact_id, one uniquely latest receipt per distinct command_id in the same current Verifier workspace/sandbox. Not generic artifact_ids, transcripts, patches or Engineer receipts. Empty or unsupported mappings remain proof gaps.",
           "items": {
             "pattern": "^art_[0-9a-f]{32}$",
             "type": "string"
@@ -31,6 +34,7 @@
           "type": "array"
         },
         "explanation": {
+          "description": "Explain how the selected independent command evidence supports this task outcome. A current receipt may support multiple genuinely relevant criteria. A later failed or timed-out receipt cannot be replaced by an earlier pass; inspection alone is not independently executed command proof. Preserve inadequate-proof gaps.",
           "maxLength": 4096,
           "minLength": 1,
           "title": "Explanation",
@@ -63,6 +67,7 @@
   "additionalProperties": false,
   "properties": {
     "criterion_results": {
+      "description": "Narrative findings; these do not replace structured_criterion_results mappings.",
       "items": {
         "maxLength": 4096,
         "minLength": 1,
@@ -73,6 +78,7 @@
       "type": "array"
     },
     "evidence_artifact_ids": {
+      "description": "Current independent command receipt IDs cited by structured_criterion_results, taken from content.command_evidence_artifact_id of your verification results. Do not copy generic artifact_ids or include transcript, patch, Engineer or stale receipt IDs. The control plane independently binds observed records; this list grants no proof.",
       "items": {
         "pattern": "^art_[0-9a-f]{32}$",
         "type": "string"
@@ -131,6 +137,7 @@
         }
       ],
       "default": null,
+      "description": "Explicitly map every TaskSpec acceptance criterion once to your own current independent command receipts and exact command IDs. Passing code-change mappings require nonempty one-to-one command/receipt lists. Missing or inadequate proof remains inconclusive; never invent, repair or copy unrelated evidence references.",
       "title": "Structured Criterion Results"
     },
     "verdict": {
