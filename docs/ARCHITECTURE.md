@@ -67,6 +67,38 @@ sandbox. Public wire-size projection accounts for actual JSON escaping and redac
 omissions make the result incomplete. Static discovery is not executable-environment
 or business-test qualification.
 
+The reviewed model-free baseline has its own principal and state, not a fake Run:
+
+```text
+User CLI plan -> BaselineAdmissionService -> five-minute exact review
+User exact once consent -> permanent owner claim -> ResourceService worktree/sandbox
+                         -> ToolGateway -> PermissionBroker -> dispatch claim
+                         -> Docker read-only source + bounded scratch
+                         -> immutable command observation -> exact cleanup -> report
+```
+
+`application/baseline.py` owns admission and lifecycle; dedicated baseline ports
+and SQLite migration13 retain canonical identities and immutable evidence. Git,
+Docker, Gateway, Broker and ResourceService expose separately typed baseline
+operations; ordinary Run labels, wire schemas and execution semantics remain
+separate. The capability must exist before authorization/ownership is consumed.
+Every dispatch revalidates the reviewed source/configuration/trust/image/daemon;
+the full resource set and payloads are fenced before cleanup. The lock order is
+organization publication, trust read guard, then short SQLite transactions, with
+no await inside a SQL transaction. Trust stays guarded through transport drain;
+same-process policy saves fail closed while that guard is held.
+
+No runtime/model or secret-store instance is constructed for this composition,
+although shared bootstrap modules import SDK code. It may initialize or migrate
+state even for `show`. Permanent claims never expire into replay authority; a
+stopped-owner recovery checks the exact reviewed cleanup scope and cannot replay
+the command. Unknown container creation with no native identity remains unknown,
+not a zero-effect inference. Observations are not an independent Agent verdict
+or S1 external oracle. Source is mounted read-only, so commands requiring writes
+to the project tree are not generally supported. Physical Python/Node and
+Session/cold-start qualification remain separate acceptance work; Session has
+no `/baseline` route yet. See [ADR0011](adr/0011-reviewed-model-free-business-baselines.md).
+
 PydanticAI has explicitly bound OpenAI, Anthropic Messages and Google Developer API
 factories. The additional OpenAI Agents SDK and LangGraph Harnesses each own their
 actual SDK loop behind the same Fleet runtime port; neither owns execution authority.

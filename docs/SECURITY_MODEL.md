@@ -40,6 +40,42 @@ registered values, encodings, lengths and fingerprints never cross to the child.
 Inspection therefore requires a fresh credential-free process. This is a stated
 availability limitation, not weaker redaction or permission to use another key.
 
+### Reviewed model-free baseline boundary
+
+The independently reviewed baseline is integrated into the working candidate, not yet a
+physical-Docker acceptance claim. See [ADR0011](adr/0011-reviewed-model-free-business-baselines.md)
+and its living ExecPlan. It observes one configured command under explicit user
+allow-once consent, through the existing Broker/Gateway/resource/sandbox boundary;
+it is never a model tool or a fabricated agent Run. Distinct immutable owner,
+review, claim, lease and report identities are held in ten additive schema13 tables.
+No baseline report counts as CommandEvidence, a VerifierVerdict, CompletionGate
+success or an S1 independent oracle outcome.
+
+The five-minute review binds canonical committed source, command, configuration,
+current user policy, image, daemon and resource/mount limits. User command denies
+win; ordinary trust modes/always-allow rules cannot replace this consent. Exact
+permanent owner and dispatch claims precede allocation and command creation,
+respectively. Unknown results, expiry and missing containers never grant a retry.
+Baseline source is mounted read-only with bounded private scratch and networking
+disabled. No credential/runtime factory, arbitrary environment, shell, image pull,
+dependency installation, Fake or LocalUnsafe fallback belongs to this composition.
+
+Cooperating publication/trust guards precede short SQLite CAS transactions;
+no SQLite transaction spans an await. Canonical nested bytes are validated afresh
+at use. Bounded output is redacted, terminal-escaped and hashed only after redaction;
+arbitrary unknown secrets cannot be promised detectable. Exact whole-set cleanup
+is fenced and ordered; an incomplete execution prevents sandbox/worktree removal.
+Stopped-owner recovery conservatively rejects present, reused or inaccessible PIDs,
+and only cleans the reviewed old resource set. It never resumes execution.
+
+Migration13 preserves existing Run schemas, not old-binary opening compatibility.
+Normal older migrating composition rejects the newer state; do not downgrade
+user databases. Baseline BLOB growth can exceed the unchanged evaluation capture
+ceilings. Application guards do not exclude hostile same-user processes or prove
+atomic host filesystem snapshots. Standalone baseline composition and the existing
+Session credential/redaction lifecycle are separate; no whole-Session credential-
+free guarantee follows from the standalone path.
+
 ### Persistent conversation invariants
 
 Conversation identity is coordination context, never permission. Atomic registration binds the exact root Run, project/repository, goal/context, config and initial budget before a model request. A duplicate key cannot acquire a second owner or reset usage. The shared WorkflowEngine enforces claims for public `resume` as well as chat, including graph children through their exact parent. Unknown owners never expire into replay authority, and a paused display state alone cannot release an uncertain claim. Explicit owner-stopped recovery fences without replay and requires exact root/descendant cleanup before another turn is admitted.

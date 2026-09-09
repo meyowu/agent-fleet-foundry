@@ -298,8 +298,21 @@ async def test_migration12_preserves_reservations_and_rolls_back_ddl(harness: Fl
     fixture = execution_fixture(harness)
     state = harness.container.state
     with sqlite3.connect(state.database_path) as connection:
+        for table in (
+            "baseline_events",
+            "baseline_cleanup_receipts",
+            "baseline_reports",
+            "baseline_command_observations",
+            "baseline_resource_leases",
+            "baseline_dispatch_claims",
+            "baseline_owner_claims",
+            "baseline_authorizations",
+            "baseline_reviews",
+            "baseline_executions",
+        ):
+            connection.execute(f"DROP TABLE {table}")
         connection.execute("DROP TABLE evaluation_executions")
-        connection.execute("DELETE FROM schema_migrations WHERE version=12")
+        connection.execute("DELETE FROM schema_migrations WHERE version>=12")
         tables = [
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -312,7 +325,7 @@ async def test_migration12_preserves_reservations_and_rolls_back_ddl(harness: Fl
     with sqlite3.connect(state.database_path) as connection:
         assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 11
         connection.execute("DROP TABLE evaluation_executions")
-    assert state.migrate() == 12
+    assert state.migrate() == 13
     with sqlite3.connect(state.database_path) as connection:
         assert {
             name: connection.execute(f'SELECT * FROM "{name}"').fetchall() for name in tables

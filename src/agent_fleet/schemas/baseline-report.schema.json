@@ -1,0 +1,201 @@
+{
+  "$defs": {
+    "BaselineObservationRef": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_id": {
+          "pattern": "^baseline_[0-9a-f]{32}$",
+          "title": "Baseline Id",
+          "type": "string"
+        },
+        "execution_id": {
+          "pattern": "^bexec_[0-9a-f]{32}$",
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "observation_id": {
+          "pattern": "^bobs_[0-9a-f]{64}$",
+          "title": "Observation Id",
+          "type": "string"
+        },
+        "record_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Record Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_id",
+        "baseline_id",
+        "execution_id",
+        "record_sha256"
+      ],
+      "title": "BaselineObservationRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "approved_source_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Approved Source Sha256",
+      "type": "string"
+    },
+    "authorization_id": {
+      "pattern": "^bauth_[0-9a-f]{32}$",
+      "title": "Authorization Id",
+      "type": "string"
+    },
+    "baseline_id": {
+      "pattern": "^baseline_[0-9a-f]{32}$",
+      "title": "Baseline Id",
+      "type": "string"
+    },
+    "claim_id": {
+      "pattern": "^bclaim_[0-9a-f]{32}$",
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "cleanup_complete": {
+      "title": "Cleanup Complete",
+      "type": "boolean"
+    },
+    "cleanup_receipt_sha256s": {
+      "items": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "maxItems": 3,
+      "title": "Cleanup Receipt Sha256S",
+      "type": "array"
+    },
+    "cleanup_scope_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Cleanup Scope Sha256",
+      "type": "string"
+    },
+    "command_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Command Sha256",
+      "type": "string"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "completion_assurance": {
+      "const": "baseline_observation_only",
+      "default": "baseline_observation_only",
+      "title": "Completion Assurance",
+      "type": "string"
+    },
+    "observation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BaselineObservationRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "observed_exit_code": {
+      "anyOf": [
+        {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Observed Exit Code"
+    },
+    "predecessor_report_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Predecessor Report Sha256"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "proof_gaps": {
+      "items": {
+        "enum": [
+          "missing_result",
+          "output_incomplete",
+          "source_drift",
+          "cleanup_incomplete",
+          "controller_error"
+        ],
+        "type": "string"
+      },
+      "maxItems": 5,
+      "title": "Proof Gaps",
+      "type": "array"
+    },
+    "review_id": {
+      "pattern": "^breview_[0-9a-f]{32}$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "review_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Review Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "observed",
+        "inconclusive",
+        "recovery_required"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "target_applied": {
+      "const": false,
+      "default": false,
+      "title": "Target Applied",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "baseline_id",
+    "project_id",
+    "review_id",
+    "review_sha256",
+    "authorization_id",
+    "claim_id",
+    "command_sha256",
+    "approved_source_sha256",
+    "observation",
+    "cleanup_scope_sha256",
+    "cleanup_receipt_sha256s",
+    "cleanup_complete",
+    "status",
+    "observed_exit_code",
+    "completed_at",
+    "proof_gaps"
+  ],
+  "title": "BaselineReport",
+  "type": "object"
+}

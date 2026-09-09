@@ -46,7 +46,7 @@ from agent_fleet.ports.id_generator import IdGenerator
 if TYPE_CHECKING:
     from agent_fleet.domain.evolution import OrganizationAdmission
 
-SUPPORTED_SCHEMA_VERSION = 12
+SUPPORTED_SCHEMA_VERSION = 13
 
 _StateModel = TypeVar("_StateModel", bound=StrictModel)
 

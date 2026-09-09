@@ -17,6 +17,7 @@ from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
 from agent_fleet.adapters.diagnostics.system import LocalSystemDiagnostics
 from agent_fleet.adapters.executable_resolution import resolve_fixed_executable
 from agent_fleet.adapters.filesystem.workspace import BoundedWorkspaceFileSystem
+from agent_fleet.adapters.persistence.baseline import SqliteBaselineStore
 from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
 from agent_fleet.adapters.persistence.evaluation_execution import SqliteEvaluationExecutionStore
 from agent_fleet.adapters.persistence.evolution import SqliteOrganizationStore
@@ -40,6 +41,7 @@ from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.adapters.trust.filesystem import FilesystemTrustStore
 from agent_fleet.application.approvals import ApprovalService
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.baseline import BaselineAdmissionService, BaselineService
 from agent_fleet.application.bootstrap import BootstrapService
 from agent_fleet.application.conversations import ConversationService
 from agent_fleet.application.doctor import DoctorService
@@ -66,6 +68,10 @@ from agent_fleet.application.session_recovery import SessionRecoveryService
 from agent_fleet.application.session_review import SessionReviewService
 from agent_fleet.application.workflow import WorkflowEngine
 from agent_fleet.domain.security import Redactor
+from agent_fleet.ports.baseline_resources import (
+    BaselineGatewayDependencies,
+    BaselineResourceDependencies,
+)
 
 _FIXED_DOCKER_EXECUTABLES = (
     Path("/usr/local/bin/docker"),
@@ -192,6 +198,93 @@ def _validate_installation_id_stat(file_stat: os.stat_result) -> None:
         or file_stat.st_size not in {0, 33}
     ):
         raise RuntimeError("Fleet installation identity ownership or permissions are unsafe")
+
+
+@dataclass(frozen=True)
+class BaselineContainer:
+    service: BaselineService
+    state: SqliteStateStore
+    store: SqliteBaselineStore
+    repository: GitRepositoryAdapter
+    sandboxes: SandboxRegistry
+    resources: ResourceService
+    gateway: ToolGateway
+    permissions: PermissionPolicyService
+
+
+def build_baseline_container(
+    state_root: Path | None = None, *, redactor: Redactor | None = None
+) -> BaselineContainer:
+    """No SecretStore, RuntimeRegistry, model factories, agents or Workflow engine."""
+    root = (state_root or resolve_state_root()).resolve()
+    clock = SystemClock()
+    ids = UuidIdGenerator()
+    active_redactor = redactor or Redactor()
+    state = SqliteStateStore(root / "state.db", clock, ids, active_redactor)
+    state.migrate()
+    installation = _load_or_create_installation_id(root)
+    store = SqliteBaselineStore(state, installation_id=installation)
+    config = YamlConfigurationAdapter(active_redactor)
+    repository = GitRepositoryAdapter(root, ids)
+    docker = DockerSandboxProvider(
+        runner=BoundedProcessRunner(),
+        clock=clock,
+        ids=ids,
+        redactor=active_redactor,
+        docker_executable=resolve_fixed_executable(
+            _FIXED_DOCKER_EXECUTABLES, expected_name="docker"
+        ),
+        installation_id=installation,
+        git_shadow_path=root / "sandbox" / "git-shadow",
+    )
+    sandboxes = SandboxRegistry({"docker": docker}, baseline_providers={"docker": docker})
+    resources = ResourceService(
+        state,
+        repository,
+        sandboxes,
+        clock,
+        ids,
+        baseline=BaselineResourceDependencies(store, repository),
+    )
+    trust = FilesystemTrustStore(root / "trust" / "trust.yaml", active_redactor)
+    permissions = PermissionPolicyService(
+        state, trust, config, repository, clock, ids, active_redactor, baseline=store
+    )
+    admission = BaselineAdmissionService(
+        state=state,
+        state_root=root,
+        config=config,
+        repository=repository,
+        baseline_repository=repository,
+        organization_files=NativeOrganizationFileSystem(active_redactor),
+        trust=trust,
+        permissions=permissions,
+        sandboxes=sandboxes,
+        clock=clock,
+        ids=ids,
+        redactor=active_redactor,
+        installation_id=installation,
+    )
+    # The ordinary Gateway dependencies are real but unused by its baseline branch.
+    artifacts = ArtifactService(
+        LocalArtifactStore(root / "artifacts"), state, clock, ids, active_redactor
+    )
+    gateway = ToolGateway(
+        state,
+        artifacts,
+        sandboxes,
+        PolicyPermissionBroker(permissions),
+        clock,
+        ids,
+        active_redactor,
+        BoundedWorkspaceFileSystem(),
+        repository=repository,
+        baseline=BaselineGatewayDependencies(store, repository, admission.guard),
+    )
+    service = BaselineService(admission, store, resources, gateway, clock)
+    return BaselineContainer(
+        service, state, store, repository, sandboxes, resources, gateway, permissions
+    )
 
 
 def build_readiness_service(

@@ -19,6 +19,12 @@ from agent_fleet.adapters.executable_resolution import (
     resolve_trusted_executable,
     trusted_search_path,
 )
+from agent_fleet.domain.baseline import (
+    BaselineSourceEntry,
+    BaselineSourceManifest,
+    baseline_id,
+)
+from agent_fleet.domain.baseline_resources import BaselineResourceOwner, BaselineWorkspace
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.evaluation_execution import CommittedSource, SourceEntry
 from agent_fleet.domain.ids import IdPrefix
@@ -86,7 +92,386 @@ _ALLOWED_GIT_SUBCOMMANDS = frozenset(
 _OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
+def _baseline_repository_error() -> FleetError:
+    return FleetError(
+        ErrorCode.RECOVERY_REQUIRED,
+        "The exact baseline source or private worktree binding is unavailable.",
+        "Preserve the original claim and recover only its reviewed resource scope.",
+    )
+
+
+def _baseline_stat(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
 class GitRepositoryAdapter:
+    def baseline_source_manifest(self, root: Path, commit: str) -> BaselineSourceManifest:
+        """Bound regular committed blobs including exact sizes, never execute filters."""
+        try:
+            if type(commit) is not str or _OBJECT_ID.fullmatch(commit) is None:
+                raise ValueError("invalid baseline commit")
+            info = self.inspect(root)
+            if info.head_revision != commit:
+                raise ValueError("baseline source moved")
+            cwd = Path(info.root)
+            environment = _git_environment(cwd, self.state_root, self._state_root_input)
+            deadline = time.monotonic() + _GIT_TIMEOUT_SECONDS
+
+            def query(args: list[str], maximum: int, *, capture: bool) -> tuple[bytes, str, int]:
+                argv = _secure_git_argv(
+                    ["git", *args],
+                    cwd=cwd,
+                    state_root=self.state_root,
+                    environment=environment,
+                    git_executable=self._git_binary,
+                    extra_untrusted_roots=(self._state_root_input,),
+                )
+                raw, digest, size, code = _bounded_organization_git(
+                    argv,
+                    cwd=cwd,
+                    environment=environment,
+                    deadline=deadline,
+                    maximum=maximum,
+                    capture=capture,
+                )
+                if code:
+                    raise ValueError("baseline source query failed")
+                return raw, digest, size
+
+            raw, _, _ = query(
+                ["ls-tree", "-r", "-z", "--full-tree", commit], 1_048_576, capture=True
+            )
+            rows = raw.split(b"\0")
+            if rows[-1] != b"" or len(rows) > 4097:
+                raise ValueError("baseline source tree exceeded bound")
+            entries: list[BaselineSourceEntry] = []
+            total = 0
+            for row in rows[:-1]:
+                metadata, path = row.split(b"\t", 1)
+                mode, kind, object_id = metadata.decode("ascii").split(" ")
+                if (
+                    mode not in {"100644", "100755"}
+                    or kind != "blob"
+                    or _OBJECT_ID.fullmatch(object_id) is None
+                ):
+                    raise ValueError("unsupported baseline source entry")
+                _, digest, size = query(
+                    ["cat-file", "blob", object_id],
+                    min(2_000_000, 32_000_000 - total),
+                    capture=False,
+                )
+                total += size
+                entries.append(
+                    BaselineSourceEntry.model_validate(
+                        {
+                            "path": path.decode("utf-8"),
+                            "mode": mode,
+                            "size": size,
+                            "content_sha256": digest,
+                        }
+                    )
+                )
+            manifest = BaselineSourceManifest(
+                entries=tuple(sorted(entries, key=lambda item: item.path))
+            )
+            self._check_baseline_tracked_source(cwd, manifest, deadline=deadline)
+            if self.inspect(root).head_revision != commit:
+                raise ValueError("baseline source moved")
+            return manifest
+        except (FleetError, OSError, ValueError, subprocess.SubprocessError):
+            raise _baseline_repository_error() from None
+
+    @staticmethod
+    def _check_baseline_tracked_source(
+        root: Path, manifest: BaselineSourceManifest, *, deadline: float
+    ) -> None:
+        """Git status may hide assume-unchanged files; compare actual tracked bytes too."""
+        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            for entry in manifest.entries:
+                descriptor = os.dup(root_fd)
+                try:
+                    parts = entry.path.split("/")
+                    for component in parts[:-1]:
+                        child = os.open(
+                            component,
+                            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=descriptor,
+                        )
+                        os.close(descriptor)
+                        descriptor = child
+                    file_fd = os.open(
+                        parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
+                    )
+                    try:
+                        before = os.fstat(file_fd)
+                        mode = "100755" if before.st_mode & 0o111 else "100644"
+                        if (
+                            not stat.S_ISREG(before.st_mode)
+                            or before.st_nlink != 1
+                            or before.st_size != entry.size
+                            or mode != entry.mode
+                        ):
+                            raise _baseline_repository_error()
+                        digest = hashlib.sha256()
+                        count = 0
+                        while True:
+                            if time.monotonic() >= deadline:
+                                raise _baseline_repository_error()
+                            chunk = os.read(file_fd, min(65_536, entry.size - count + 1))
+                            if not chunk:
+                                break
+                            count += len(chunk)
+                            if count > entry.size:
+                                raise _baseline_repository_error()
+                            digest.update(chunk)
+                        if (
+                            count != entry.size
+                            or digest.hexdigest() != entry.content_sha256
+                            or _baseline_stat(os.fstat(file_fd)) != _baseline_stat(before)
+                            or _baseline_stat(
+                                os.stat(parts[-1], dir_fd=descriptor, follow_symlinks=False)
+                            )
+                            != _baseline_stat(before)
+                        ):
+                            raise _baseline_repository_error()
+                    finally:
+                        os.close(file_fd)
+                finally:
+                    os.close(descriptor)
+        finally:
+            os.close(root_fd)
+
+    def _materialize_baseline_manifest(
+        self, path: Path, commit: str, manifest: BaselineSourceManifest
+    ) -> None:
+        deadline = time.monotonic() + _GIT_TIMEOUT_SECONDS
+        environment = _git_environment(path, self.state_root, self._state_root_input)
+        for entry in manifest.entries:
+            argv = _secure_git_argv(
+                ["git", "cat-file", "blob", f"{commit}:{entry.path}"],
+                cwd=path,
+                state_root=self.state_root,
+                environment=environment,
+                git_executable=self._git_binary,
+                extra_untrusted_roots=(self._state_root_input,),
+            )
+            content, digest, size, code = _bounded_organization_git(
+                argv,
+                cwd=path,
+                environment=environment,
+                deadline=deadline,
+                maximum=entry.size,
+            )
+            if code or size != entry.size or digest != entry.content_sha256:
+                raise _baseline_repository_error()
+            destination = resolve_logical_path(path, entry.path, allow_missing=True)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with destination.open("xb") as stream:
+                stream.write(content)
+            destination.chmod(0o755 if entry.mode == "100755" else 0o644)
+
+    def prepare_baseline_workspace(
+        self, owner: BaselineResourceOwner, base_revision: str, *, approved_source_sha256: str
+    ) -> BaselineWorkspace:
+        owner = BaselineResourceOwner.from_canonical(owner.canonical_bytes())
+        workspace_id = baseline_id("bws")
+        return BaselineWorkspace(
+            owner=owner,
+            workspace_id=workspace_id,
+            path=str(self.state_root / "baseline-workspaces" / owner.baseline_id / workspace_id),
+            base_revision=base_revision,
+            approved_source_sha256=approved_source_sha256,
+        )
+
+    def _baseline_workspace_path(self, workspace: BaselineWorkspace, *, exists: bool) -> Path:
+        workspace = BaselineWorkspace.from_canonical(workspace.canonical_bytes())
+        expected = (
+            self.state_root
+            / "baseline-workspaces"
+            / workspace.owner.baseline_id
+            / workspace.workspace_id
+        )
+        if str(expected) != workspace.path:
+            raise _baseline_repository_error()
+        try:
+            if expected.resolve(strict=exists) != expected:
+                raise _baseline_repository_error()
+            for item in (expected.parent.parent, expected.parent, expected):
+                if item.is_symlink():
+                    raise _baseline_repository_error()
+            if exists and not expected.is_dir():
+                raise _baseline_repository_error()
+        except OSError:
+            raise _baseline_repository_error() from None
+        return expected
+
+    def materialize_baseline_workspace(
+        self, root: Path, workspace: BaselineWorkspace
+    ) -> BaselineWorkspace:
+        try:
+            if workspace.materialized_source_sha256 is not None:
+                raise _baseline_repository_error()
+            path = self._baseline_workspace_path(workspace, exists=False)
+            if path.exists() or path.is_symlink():
+                raise _baseline_repository_error()
+            manifest = self.baseline_source_manifest(root, workspace.base_revision)
+            if manifest.digest != workspace.approved_source_sha256:
+                raise _baseline_repository_error()
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            self._baseline_workspace_path(workspace, exists=False)
+            self._run(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "--detach",
+                    "--no-checkout",
+                    str(path),
+                    workspace.base_revision,
+                ],
+                cwd=root.resolve(strict=True),
+            )
+            self._run(["git", "read-tree", workspace.base_revision], cwd=path)
+            self._materialize_baseline_manifest(path, workspace.base_revision, manifest)
+            actual = self.baseline_workspace_fingerprint(workspace)
+            if actual != workspace.approved_source_sha256:
+                raise _baseline_repository_error()
+            return BaselineWorkspace(
+                owner=workspace.owner,
+                workspace_id=workspace.workspace_id,
+                path=workspace.path,
+                base_revision=workspace.base_revision,
+                approved_source_sha256=workspace.approved_source_sha256,
+                materialized_source_sha256=actual,
+            )
+        except (FleetError, OSError, ValueError, subprocess.SubprocessError):
+            raise _baseline_repository_error() from None
+
+    def baseline_workspace_fingerprint(self, workspace: BaselineWorkspace) -> str:
+        """Walk the actual tree through pinned descriptors; reject links/extra empty dirs."""
+        path = self._baseline_workspace_path(workspace, exists=True)
+        deadline = time.monotonic() + _GIT_TIMEOUT_SECONDS
+        entries: list[BaselineSourceEntry] = []
+        directories: set[str] = set()
+        total = 0
+        visited = 0
+
+        def walk(descriptor: int, prefix: str) -> None:
+            nonlocal total, visited
+            before = os.fstat(descriptor)
+            names = os.listdir(descriptor)
+            if len(names) > 8192:
+                raise _baseline_repository_error()
+            for name in sorted(names):
+                visited += 1
+                if visited > 8192 or time.monotonic() > deadline:
+                    raise _baseline_repository_error()
+                logical = f"{prefix}/{name}" if prefix else name
+                info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                if not prefix and name == ".git":
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 4096 or info.st_nlink != 1:
+                        raise _baseline_repository_error()
+                    continue
+                if stat.S_ISDIR(info.st_mode):
+                    child = os.open(
+                        name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+                    )
+                    try:
+                        if _baseline_stat(os.fstat(child)) != _baseline_stat(info):
+                            raise _baseline_repository_error()
+                        directories.add(logical)
+                        walk(child, logical)
+                    finally:
+                        os.close(child)
+                elif (
+                    stat.S_ISREG(info.st_mode)
+                    and info.st_nlink == 1
+                    and stat.S_IMODE(info.st_mode) in {0o644, 0o755}
+                ):
+                    if (
+                        info.st_size > 2_000_000
+                        or total + info.st_size > 32_000_000
+                        or len(entries) >= 4096
+                    ):
+                        raise _baseline_repository_error()
+                    child = os.open(
+                        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor
+                    )
+                    try:
+                        if _baseline_stat(os.fstat(child)) != _baseline_stat(info):
+                            raise _baseline_repository_error()
+                        digest = hashlib.sha256()
+                        size = 0
+                        while chunk := os.read(child, min(65_536, 2_000_001 - size)):
+                            size += len(chunk)
+                            if size > info.st_size or time.monotonic() > deadline:
+                                raise _baseline_repository_error()
+                            digest.update(chunk)
+                        if size != info.st_size or _baseline_stat(
+                            os.fstat(child)
+                        ) != _baseline_stat(info):
+                            raise _baseline_repository_error()
+                        total += size
+                        entries.append(
+                            BaselineSourceEntry(
+                                path=logical,
+                                mode="100755" if stat.S_IMODE(info.st_mode) == 0o755 else "100644",
+                                size=size,
+                                content_sha256=digest.hexdigest(),
+                            )
+                        )
+                    finally:
+                        os.close(child)
+                else:
+                    raise _baseline_repository_error()
+                if _baseline_stat(
+                    os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                ) != _baseline_stat(info):
+                    raise _baseline_repository_error()
+            if _baseline_stat(os.fstat(descriptor)) != _baseline_stat(before):
+                raise _baseline_repository_error()
+
+        descriptor = -1
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            opened = os.fstat(descriptor)
+            walk(descriptor, "")
+            if _baseline_stat(path.stat()) != _baseline_stat(opened):
+                raise _baseline_repository_error()
+            expected_directories = {
+                str(parent)
+                for entry in entries
+                for parent in Path(entry.path).parents
+                if str(parent) != "."
+            }
+            if directories != expected_directories:
+                raise _baseline_repository_error()
+            return BaselineSourceManifest(
+                entries=tuple(sorted(entries, key=lambda item: item.path))
+            ).digest
+        except (OSError, ValueError):
+            raise _baseline_repository_error() from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+    def cleanup_baseline_workspace(self, root: Path, workspace: BaselineWorkspace) -> None:
+        try:
+            path = self._baseline_workspace_path(workspace, exists=False)
+            registered = self._workspace_is_registered(root, path)
+            if not path.exists() and not registered:
+                return
+            if not registered:
+                raise _baseline_repository_error()
+            self._run(
+                ["git", "worktree", "remove", "--force", str(path)], cwd=root.resolve(strict=True)
+            )
+            if path.exists() or self._workspace_is_registered(root, path):
+                raise _baseline_repository_error()
+        except (FleetError, OSError, ValueError, subprocess.SubprocessError):
+            raise _baseline_repository_error() from None
+
     def committed_source(self, root: Path, commit_sha: str) -> CommittedSource:
         """Hash bounded committed blobs, never worktree bytes or filter output."""
         result = None

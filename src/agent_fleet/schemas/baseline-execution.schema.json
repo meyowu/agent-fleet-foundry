@@ -1,0 +1,98 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "baseline_id": {
+      "pattern": "^baseline_[0-9a-f]{32}$",
+      "title": "Baseline Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "current_report_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Current Report Sha256"
+    },
+    "owner_claim_id": {
+      "anyOf": [
+        {
+          "pattern": "^bclaim_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Owner Claim Id"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "review_id": {
+      "pattern": "^breview_[0-9a-f]{32}$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "review_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Review Sha256",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "planned",
+        "revoked",
+        "owned",
+        "executing",
+        "cleaning",
+        "observed",
+        "inconclusive",
+        "recovery_required"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "baseline_id",
+    "review_id",
+    "review_sha256",
+    "project_id",
+    "revision",
+    "status",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "BaselineExecution",
+  "type": "object"
+}

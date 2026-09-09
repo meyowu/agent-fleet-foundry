@@ -8,6 +8,14 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from agent_fleet.domain.baseline import (
+    BaselineAuthorization,
+    BaselineCommandObservation,
+    BaselineExecution,
+    BaselineReport,
+    BaselineReview,
+)
+from agent_fleet.domain.baseline_resources import BaselineShow, BaselineStoppedOwnerReview
 from agent_fleet.domain.bootstrap import BootstrapReport
 from agent_fleet.domain.budgets import (
     ModelRequestAccounting,
@@ -137,6 +145,13 @@ from agent_fleet.domain.trust import (
 )
 
 SCHEMAS: dict[str, type[BaseModel]] = {
+    "baseline-authorization.schema.json": BaselineAuthorization,
+    "baseline-command-observation.schema.json": BaselineCommandObservation,
+    "baseline-execution.schema.json": BaselineExecution,
+    "baseline-report.schema.json": BaselineReport,
+    "baseline-review.schema.json": BaselineReview,
+    "baseline-show.schema.json": BaselineShow,
+    "baseline-stopped-owner-review.schema.json": BaselineStoppedOwnerReview,
     "role-bundle-definition.schema.json": RoleBundleDefinition,
     "role-bundle-preview.schema.json": RoleBundlePreview,
     "committed-source.schema.json": CommittedSource,

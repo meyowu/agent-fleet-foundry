@@ -19,10 +19,12 @@ from rich.text import Text
 
 from agent_fleet import __version__
 from agent_fleet.bootstrap import (
+    build_baseline_container,
     build_container,
     build_readiness_service,
     build_role_bundle_service,
 )
+from agent_fleet.cli.baseline import register_baseline_commands
 from agent_fleet.cli.chat import register_chat_command
 from agent_fleet.cli.dashboard import register_dashboard_command
 from agent_fleet.cli.evolution import register_evolution_commands
@@ -1002,6 +1004,14 @@ register_dashboard_command(app)
 register_readiness_command(
     app,
     service_factory=lambda redactor: build_readiness_service(redactor=redactor),
+    redactor_factory=_environment_redactor,
+    presenter=_present_with_warnings,
+    error_presenter=_present_error,
+)
+
+register_baseline_commands(
+    app,
+    service_factory=lambda redactor: build_baseline_container(redactor=redactor).service,
     redactor_factory=_environment_redactor,
     presenter=_present_with_warnings,
     error_presenter=_present_error,

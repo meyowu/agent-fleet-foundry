@@ -103,6 +103,16 @@ async def test_schema7_upgrade_preserves_real_paused_chat_budget_graph_and_lease
         # This isolated fixture models schema7; it is not an older-binary execution claim.
         copy.execute("PRAGMA foreign_keys=OFF")
         for table in (
+            "baseline_events",
+            "baseline_cleanup_receipts",
+            "baseline_reports",
+            "baseline_command_observations",
+            "baseline_resource_leases",
+            "baseline_dispatch_claims",
+            "baseline_owner_claims",
+            "baseline_authorizations",
+            "baseline_reviews",
+            "baseline_executions",
             "evaluation_executions",
             "evaluation_outcomes",
             "evaluation_reservations",

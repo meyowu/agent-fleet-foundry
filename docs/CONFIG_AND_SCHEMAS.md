@@ -79,6 +79,48 @@ has explicit omission counts and exit1; complete static inspection exits0; safe
 admission failure exits2. Exit0 is not proof of installed dependencies or passing
 business tests. Unicode/redaction/JSON escaping are included in the wire bound.
 
+## Reviewed model-free baseline contracts
+
+The integrated standalone `fleet baseline plan/run/show/revoke/recover` path adds
+seven public schemas: `baseline-review`, `baseline-authorization`,
+`baseline-execution`, `baseline-command-observation`, `baseline-report`,
+`baseline-show` and `baseline-stopped-owner-review`. There are now115 public
+schemas; the prior108 schema bytes and migrations1–12 remain unchanged.
+
+Migration0013 adds separate reviews, authorizations, executions, permanent owner
+and dispatch claims, resource leases, command observations, reports, cleanup
+receipts and events. It does not fabricate Run, Task, Agent, ToolIntent,
+CommandEvidence or EvidenceBundle records. Upgrades are forward-only: normal
+older migrating binaries refuse schema13, but this is not a claim that all
+low-level older reads reject or that refusal creates no transient WAL/SHM files.
+
+A review binds the entire clean committed regular-file source tree, existing
+command, configuration, user trust, installation, Docker image and daemon. It
+expires after five minutes and requires explicit exact once-only consent;
+ordinary run/project allow rules do not replace it. Canonical tagged bytes and
+recomputed hashes retain these bindings through storage, materialization,
+dispatch, observation and cleanup. The runtime has no baseline tool route.
+
+Review and observation JSON each have a128KiB ceiling; report JSON has256KiB.
+Captured/redacted stdout+stderr share a64000-byte bound; only final redacted bytes
+are hashed and persisted. Flags distinguish capture truncation, post-redaction
+truncation and decoding replacement. This cannot promise to detect every unknown
+secret in arbitrary command output. Command timeout is at most180 seconds and
+the attempt at most300 seconds; Docker is nonroot/no-network/read-only with
+at most1 CPU,512MiB memory,64 PIDs and256MiB aggregate scratch. Lower requested
+limits still apply. An unprepared image, unsupported adapter, dirty tree or deny
+is not silently repaired or bypassed.
+
+Observations/reports are immutable content-addressed records. Cleanup recovery
+can append a successor report with the previous report hash, never replace the
+history. The report remains `completion_assurance=baseline_observation_only` and
+`target_applied=false`; nonzero command exits are observations, not automatic
+product-fault diagnoses. Missing results remain unknown. These records do not
+enable the disabled S1 terminal finalizers. CLI composition initializes/migrates
+state but does not construct a SecretStore, RuntimeRegistry or model factory;
+shared bootstrap imports are not a no-SDK-import guarantee. Session baseline
+control and whole-Session credential-free composition are not implemented.
+
 ## 1. Configuration ownership
 
 There are three distinct configuration classes. Do not merge them into one file.

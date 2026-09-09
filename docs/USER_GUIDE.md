@@ -4,11 +4,13 @@
 
 文档状态：本版本实现六项核心能力及本地 release-candidate 工具。全新 wheel/sdist、真实 Docker 练习、跨平台检查与 GitHub 交付的确切结果，见 [MVP acceptance ledger](MVP_ACCEPTANCE.md) 和 [README](../README.md#release-candidate-verification-2026-09-05)；不要把示例命令当成执行记录。2026-09-09 的有界真实 OpenAI canary 已独立验收通过，范围见本指南的真实模型测试说明。CLI 的完整阶段标记保持6；owner 许可证决定和其他公开发布门槛不会因此自动完成，也不代表 S1–S3 全部完成。当前没有公开包/镜像发布或已获授权的开源许可证。安装包附带本指南全文；跨文档相对链接请在同版本源码仓库中浏览。
 
+真实模型结果补充：上段指的是10:37UTC验收的历史 attempt6，不是当前版本的通过证明。最新3fe候选在20:44UTC失败：Engineer和Verifier各自的Docker测试退出码为0，但Verifier随后读取受保护的`.fleet`目录被拒绝，没有有效VerifierVerdict，CompletionGate未通过。后续仅补充读取范围/证据指引，尚无新的真实模型成功记录。请以[README的最新状态](../README.md#s1s3-development-status--2026-09-09-utc)为准。
+
 本次新增的 Session-first 功能见下一节；其交付进度与新的验收边界以 [Session-first living plan](../.agent/plans/2026-09-07-session-first-release.md) 和最终 README 为准。旧 MVP 账本不代表本次功能已经通过全部验收。
 
 ## 目录
 
-新增：[Session-first 使用](#session-first-使用本次版本新增)。原有分项教程继续保留：
+新增：[Session-first 使用](#session-first-使用本次版本新增)、[不调用模型的项目基线检查](#不调用模型的项目基线检查standalone-cli)。原有分项教程继续保留：
 
 1. [产品是什么](#1-产品是什么)
 2. [安装与环境](#2-安装与环境)
@@ -26,6 +28,60 @@
 14. [常见问题](#14-常见问题)
 15. [验证与贡献](#15-验证与贡献)
 16. [实现边界与下一步](#16-实现边界与下一步)
+
+## 不调用模型的项目基线检查（standalone CLI）
+
+`baseline` 用来观察项目现有检查命令的结果，不修代码，也不让 Agent 判断成功。
+当前工作版本已整合该独立 CLI，并通过隔离的离线验收；整合后的完整测试、安装包、
+真实 Docker 与跨项目冷启动验收要分别看 README 的最新记录。下面是使用方法，不是
+这些验收已经通过的证明。Session 中还没有 `/baseline` 命令。
+
+1. 先按下文完成项目注册和本地 runner 准备。项目必须是干净、已提交的 Git 仓库；
+   Fleet 状态目录与仓库必须互不包含。现有 VerificationProfile 中应已有要运行的
+   command ID，本地 Docker 镜像及所需工具/依赖也必须事先存在。此命令不会自动
+   初始化、安装依赖、拉取或构建镜像。用户设置必须允许完整仓库范围 `.`；命中的
+   deny 仍会拒绝，即使模式或持久规则原本允许普通任务执行。
+2. 生成精确审查，把 `COMMAND_ID` 换成项目已配置的命令 ID：
+
+   ```bash
+   fleet baseline plan . --command COMMAND_ID --json
+   ```
+
+   这一步持久化五分钟有效的 review，并检查本地执行条件，不运行项目命令。
+   审查实际命令、工作目录、source/config/trust 哈希、镜像、daemon 和资源限制。
+   `not_ready` 不代表执行失败，因为命令尚未执行。
+3. 确认内容无误后，使用刚才结果中的 `review.review_id` 和 `review_sha256`：
+
+   ```bash
+   fleet baseline run REVIEW_ID --allow-once --review-sha256 REVIEW_SHA256 --json
+   ```
+
+   这是一次执行授权，不是永久许可。源文件只读挂载、`.git` 被遮蔽，网络关闭，
+   只有有界临时空间可写。上限为命令180秒、整体尝试300秒、1 CPU、512 MiB内存、
+   64个进程和合计256 MiB临时空间；项目更低的限制仍生效。输出会限长、脱敏，
+   截断或未知结果会明确标记，不把它们当通过。
+4. 查看保留的结果，或撤销尚未消费的审查：
+
+   ```bash
+   fleet baseline show BASELINE_OR_REVIEW_ID --json
+   fleet baseline revoke REVIEW_ID --json
+   ```
+
+   `run`/`recover` 退出码0表示实际观察到命令退出0且证据/清理完整；1表示观察到非零
+   退出；2表示参数、许可或准入拒绝；3表示结果不确定或仍需恢复。`show` 自身退出0
+   只表示读取成功。报告始终是 `baseline_observation_only`，不会产生补丁、Verifier
+   verdict、目标应用或任务完成分数。应用组合会初始化/迁移状态数据库到13；因此
+   `show` 不是整个进程绝对零写入的承诺。旧版迁移入口会拒绝更新后的数据库。
+
+如果进程意外退出，先确认原执行者确实已停止，再审查 `show` 的恢复范围：
+
+```bash
+fleet baseline recover BASELINE_ID --owner-stopped --cleanup-sha256 CLEANUP_SHA256 --json
+```
+
+恢复只清理该哈希绑定的资源，不重新执行命令。已消费或结果未知的尝试不能靠重复
+`run` 重放；查不到 container 也不等于“从未运行”。原进程仍存在或资源身份不明时，
+系统会保留 `recovery_required`。清理成功也不抹去未知的原始命令结果。
 
 ## Session-first 使用（本次版本新增）
 

@@ -6,6 +6,21 @@ import asyncio
 from pathlib import Path
 
 from agent_fleet.application.sandboxes import SandboxRegistry
+from agent_fleet.domain.baseline import baseline_id, freeze_snapshot, reconstruct_sandbox
+from agent_fleet.domain.baseline_resources import (
+    BaselineCleanupClaim,
+    BaselineCleanupReceipt,
+    BaselineExecutionRecoveryRequest,
+    BaselineOwnerClaim,
+    BaselineResourceLease,
+    BaselineSandboxHandle,
+    BaselineSandboxPayload,
+    BaselineSandboxSpec,
+    BaselineWorkspace,
+    BaselineWorkspacePayload,
+    baseline_labels,
+    baseline_sandbox_handle,
+)
 from agent_fleet.domain.conversation import ConversationClaim, ConversationTurnStatus
 from agent_fleet.domain.errors import ConversationOwnershipUnavailableError, ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
@@ -31,6 +46,7 @@ from agent_fleet.domain.recovery_binding import (
 )
 from agent_fleet.domain.security import canonical_json_hash
 from agent_fleet.domain.workflow import is_terminal
+from agent_fleet.ports.baseline_resources import BaselineResourceDependencies
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.conversation import ConversationStore
 from agent_fleet.ports.graph import GraphStore
@@ -47,16 +63,192 @@ class ResourceService:
         sandboxes: SandboxRegistry,
         clock: Clock,
         ids: IdGenerator,
+        *,
+        baseline: BaselineResourceDependencies | None = None,
     ) -> None:
         self.state = state
         self.repository = repository
         self.sandboxes = sandboxes
         self.clock = clock
         self.ids = ids
+        self._baseline = baseline
+        self._baseline_cleanup_tasks: dict[str, tuple[str, asyncio.Task[None]]] = {}
         self._run_cleanup_tasks: dict[str, tuple[LeaseStatus, asyncio.Task[None]]] = {}
         self._lease_cleanup_tasks: dict[str, tuple[LeaseStatus, asyncio.Task[None]]] = {}
         self._reviewed_run_plans: dict[str, str] = {}
         self._reviewed_lease_plans: dict[str, str] = {}
+
+    def _require_baseline(self) -> BaselineResourceDependencies:
+        if self._baseline is None:
+            raise _baseline_resource_error()
+        return self._baseline
+
+    def create_baseline_workspace(
+        self, claim: BaselineOwnerClaim
+    ) -> tuple[BaselineWorkspace, BaselineResourceLease]:
+        dependencies = self._require_baseline()
+        view = dependencies.store.show(claim.owner.baseline_id)
+        if dependencies.store.owner_claim(claim.owner.baseline_id) != claim:
+            raise _baseline_resource_error()
+        workspace = dependencies.repository.prepare_baseline_workspace(
+            claim.owner,
+            view.review.base_revision,
+            approved_source_sha256=view.review.approved_source_sha256,
+        )
+        now = self.clock.now()
+        lease = BaselineResourceLease(
+            lease_id=baseline_id("blease"),
+            owner=claim.owner,
+            revision=0,
+            status="creating",
+            payload=BaselineWorkspacePayload(workspace=workspace),
+            created_at=now,
+            updated_at=now,
+        )
+        dependencies.store.reserve_baseline_lease(claim, lease)
+        created = dependencies.repository.materialize_baseline_workspace(
+            Path(view.review.repository_root), workspace
+        )
+        activated = dependencies.store.activate_baseline_lease(claim, lease.lease_id, 0, created)
+        return created, activated
+
+    async def create_baseline_sandbox(
+        self, claim: BaselineOwnerClaim, spec: BaselineSandboxSpec
+    ) -> BaselineSandboxHandle:
+        dependencies = self._require_baseline()
+        spec = BaselineSandboxSpec.from_canonical(spec.canonical_bytes())
+        local = reconstruct_sandbox(spec.sandbox)
+        provider = self.sandboxes.require_baseline(local.configuration, local.requirements)
+        del local
+        sandbox_id = baseline_id("bsandbox")
+        now = self.clock.now()
+        lease = BaselineResourceLease(
+            lease_id=baseline_id("blease"),
+            owner=claim.owner,
+            revision=0,
+            status="creating",
+            payload=BaselineSandboxPayload(sandbox_id=sandbox_id, spec=spec),
+            created_at=now,
+            updated_at=now,
+        )
+        dependencies.store.reserve_baseline_lease(claim, lease)
+        handle = await provider.create_baseline(spec, sandbox_id=sandbox_id)
+        dependencies.store.activate_baseline_lease(claim, lease.lease_id, 0, handle)
+        return handle
+
+    async def cleanup_baseline(self, plan: BaselineCleanupClaim) -> None:
+        dependencies = self._require_baseline()
+        plan = BaselineCleanupClaim.from_canonical(plan.canonical_bytes())
+        identity = plan.owner.baseline_id
+        existing = self._baseline_cleanup_tasks.get(identity)
+        if existing is not None:
+            if existing[0] != plan.digest:
+                raise _baseline_resource_error()
+            await _await_resource_cleanup_task(existing[1])
+            return
+        dependencies.store.validate_cleanup(plan)
+        task = asyncio.create_task(self._cleanup_baseline_fixed(plan))
+        self._baseline_cleanup_tasks[identity] = (plan.digest, task)
+        await _await_resource_cleanup_task(task)
+
+    async def _cleanup_baseline_fixed(self, plan: BaselineCleanupClaim) -> None:
+        dependencies = self._require_baseline()
+        view = dependencies.store.show(plan.owner.baseline_id)
+        tiers = {"execution": 0, "sandbox": 1, "workspace": 2}
+        for original in sorted(plan.snapshot.leases, key=lambda item: tiers[item.kind]):
+            current = dependencies.store.validate_cleanup(plan)
+            matches = [item for item in current.leases if item.lease_id == original.lease_id]
+            if len(matches) != 1:
+                raise _baseline_resource_error()
+            if matches[0].status == "released":
+                continue
+            if matches[0] != original:
+                raise _baseline_resource_error()
+            payload = original.payload
+            result: SandboxCleanupResult | None = None
+            complete = False
+            if isinstance(payload, BaselineWorkspacePayload):
+                try:
+                    dependencies.repository.cleanup_baseline_workspace(
+                        Path(view.review.repository_root), payload.workspace
+                    )
+                    complete = True
+                except (FleetError, OSError):
+                    complete = False
+            else:
+                if isinstance(payload, BaselineSandboxPayload):
+                    handle = payload.handle or baseline_sandbox_handle(
+                        payload.spec, payload.sandbox_id, view.review
+                    )
+                    local = reconstruct_sandbox(payload.spec.sandbox)
+                    resource_id = payload.sandbox_id
+                else:
+                    sandbox_leases = [
+                        item.payload
+                        for item in plan.snapshot.leases
+                        if isinstance(item.payload, BaselineSandboxPayload)
+                    ]
+                    if len(sandbox_leases) != 1:
+                        raise _baseline_resource_error()
+                    local = reconstruct_sandbox(sandbox_leases[0].spec.sandbox)
+                    handle = payload.sandbox
+                    resource_id = (
+                        payload.handle.native_resource_id
+                        if payload.handle is not None
+                        else payload.request.execution_id
+                    )
+                provider = self.sandboxes.require_baseline(local.configuration, local.requirements)
+                del local
+                dependencies.store.validate_cleanup(plan)
+                try:
+                    if isinstance(payload, BaselineSandboxPayload):
+                        result = await provider.terminate_baseline(handle)
+                    elif payload.handle is not None:
+                        result = await provider.cleanup_baseline_execution(payload.handle)
+                    else:
+                        result = await provider.reconcile_baseline_execution(
+                            handle,
+                            BaselineExecutionRecoveryRequest(
+                                request=payload.request,
+                                sandbox=handle,
+                                creation_dispatched=payload.creation_dispatched,
+                                expected_labels=baseline_labels(handle, payload.request),
+                            ),
+                        )
+                    result = SandboxCleanupResult.model_validate_json(result.model_dump_json())
+                    complete = result.complete
+                except (FleetError, OSError, ValueError):
+                    # This is an explicitly unproven cleanup fact, not fabricated absence.
+                    result = SandboxCleanupResult(
+                        provider="docker",
+                        resource_id=resource_id,
+                        resources_found=0,
+                        resources_removed=0,
+                        reconciled=False,
+                        complete=False,
+                        completed_at=self.clock.now(),
+                    )
+            completed_at = result.completed_at if result is not None else self.clock.now()
+            receipt = BaselineCleanupReceipt(
+                owner=plan.owner,
+                lease_id=original.lease_id,
+                lease_sha256=original.digest,
+                cleanup_scope_sha256=plan.scope_sha256,
+                kind=original.kind,
+                complete=complete,
+                result=freeze_snapshot("cleanup-v1", result.model_dump(mode="json"))
+                if result is not None
+                else None,
+                completed_at=completed_at,
+            )
+            dependencies.store.finalize_baseline_lease(
+                plan, original.lease_id, original.revision, receipt
+            )
+            if not complete:
+                raise _baseline_resource_error()
+        final = dependencies.store.validate_cleanup(plan)
+        if any(item.status != "released" for item in final.leases):
+            raise _baseline_resource_error()
 
     def validate_reviewed_recovery(self, binding: RecoveryBinding) -> None:
         """Parse captured cleanup identities before ownership changes; perform no I/O."""
@@ -913,6 +1105,14 @@ async def _cleanup_graph_descendants(
             failures.append(error)
     if failures:
         raise failures[0]
+
+
+def _baseline_resource_error() -> FleetError:
+    return FleetError(
+        ErrorCode.RECOVERY_REQUIRED,
+        "The baseline resource scope or complete cleanup proof is unavailable.",
+        "Keep the permanent claim and inspect its exact stopped-owner recovery scope.",
+    )
 
 
 async def _await_sandbox_cleanup_task(

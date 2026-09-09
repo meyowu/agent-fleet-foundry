@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "BaselineResourceOwner": {
+      "additionalProperties": false,
+      "properties": {
+        "baseline_id": {
+          "pattern": "^baseline_[0-9a-f]{32}$",
+          "title": "Baseline Id",
+          "type": "string"
+        },
+        "project_id": {
+          "pattern": "^prj_[0-9a-f]{32}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "review_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Review Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "baseline_id",
+        "project_id",
+        "review_sha256"
+      ],
+      "title": "BaselineResourceOwner",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "checked_at": {
+      "format": "date-time",
+      "title": "Checked At",
+      "type": "string"
+    },
+    "controller_pid": {
+      "maximum": 2147483647,
+      "minimum": 1,
+      "title": "Controller Pid",
+      "type": "integer"
+    },
+    "installation_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Installation Id",
+      "type": "string"
+    },
+    "owner": {
+      "$ref": "#/$defs/BaselineResourceOwner"
+    },
+    "owner_claim_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Owner Claim Sha256",
+      "type": "string"
+    },
+    "snapshot_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Snapshot Sha256",
+      "type": "string"
+    },
+    "state": {
+      "const": "absent",
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "owner",
+    "owner_claim_sha256",
+    "snapshot_sha256",
+    "controller_pid",
+    "installation_id",
+    "state",
+    "checked_at"
+  ],
+  "title": "BaselineStoppedOwnerReview",
+  "type": "object"
+}

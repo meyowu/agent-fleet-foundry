@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import unicodedata
 from datetime import timedelta
 from pathlib import Path
 from typing import cast
@@ -15,6 +16,25 @@ from agent_fleet.application.resources import (
     execution_recovery_request_from_lease,
 )
 from agent_fleet.application.sandboxes import SandboxRegistry
+from agent_fleet.domain.baseline import (
+    BaselineCommandObservation,
+    baseline_id,
+    freeze_snapshot,
+    reconstruct_sandbox,
+    snapshot_model,
+)
+from agent_fleet.domain.baseline_resources import (
+    BaselineCommandPayload,
+    BaselineCommandScope,
+    BaselineExecRequest,
+    BaselineExecutionHandle,
+    BaselineOwnerClaim,
+    BaselineResourceLease,
+    BaselineSandboxHandle,
+    BaselineSandboxPayload,
+    BaselineWorkspace,
+    BaselineWorkspacePayload,
+)
 from agent_fleet.domain.errors import (
     ApprovalDeniedError,
     ApprovalRequiredError,
@@ -39,6 +59,7 @@ from agent_fleet.domain.models import (
     PermissionOutcome,
     ResourceLease,
     Run,
+    SandboxCapabilities,
     SandboxCleanupResult,
     SandboxExecutionHandle,
     SandboxHandle,
@@ -53,6 +74,7 @@ from agent_fleet.domain.models import (
 )
 from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import Redactor, canonical_json_hash, sha256_bytes
+from agent_fleet.ports.baseline_resources import BaselineCommandBroker, BaselineGatewayDependencies
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.permission import PermissionBroker
@@ -60,6 +82,45 @@ from agent_fleet.ports.repository import RepositoryPort
 from agent_fleet.ports.sandbox import SandboxProvider
 from agent_fleet.ports.state_store import StateStore
 from agent_fleet.ports.workspace_files import WorkspaceFileSystem
+
+
+def _baseline_gateway_error(code: ErrorCode = ErrorCode.RECOVERY_REQUIRED) -> FleetError:
+    return FleetError(
+        code,
+        "The exact baseline Gateway scope is unavailable.",
+        "Inspect the permanent controller and dispatch claim; do not replay the command.",
+    )
+
+
+def _baseline_output(
+    stdout: bytes, stderr: bytes, redactor: Redactor
+) -> tuple[str, str, bool, bool]:
+    if type(stdout) is not bytes or type(stderr) is not bytes or len(stdout) + len(stderr) > 64_000:
+        raise _baseline_gateway_error()
+    replaced = False
+    shortened = False
+    remaining = 64_000
+    fields: list[str] = []
+    for raw in (stdout, stderr):
+        try:
+            decoded = raw.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            decoded = raw.decode("utf-8", errors="replace")
+            replaced = True
+        redacted, _ = redactor.redact_text(decoded)
+        safe = "".join(
+            f"\\u{ord(char):04x}"
+            if unicodedata.category(char) in {"Cc", "Cf"} and char not in "\n\t"
+            else char
+            for char in redacted
+        ).encode("utf-8")
+        if len(safe) > remaining:
+            safe = safe[:remaining]
+            shortened = True
+        text = safe.decode("utf-8", errors="ignore")
+        remaining -= len(text.encode("utf-8"))
+        fields.append(text)
+    return fields[0], fields[1], replaced, shortened
 
 
 class ToolGateway:
@@ -76,6 +137,8 @@ class ToolGateway:
         redactor: Redactor,
         workspace_files: WorkspaceFileSystem,
         repository: RepositoryPort | None = None,
+        *,
+        baseline: BaselineGatewayDependencies | None = None,
     ) -> None:
         self.state = state
         self.artifacts = artifacts
@@ -90,6 +153,175 @@ class ToolGateway:
         self.redactor = redactor
         self.repository = repository
         self.workspace_files = workspace_files
+        self._baseline = baseline
+
+    async def execute_baseline(
+        self,
+        *,
+        claim: BaselineOwnerClaim,
+        workspace: BaselineWorkspace,
+        sandbox_handle: BaselineSandboxHandle,
+    ) -> BaselineCommandObservation:
+        dependencies = self._baseline
+        broker = self.permission_broker
+        if dependencies is None or not isinstance(broker, BaselineCommandBroker):
+            raise _baseline_gateway_error()
+        claim = BaselineOwnerClaim.from_canonical(claim.canonical_bytes())
+        workspace = BaselineWorkspace.from_canonical(workspace.canonical_bytes())
+        sandbox_handle = BaselineSandboxHandle.from_canonical(sandbox_handle.canonical_bytes())
+        view = dependencies.store.show(claim.owner.baseline_id)
+        review = view.review
+        snapshot = dependencies.store.baseline_resource_snapshot(claim.owner.baseline_id)
+        workspaces = [
+            item.payload.workspace
+            for item in snapshot.leases
+            if isinstance(item.payload, BaselineWorkspacePayload) and item.status == "active"
+        ]
+        sandboxes = [
+            item.payload
+            for item in snapshot.leases
+            if isinstance(item.payload, BaselineSandboxPayload) and item.status == "active"
+        ]
+        if (
+            snapshot.claim != claim
+            or workspaces != [workspace]
+            or len(sandboxes) != 1
+            or sandboxes[0].handle != sandbox_handle
+            or snapshot.dispatch is not None
+            or workspace.materialized_source_sha256 is None
+        ):
+            raise _baseline_gateway_error()
+        local = reconstruct_sandbox(sandboxes[0].spec.sandbox)
+        provider = self.sandboxes.require_baseline(local.configuration, local.requirements)
+        del local
+        request = BaselineExecRequest(
+            owner=claim.owner,
+            claim_id=claim.claim_id,
+            execution_id=baseline_id("bexec"),
+            workspace_id=workspace.workspace_id,
+            command=review.command,
+        )
+        now = self.clock.now()
+        lease = BaselineResourceLease(
+            lease_id=baseline_id("blease"),
+            owner=claim.owner,
+            revision=0,
+            status="creating",
+            payload=BaselineCommandPayload(request=request, sandbox=sandbox_handle),
+            created_at=now,
+            updated_at=now,
+        )
+        scope = BaselineCommandScope(review=review, claim=claim, approved=True)
+        with dependencies.guard(review) as guard:
+
+            def check_current() -> None:
+                guard.assert_current()
+                if (
+                    dependencies.repository.baseline_workspace_fingerprint(workspace)
+                    != review.approved_source_sha256
+                ):
+                    raise _baseline_gateway_error()
+                caps = snapshot_model(
+                    sandbox_handle.capabilities, "capabilities-v1", SandboxCapabilities
+                )
+                decision = broker.evaluate_baseline(scope, caps)
+                if decision.outcome is not PermissionOutcome.ALLOW:
+                    raise _baseline_gateway_error(ErrorCode.COMMAND_DENIED)
+
+            check_current()
+            dependencies.store.claim_baseline_dispatch(claim, snapshot.digest, request, lease)
+
+            def creation_dispatched() -> None:
+                nonlocal lease
+                check_current()
+                lease = dependencies.store.mark_baseline_creation_dispatched(
+                    claim, lease.lease_id, lease.revision
+                )
+
+            def native_created(handle: BaselineExecutionHandle) -> None:
+                nonlocal lease
+                check_current()
+                lease = dependencies.store.activate_baseline_execution(
+                    claim, lease.lease_id, lease.revision, handle
+                )
+
+            operation = asyncio.create_task(
+                provider.exec_baseline(
+                    sandbox_handle,
+                    request,
+                    on_creation_dispatched=creation_dispatched,
+                    on_resource_created=native_created,
+                )
+            )
+            try:
+                result = await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                operation.cancel()
+                while not operation.done():
+                    try:
+                        await asyncio.wait({operation})
+                    except asyncio.CancelledError:
+                        continue
+                if not operation.cancelled():
+                    operation.exception()  # Retrieve failure; never serialize the exception.
+                raise
+            if (
+                result.metadata.request_sha256 != request.digest
+                or result.metadata.sandbox_spec_sha256 != sandbox_handle.sandbox_spec_sha256
+                or not isinstance(lease.payload, BaselineCommandPayload)
+                or result.metadata.handle != lease.payload.handle
+            ):
+                raise _baseline_gateway_error()
+            try:
+                post_source = dependencies.repository.baseline_workspace_fingerprint(workspace)
+            except (FleetError, OSError, ValueError):
+                post_source = None
+            stdout, stderr, replaced, shortened = _baseline_output(
+                result.stdout, result.stderr, self.redactor
+            )
+            observation = BaselineCommandObservation(
+                baseline_id=review.baseline_id,
+                project_id=review.project_id,
+                review_id=review.review_id,
+                review_sha256=review.digest,
+                authorization_id=claim.authorization_id,
+                claim_id=claim.claim_id,
+                execution_id=request.execution_id,
+                workspace_id=workspace.workspace_id,
+                sandbox_id=sandbox_handle.sandbox_id,
+                command_sha256=review.command.sha256,
+                sandbox_policy_sha256=sandbox_handle.sandbox_policy_sha256,
+                sandbox_spec_sha256=sandbox_handle.sandbox_spec_sha256,
+                request_sha256=request.digest,
+                approved_source_sha256=review.approved_source_sha256,
+                materialized_source_sha256=workspace.materialized_source_sha256,
+                post_source_sha256=post_source,
+                native_handle=freeze_snapshot(
+                    "native-handle-v1",
+                    result.metadata.handle.model_dump(mode="json", by_alias=True),
+                ),
+                inspection=freeze_snapshot(
+                    "sandbox-inspection-v1",
+                    result.metadata.inspection.model_dump(mode="json", by_alias=True),
+                ),
+                started_at=result.started_at,
+                completed_at=result.completed_at,
+                exit_code=result.exit_code,
+                timed_out=result.timed_out,
+                cancelled=result.cancelled,
+                capture_truncated=result.output_truncated,
+                redaction_truncated=shortened,
+                decoding_replaced=replaced,
+                stdout=stdout,
+                stderr=stderr,
+                stdout_sha256=sha256_bytes(stdout.encode()),
+                stderr_sha256=sha256_bytes(stderr.encode()),
+            )
+            current = dependencies.store.baseline_resource_snapshot(claim.owner.baseline_id)
+            dependencies.store.record_command_observation(
+                claim, current.execution.revision, observation.canonical_bytes()
+            )
+            return observation
 
     async def execute(
         self,
