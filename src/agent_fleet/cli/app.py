@@ -873,23 +873,36 @@ def _environment_redactor() -> Redactor:
 
 
 def _runtime_warnings(status: dict[str, object]) -> list[str]:
-    runtime_clause = (
-        "The configured model provider was contacted from the control plane;"
-        if status.get("runtime") in {"pydantic-ai", "openai-agents", "langgraph"}
-        else "The fake runtime made no model-provider call;"
-    )
-    sandbox = status.get("sandbox") or status.get("sandbox_name") or "fake"
+    runtime = status.get("runtime")
+    if type(runtime) is not str:
+        runtime = None
+    if runtime in {"pydantic-ai", "openai-agents", "langgraph"}:
+        runtime_clause = (
+            "A model-capable runtime is configured; actual provider contact requires run evidence."
+        )
+    elif runtime == "fake":
+        runtime_clause = "The fake runtime does not make model-provider calls."
+    else:
+        runtime_clause = "Runtime execution is not established by this configuration."
+    sandbox = status.get("sandbox")
+    if type(sandbox) is not str or not sandbox:
+        sandbox = status.get("sandbox_name")
+    if type(sandbox) is not str:
+        sandbox = None
     if sandbox == "docker":
         sandbox_clause = (
-            "project commands used the isolated Docker sandbox and remain subject to the "
-            "reported evidence and proof gaps."
+            "Docker is configured as the execution boundary; actual command execution and "
+            "isolation remain subject to run evidence and proof gaps."
         )
     elif sandbox == "local-unsafe":
         sandbox_clause = (
-            "local-unsafe executed project commands directly on the host without isolation."
+            "WARNING: local-unsafe permits project commands on the host without isolation; "
+            "configuration alone does not prove execution."
         )
+    elif sandbox == "fake":
+        sandbox_clause = "FakeSandbox cannot execute project code or provide OS isolation."
     else:
-        sandbox_clause = "FakeSandbox did not execute project code or provide OS isolation."
+        sandbox_clause = "No sandbox execution or isolation is established by this configuration."
     return [f"{runtime_clause} {sandbox_clause}"]
 
 

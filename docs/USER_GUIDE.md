@@ -573,6 +573,17 @@ fleet patch show <run-id>
 
 `status` 展示任务、计划、changed files、命令结果、verifier verdict、风险、proof gaps 和完成判定。`artifacts` 列出持久化元数据与内容哈希；它不是任意本地文件读取工具，也没有未实现的 `artifact show` 子命令。
 
+CLI 的 runtime/sandbox 提示只说明配置与能力，不证明已联系供应商或运行命令；实际执行仍需检查对应记录。
+
+若出现 `RUNTIME_OUTPUT_INVALID`，查看 `logs` 中的 `agent.failed` 事件。
+当受信运行时预期的是 VerifierVerdict，安全诊断可包含
+`expected_output_contract: verifier_verdict` 和最多八个 `validation_issues`，
+例如固定的 `field: rationale` / `issue: missing`，不包含模型原文、动态键名或输入值。
+这些标签只解释当前捕获的校验错误，不能恢复历史上未保留的响应，也不证明错误来自某个特定 SDK 子组件。
+`structured_output_after_side_effect` 表示已有副作用尝试后输出无效：即使测试命令通过，
+缺少有效 Verifier 结论时任务仍失败，系统不会为修复格式自动重放操作。
+先审查现有 Patch、命令与清理证据，再决定是否另开一个明确授权的任务。
+
 审查清单：
 
 1. 任务范围与验收条件是否准确，是否遗漏需求？

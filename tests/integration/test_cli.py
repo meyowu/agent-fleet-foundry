@@ -1270,7 +1270,7 @@ def test_cli_offline_pydantic_ai_run_reports_usage_and_fake_sandbox_limit(
     assert len(data["runtime_usage_artifact_ids"]) == 3
     assert data["verified_complete"] is False
     assert "SIMULATED_EVIDENCE_ONLY" in data["evidence"]["completion_reason_codes"]
-    assert "model provider was contacted" in envelope["warnings"][0]
+    assert "actual provider contact requires run evidence" in envelope["warnings"][0]
     assert "FakeSandbox" in envelope["warnings"][0]
     assert calls == {
         "submit_scope_decision": 1,
@@ -1282,7 +1282,7 @@ def test_cli_offline_pydantic_ai_run_reports_usage_and_fake_sandbox_limit(
 
     human = runner.invoke(app, ["resume", run_id], env=environment)
     assert human.exit_code == 0, human.output
-    assert "model provider was contacted" in human.stdout
+    assert "actual provider contact requires run evidence" in " ".join(human.stdout.split())
     assert "FakeSandbox" in human.stdout
     assert sentinel not in human.stdout
 
