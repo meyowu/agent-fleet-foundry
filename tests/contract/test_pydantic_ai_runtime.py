@@ -975,6 +975,121 @@ async def test_invalid_output_after_side_effect_is_not_retried() -> None:
 
 
 @pytest.mark.parametrize(
+    ("malformation", "field", "issue"),
+    [
+        ("uppercase_verdict", "verdict", "enum"),
+        ("missing_rationale", "rationale", "missing"),
+        ("object_in_narrative", "criterion_results", "type"),
+    ],
+)
+async def test_verifier_schema_diagnostic_after_effect_preserves_single_dispatch(
+    malformation: str, field: str, issue: str
+) -> None:
+    from agent_fleet.domain.runtime_diagnostics import runtime_diagnostic_payload
+
+    model_requests = 0
+    payload = _verifier_verdict().model_dump(mode="json")
+    if malformation == "uppercase_verdict":
+        payload["verdict"] = "PASS"
+    elif malformation == "missing_rationale":
+        del payload["rationale"]
+    else:
+        payload["criterion_results"] = [{"criterion_id": "nonpublic-synthetic-model-value"}]
+
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_requests
+        del messages, info
+        model_requests += 1
+        if model_requests == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("run_verification", {}, tool_call_id="one-check")]
+            )
+        return ModelResponse(
+            parts=[ToolCallPart("submit_verifier_verdict", payload, tool_call_id="invalid-verdict")]
+        )
+
+    catalog = RecordingCatalog(
+        (
+            RuntimeToolDefinition(
+                name="run_verification",
+                description="Synthetic counted check; no real command.",
+                parameters_json_schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                side_effect=True,
+            ),
+        )
+    )
+    adapter = PydanticAIRuntimeAdapter.for_test_model(FunctionModel(model))
+    with pytest.raises(FleetError) as caught:
+        await adapter.invoke(
+            _invocation(AgentRole.VERIFIER, WorkflowStage.VERIFYING),
+            RuntimeInvocationServices(configuration=_configuration(max_retries=3), tools=catalog),
+        )
+    assert caught.value.code is ErrorCode.RUNTIME_OUTPUT_INVALID
+    assert model_requests == 2 and len(catalog.calls) == 1 and len(catalog.records) == 1
+    assert catalog.records[0].side_effect_committed is True
+    expected = {
+        "category": "structured_output_after_side_effect",
+        "cause_category": "schema_validation",
+        "expected_output_contract": "verifier_verdict",
+        "validation_issues": [{"field": field, "issue": issue}],
+    }
+    assert caught.value.details["runtime_diagnostic"] == expected
+    assert runtime_diagnostic_payload(caught.value.details) == {"runtime_diagnostic": expected}
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+    assert not getattr(caught.value, "__notes__", ())
+    assert "nonpublic-synthetic-model-value" not in str(caught.value)
+
+
+async def test_valid_lowercase_verifier_output_after_effect_is_unchanged() -> None:
+    model_requests = 0
+
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_requests
+        del messages, info
+        model_requests += 1
+        if model_requests == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("run_verification", {}, tool_call_id="one-check")]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit_verifier_verdict",
+                    _verifier_verdict().model_dump(mode="json"),
+                    tool_call_id="valid-verdict",
+                )
+            ]
+        )
+
+    catalog = RecordingCatalog(
+        (
+            RuntimeToolDefinition(
+                name="run_verification",
+                description="Synthetic counted check; no real command.",
+                parameters_json_schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                side_effect=True,
+            ),
+        )
+    )
+    result = await PydanticAIRuntimeAdapter.for_test_model(FunctionModel(model)).invoke(
+        _invocation(AgentRole.VERIFIER, WorkflowStage.VERIFYING),
+        RuntimeInvocationServices(configuration=_configuration(max_retries=3), tools=catalog),
+    )
+    assert result.output == _verifier_verdict()
+    assert model_requests == 2 and len(catalog.calls) == 1
+
+
+@pytest.mark.parametrize(
     ("max_retries", "expected_code"),
     [
         (0, ErrorCode.RUNTIME_OUTPUT_INVALID),

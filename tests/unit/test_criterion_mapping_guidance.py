@@ -97,3 +97,34 @@ def test_packaged_prompts_explain_named_receipts_without_claiming_inspection_is_
         "criterion_mapping_contract",
     ):
         assert required in verifier
+
+
+def test_verifier_prompt_matches_unchanged_wire_enum_and_required_field_shapes() -> None:
+    prompt = (
+        resources.files("agent_fleet.adapters.runtime.prompts").joinpath("verifier.md").read_text()
+    )
+    schema = VerifierVerdict.model_json_schema()
+    assert schema["$defs"]["Verdict"]["enum"] == ["pass", "fail", "inconclusive"]
+    for value in schema["$defs"]["Verdict"]["enum"]:
+        assert f'"{value}"' in prompt
+    assert "not JSON values" in prompt
+    assert set(schema["required"]) == {
+        "verdict",
+        "criterion_results",
+        "evidence_artifact_ids",
+        "regressions",
+        "required_repairs",
+        "proof_gaps",
+        "rationale",
+    }
+    for field in schema["required"]:
+        assert field in prompt
+    assert schema["properties"]["criterion_results"]["items"]["type"] == "string"
+    for required in (
+        "Use [] for an empty list",
+        "not null or an omitted required field",
+        "rationale must be a nonempty string",
+        "narrative strings, never criterion objects",
+        "criterion objects only in structured_criterion_results",
+    ):
+        assert required in prompt

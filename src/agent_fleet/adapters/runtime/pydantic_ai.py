@@ -704,7 +704,9 @@ class PydanticAIRuntimeAdapter:
                     "The model returned invalid output after a side-effecting tool attempt.",
                     "Inspect the run evidence and start a new invocation; Fleet did not retry it.",
                     details=runtime_failure_details(
-                        error, RuntimeFailureCategory.STRUCTURED_OUTPUT_AFTER_SIDE_EFFECT
+                        error,
+                        RuntimeFailureCategory.STRUCTURED_OUTPUT_AFTER_SIDE_EFFECT,
+                        output_model=output_model if output_model is VerifierVerdict else None,
                     ),
                 )
             if post_side_effect_error is not None:

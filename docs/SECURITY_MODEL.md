@@ -688,7 +688,30 @@ Do not record:
 - hidden chain-of-thought;
 - arbitrary host paths when a logical path suffices.
 
-Runtime failure diagnostics are a finite projection, not raw debugging output. The trusted adapter may classify up to eight exception causes with cycle detection into fixed categories and a strict numeric HTTP status. It never copies exception representations, dynamic class names, provider headers/body/request IDs, or validation field names/messages/inputs. The workflow independently allowlists these fields before adding them to `agent.failed`; the normal event redactor still applies. Diagnostics neither grant retries nor establish whether an unknown request was transmitted, charged or completed.
+Runtime failure diagnostics are a finite projection, not raw debugging output.
+The trusted adapter may classify up to eight exception causes with cycle detection
+into fixed categories and a strict numeric HTTP status. Generic diagnostics never
+inspect validation records. A separately bounded Verifier diagnostic may be enabled
+only by the trusted runtime's exact expected-output class identity, never a
+model-supplied selector. It reports that expected contract and at most eight
+deduplicated pairs of fixed schema-field and issue labels. These labels identify
+recognized schema positions, not response values or the proven cause of an earlier
+unrecorded failure. Unknown keys, unrecognized error-type tokens and unsupported
+location shapes map to fixed `unknown` labels; no dynamic keys, list indices,
+lengths or hashes are emitted. A custom error can reuse a recognized type token:
+the SDK's record does not distinguish that provenance, so its finite issue label
+does not prove a built-in validator produced the error.
+
+Only exact built-in ValidationError objects are eligible. More than32 errors
+produces a fixed unknown pair without materializing error records. Otherwise the
+SDK is asked to omit input/context/URL; it can still internally construct message
+strings, which the projector must never access or copy. No exception
+representations, dynamic class names, provider headers/body/request IDs,
+validation messages or inputs enter diagnostics. The workflow independently
+revalidates allowed shapes, finite labels and bounds before adding them to
+`agent.failed`; the normal event redactor still applies. Diagnostics neither grant
+retries nor establish whether an unknown request was transmitted, charged or
+completed. Failure after a side-effect attempt remains a failure without replay.
 
 The explicit OpenAI client uses a per-client reject-all cookie policy. Untrusted Set-Cookie responses must not create client state or add Cookie to later requests; response-header clearing occurs too late to prevent HTTP client extraction by itself. Cookie remains prohibited by the final request guard, and no new header or endpoint authority is granted. Trusted request/response guard failures have separate fixed diagnostic causes without exposing header names or values.
 
