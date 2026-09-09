@@ -22,11 +22,38 @@ token, not another session's worker ownership. This is not protection against a
 hostile same-user process or browser extension. See [ADR0008](adr/0008-local-read-only-observer.md)
 and the [bounded HTTP contract](CONFIG_AND_SCHEMAS.md#13-local-dashboard-observation-contract).
 
+### Evaluation observer containment
+
+The S1 campaign observer is not the Dashboard and is not publicly exposed. Its
+original independent audit disproved source-file read-only and path-binding guarantees.
+Both terminal-recording entry points therefore reject before inspection or state
+access; no outcome, refund, claim replacement or replay is inferred. The corrected clean
+child descriptor-capture read path passed separate read-side qualification. It must preserve
+the source DB/WAL/artifacts and parent SQLite locking, bound IPC while reading,
+and reap its child and temporary stage before accepting a result. Cleanup uncertainty
+cannot become an accepted observation. Read acceptance does not establish the
+still-unqualified original-DB atomic terminal-write boundary.
+Preserve unknown and missing results instead of fabricating acceptance.
+The first read-repair boundary rejects an already populated or concurrently
+populated secret registry. Only registry presence is exposed to the parent;
+registered values, encodings, lengths and fingerprints never cross to the child.
+Inspection therefore requires a fresh credential-free process. This is a stated
+availability limitation, not weaker redaction or permission to use another key.
+
 ### Persistent conversation invariants
 
 Conversation identity is coordination context, never permission. Atomic registration binds the exact root Run, project/repository, goal/context, config and initial budget before a model request. A duplicate key cannot acquire a second owner or reset usage. The shared WorkflowEngine enforces claims for public `resume` as well as chat, including graph children through their exact parent. Unknown owners never expire into replay authority, and a paused display state alone cannot release an uncertain claim. Explicit owner-stopped recovery fences without replay and requires exact root/descendant cleanup before another turn is admitted.
 
 Cancellation snapshots the original Run and local execution before any scheduling/await boundary. A newer turn cannot become the target after the old owner releases it. Repeated interrupts retain and await cleanup. If a terminal Run was already recorded when cancellation arrived, cleanup reconciliation preserves that outcome while releasing the fenced turn only after resources are proven clear. This prevents both cross-turn cancellation and unnecessary unrecoverable-looking ownership.
+
+Reviewed recovery additionally binds the original turn revision, execution claim,
+root/descendant runs, graph and complete lease payloads. Pure cleanup-identity
+preflight precedes one transaction that compares the original review and fences
+that exact ownership. A fixed cleanup plan and per-lease compare-and-swap receipts
+prevent subsequently created or changed resources from silently entering scope.
+New resources or drift require a fresh review; cleanup never substitutes a newly
+fetched path or project. User confirmation that the owner stopped is explicit,
+not OS proof of process death or authority to replay model/command work.
 
 History is bounded untrusted summary data, not tool instructions or evidence: eight settled entries, 32 KiB serialized context, eight artifact references per entry. Read-back verifies actual bounded artifact bytes/hash/metadata/UTF-8; full artifact blobs and SDK messages are excluded from history, although bounded CoS response text may appear in result summaries. Before parsing or rendering conversation state, only the exact registered project credential is registered for redaction when available. A missing credential allows offline inspection, never ambient-key discovery or a provider call. Registered secrets are rejected from new summaries/references; integrity errors do not retain raw validation causes. Terminal controls/markup are escaped in both progress and final human presentation. Local OS-account access to SQLite/artifacts remains inside the trusted computing base; these checks are not cryptographic protection against that account.
 
@@ -237,7 +264,18 @@ The simulated approval fixture always asks. Local-unsafe command execution also 
 
 A runtime may propose a typed action using the tool catalog. In Phase 3, `GatewayRuntimeToolCatalog` constructs trusted principal/stage/workspace/provider identity, validates exact supported logical resource shapes, and asks ToolGateway and PermissionBroker. After authorization, bounded list/read/search/write/edit/delete operations use descriptor-relative no-follow filesystem primitives, diff remains a trusted repository operation, and exact reviewed command IDs resolve server-side to structured no-shell execution through the selected sandbox. Fake commands and the approval fixture remain simulated; local-unsafe requires its separate high-risk confirmation; only Docker can supply isolated evidence. The PydanticAI adapter exposes the catalog through its external-tool transport but cannot replace it with native shell, filesystem, code-execution, MCP, hosted, or arbitrary network tools. Built-in runtime modules must not import concrete repository or sandbox implementations or perform filesystem/subprocess side effects. A verifier mutation test submits a forbidden intent and proves denial, not mutate a host path directly.
 
-The runtime registry performs exact adapter selection and typed capability checks with no fallback. The live PydanticAI path allows only `openai:<model>` and `openai-chat:<model>` and rejects other prefixes before credential resolution or network. CoS receives no execution tools; Engineer and Verifier receive only their stage-bound catalog. Fleet-owned instructions, tool definitions, output schemas, and bounded dynamic context are registered-secret scanned before model invocation. Complete new provider messages are scanned before any deferred tool, and the SDK-serialized body is scanned at the last request hook before send. Model output, usage, and provider metadata are bounded and projected into project-owned types before they cross the adapter boundary.
+The runtime registry performs exact adapter selection and typed capability checks with no fallback. PydanticAI admits `openai:<model>`, `openai-chat:<model>`, `anthropic:<model>` and `google:<model>`; OpenAI Agents SDK and LangGraph admit only `openai:<model>`. Other prefixes fail before credential resolution or network. Actual-SDK offline acceptance does not imply provider or Harness live qualification: only the bounded historical OpenAI/PydanticAI canary has that proof. CoS receives no execution tools; Engineer and Verifier receive only their stage-bound catalog. Fleet-owned instructions, tool definitions, output schemas, and bounded dynamic context are registered-secret scanned before model invocation. Complete new provider messages are scanned before any deferred tool, and the SDK-serialized body is scanned at the last request hook before send. Model output, usage, and provider metadata are bounded and projected into project-owned types before they cross the adapter boundary.
+
+The shared pure invocation-admission guard also checks the actual selected adapter,
+trusted execution kind and declared invocation capabilities before any shipped
+adapter enters its model/tool loop. Built-in roles cannot be rebound; custom
+specialists need an explicit kind and cannot impersonate CoS. A checkpoint request
+requires both checkpoint and resume capabilities, neither of which the current
+adapters declare. Fake therefore rejects checkpoint requests instead of ignoring
+them, and rejects invalid bindings/catalogs before a simulated accounting step.
+PydanticAI rejects those unsupported requests before resolving a credential.
+This guard grants no permission, implements no native resume and does not replace
+the Workflow principal/output checks or Gateway/Broker enforcement.
 
 ## 5.5 CapabilityGrant
 
@@ -624,7 +662,9 @@ CompletionGate must fail closed or return an explicit inconclusive decision when
 
 EvidenceBundle is immutable and content-addressed. It binds the exact ConfigSnapshot and TaskSpec artifact IDs/hashes, FleetPlan, repository/base identities, canonical patch, command/test/build records, Verifier identity and exact authoritative evidence IDs, Verifier-reported proof gaps/repairs/regressions, Verifier workspace-mutation detection, criterion assessments, risks, proof gaps, and the computed completion decision. Any missing/foreign/corrupt/mismatched task or configuration artifact, reported gap, contradictory PASS with repairs/regressions, Verifier mutation, stale/unbound final-patch evidence, or non-Verifier-owned evidence fails closed. `fleet status` validates the bundle binding and exposes its decision evidence instead of reducing completion to agent prose or opaque IDs.
 
-Phase 3 still cannot map one overall scripted or model verdict independently to multiple acceptance criteria. When a general TaskSpec contains more than one criterion, EvidenceAssembler marks each assessment inconclusive and records `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`; general criterion-specific model mapping remains Phase 5 work. The deterministic bootstrap canary uses its one bounded acceptance criterion and can therefore produce an independently verified decision when every Docker evidence binding passes.
+Historical Phase 3 behavior: one overall scripted or model verdict could not independently establish multiple acceptance criteria, so missing structured mappings produced `STRUCTURED_CRITERION_MAPPING_UNAVAILABLE`. Phase 5 implemented criterion-specific mappings as described below; multiple criteria are not categorically inconclusive when complete valid mappings exist. The deterministic bootstrap canary uses its one bounded acceptance criterion and can produce an independently verified decision when every Docker evidence binding passes.
+
+The implemented Phase 5 structured mapping contract accepts only current independent Verifier CommandEvidence, not arbitrary artifacts. A successful verification tool result separately names `content.command_evidence_artifact_id` and `content.transcript_artifact_id`; its generic `artifact_ids` list includes auxiliary artifacts and is not a list of eligible criterion proofs. Each criterion selects one uniquely latest current receipt per distinct command, with exact task, run, principal, workspace, base, configuration, patch and command bindings. Reusing a receipt for genuinely relevant different criteria does not create another execution. Empty, mixed transcript, foreign, stale or ambiguous mappings remain inconclusive. The follow-up guidance/context correction explains these existing rules without filtering or repairing model verdicts, adding read authority, or changing the gate. Acceptance criteria describe observable task outcomes; delivery evidence requirements remain separate. Neither inspection prose nor an overall model pass creates independent command proof.
 
 ## 17. Audit and redaction
 
@@ -647,6 +687,14 @@ Do not record:
 - sensitive provider request headers;
 - hidden chain-of-thought;
 - arbitrary host paths when a logical path suffices.
+
+Runtime failure diagnostics are a finite projection, not raw debugging output. The trusted adapter may classify up to eight exception causes with cycle detection into fixed categories and a strict numeric HTTP status. It never copies exception representations, dynamic class names, provider headers/body/request IDs, or validation field names/messages/inputs. The workflow independently allowlists these fields before adding them to `agent.failed`; the normal event redactor still applies. Diagnostics neither grant retries nor establish whether an unknown request was transmitted, charged or completed.
+
+The explicit OpenAI client uses a per-client reject-all cookie policy. Untrusted Set-Cookie responses must not create client state or add Cookie to later requests; response-header clearing occurs too late to prevent HTTP client extraction by itself. Cookie remains prohibited by the final request guard, and no new header or endpoint authority is granted. Trusted request/response guard failures have separate fixed diagnostic causes without exposing header names or values.
+
+Action-tool strict generation is an additional output-shape constraint, never permission. The corrective implementation requests strict external function arguments while retaining the original, independently validated catalog schemas. Provider-incompatible string-length keywords may move to descriptive text in a copied wire schema; original local Pydantic limits, exact command IDs and whole-batch validation must still reject invalid arguments before reservation or execution. No missing command ID is inferred, no incompatible-schema non-strict fallback is allowed, and no verification tool is advertised without an admitted command. Fixed `tool_arguments` diagnostics distinguish this boundary from final-output validation without exposing validation records. Output-model configuration, budgets, retry prohibitions, PermissionBroker and CompletionGate remain unchanged. Fresh live acceptance is separately recorded in README; strict generation alone does not prove task success.
+
+The pre-existing fake-only `offline-canary` fallback is simulated evidence, not an admitted real command or a fallback for real/Docker tasks. A real catalog with no admitted verification command omits that tool and rejects a forged call.
 
 Use append-only semantics at the application layer. A local user can ultimately alter local files; do not call the log tamper-proof. Content hashing and optional chained event hashes may improve detection later.
 
@@ -754,6 +802,54 @@ The Phase 6 publisher must validate both the full organization tree and logical 
 Durable preparation must precede a single native directory exchange. Cross-state canonical-root locking, monotonic Run admission in the registration transaction and exact Project/source/index/HEAD checks prevent cooperating Fleet processes from applying or admitting stale work. A same-hash README update or rollback cannot revive old code candidates. Active and paused execution, unresolved descendant leases, retained chat owners and graph drivers block mutation. Headed initialization cannot rewrite registration. Unknown state never expires into authority.
 
 Before/after prepare/exchange/flush/commit failures, abrupt CLI exits, concurrent publishers, source/index/tree drift and partial backup deletion must leave exact recoverable evidence or an explicit retained gap. Recovery requires stopped-owner confirmation and the same native lock; it aborts the exact original orientation or synchronizes/commits the exact exchanged orientation, never performs another exchange or overwrites unknown user edits. Publication success is distinct from cleanup. Pre-receipt scratch has no invented journal recovery. Native macOS/Linux feature availability and hardware durability are not implied by schema validation; unsupported environments fail closed. See [ADR 0006](adr/0006-atomic-organization-publication.md) and the Phase 6 acceptance ledger.
+
+## Additional-provider candidate boundaries
+
+The Anthropic API-key Messages candidate is not live-qualified. It pins the official
+HTTPS endpoint, one explicit key and exact model identity, rejects custom headers,
+streaming/native-provider actions and credential fallback, and uses a stateless
+cookie jar. A one-use per-request transport ticket rejects upstream hidden retries
+under the same Fleet reservation. Unknown responses retain conservative durable
+accounting; model mismatch and missing usage are not silently accepted.
+
+Anthropic1.3.0 uses httpx2/httpcore2. Enabled INFO-or-more-verbose logging in any of
+those or anthropic logger namespaces is refused before credential access, including
+configured child loggers. This protects paths that emit before response hooks; it
+does not claim control over concurrent hostile reconfiguration of the trusted host
+process. The provider does not mutate global logging or environment settings.
+Raw SDK exceptions, graph contexts and notes are removed from public failures while
+preserving typed Fleet approval errors and their exact request identities.
+
+Cancellation acceptance observes real transport-close completion, not just the
+library's early is_closed flag. The first candidate failed an independent
+double-cancellation probe. The accepted correction retains a single cleanup task,
+waits through repeated cancellation, attempts both SDK and HTTP close operations
+and reports cleanup failure rather than claiming success. The fixed client_cleanup
+diagnostic also survives the finite durable-event projector. Actual-SDK repeated
+cancellation and cleanup-failure regressions passed independent review on ff390b94.
+This does not provide cleanup after forced process termination or guarantee a
+malfunctioning close operation terminates. No live claim is inferred from mocks.
+
+Google Developer API is the explicit `google:` path, not Vertex AI or ambient
+cloud authentication. Its pinned SDK client receives an explicit key/model and
+fixed endpoint; approved outbound requests must match the exact model route and
+one already-reserved physical-send ticket. Replay/logging customization, native
+execution, alternate endpoints, redirects and hidden retries are not admitted.
+Both owned HTTP transports are credential-bound and their cleanup is observed.
+No Google credential or live request forms part of its offline acceptance.
+
+OpenAI Agents SDK and LangGraph are separate Harnesses, not alternate sandboxes.
+Their bounded loops expose only Fleet's role-specific tools. The complete raw
+response/tool batch is validated before budget reservation or gateway effects;
+unknown/native actions, malformed usage and mixed terminal/action batches fail
+closed. Terminal wire tools use `strict=false` only where necessary for the
+existing output schema; original strict local output validation still applies.
+Tracing, native sessions/checkpoints, hosted tools, SDK handoffs and automatic
+retries are not admitted. Retained cleanup drains owned native/request/client
+tasks through repeated cancellation; a cleanup failure cannot become success.
+These version-specific offline qualifications do not establish live task success,
+cross-platform support or protection from a hostile same-user host process. See
+[ADR 0010](adr/0010-qualified-provider-and-harness-boundaries.md) for exact scope.
 
 ## 21. Security release gate
 

@@ -36,6 +36,57 @@ Implementation boundary: Phase 0–6 is locally accepted: durable state/artifact
 
 ## 2. Layering and dependency rule
 
+The S1–S3 extension is tracked separately in
+`.agent/plans/2026-09-09-s1-s3-system-development.md`. Its initial evaluation layer
+keeps immutable task manifests, external outcome observations and pure reporting
+outside workflow authority. Typed references alone do not authenticate evidence;
+the report cannot grant execution or declare KR acceptance. See
+[ADR 0009](adr/0009-independent-evaluation-contracts.md). The independently accepted
+September9 OpenAI nano canary is a bounded, unapplied proof, not broader S1–S3
+or new-provider/Harness acceptance.
+
+The initial S3 conformance increment is a shared pure invocation-admission guard
+used by Fake and PydanticAI, with adapter-parametrized role/output and rejection
+tests. It checks exact selection, supported execution kinds and capabilities
+before model/credential/tool effects. It does not add a Harness, change Run wire
+contracts, grant authority or make checkpoint/streaming claims. The existing
+Workflow remains the principal and result boundary; the rest of the common
+budget/approval/cancellation/evidence qualification matrix is subsequent work.
+
+S1.1b1 adds a separate non-executing `EvaluationLedgerService -> EvaluationStore`
+boundary. SQLite migration0011 persists immutable campaign registration, slot
+commitments and preflight observations. Atomic reservation bounds all campaign
+budget dimensions, but does not dispatch a Run or authenticate a successful
+external oracle. The strict returned `execution_authorized=false` is an explicit
+limitation, not a permission decision or a future activation switch.
+
+S2.1a readiness is another independent read-only path:
+`cli/readiness -> application/readiness -> repository metadata capture`.
+It avoids `bootstrap`/doctor/state-store initialization and never calls a model or
+sandbox. Public wire-size projection accounts for actual JSON escaping and redaction;
+omissions make the result incomplete. Static discovery is not executable-environment
+or business-test qualification.
+
+PydanticAI has explicitly bound OpenAI, Anthropic Messages and Google Developer API
+factories. The additional OpenAI Agents SDK and LangGraph Harnesses each own their
+actual SDK loop behind the same Fleet runtime port; neither owns execution authority.
+The SDK path interrupts function calls before Fleet executes them. LangGraph uses
+a fresh bounded async request/validate/Gateway graph, not a native tool executor.
+Shared secret registration, full-batch validation, accounting and output validation
+remain authoritative. Single-use transport tickets prevent another physical send
+under the same reservation. Actual-SDK offline qualification is distinct from
+live-provider qualification; README and the active plan bind acceptance to exact
+snapshots, including corrected configuration/schema admission.
+
+Migration0012 adds reserved campaign execution through the existing Workflow. An
+atomic transaction binds the permanent reservation, unique Run, model selections,
+budget and one-use dispatch claim. No automatic retry/replacement or refund follows
+an uncertain execution. The successor evidence observer is not publicly wired:
+its original source-DB/path-boundary audit failed, and both terminal-recording
+entry points now reject before state access. Descriptor-bound read capture is under
+repair; read-side progress cannot satisfy the unresolved atomic finalization or
+external-oracle requirements.
+
 Conceptual target package layout (not an inventory of implemented files):
 
 ```text

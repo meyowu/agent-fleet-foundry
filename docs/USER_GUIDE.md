@@ -2,7 +2,7 @@
 
 本指南用中文解释产品，保留命令、字段和架构名的 English 原名。目标是让你理解每一步会做什么、授权什么，以及什么证据才算完成。
 
-文档状态：本版本实现六项核心能力及本地 release-candidate 工具。全新 wheel/sdist、真实 Docker 练习、跨平台检查与 GitHub 交付的确切结果，见 [MVP acceptance ledger](MVP_ACCEPTANCE.md) 和 [README](../README.md#release-candidate-verification-2026-09-05)；不要把示例命令当成执行记录。CLI 的完整阶段标记保持6，因为 Phase7 的公开发布门槛还包括尚未执行的真实模型 canary 和 owner 许可证决定。当前没有公开包/镜像发布或已获授权的开源许可证。安装包附带本指南全文；跨文档相对链接请在同版本源码仓库中浏览。
+文档状态：本版本实现六项核心能力及本地 release-candidate 工具。全新 wheel/sdist、真实 Docker 练习、跨平台检查与 GitHub 交付的确切结果，见 [MVP acceptance ledger](MVP_ACCEPTANCE.md) 和 [README](../README.md#release-candidate-verification-2026-09-05)；不要把示例命令当成执行记录。2026-09-09 的有界真实 OpenAI canary 已独立验收通过，范围见本指南的真实模型测试说明。CLI 的完整阶段标记保持6；owner 许可证决定和其他公开发布门槛不会因此自动完成，也不代表 S1–S3 全部完成。当前没有公开包/镜像发布或已获授权的开源许可证。安装包附带本指南全文；跨文档相对链接请在同版本源码仓库中浏览。
 
 本次新增的 Session-first 功能见下一节；其交付进度与新的验收边界以 [Session-first living plan](../.agent/plans/2026-09-07-session-first-release.md) 和最终 README 为准。旧 MVP 账本不代表本次功能已经通过全部验收。
 
@@ -126,11 +126,56 @@ fleet models selection . --json
 
 已有配置应先用 `fleet models show <name>` 或 `fleet models selection .` 查看当前 revision，再把该版本传给更新命令的 `--revision`；不要照抄上述首次创建用的数字。Profile 更新提交的是完整配置，未明确传入的选项使用 CLI 默认值。移除使用 `fleet models remove <name> --revision <当前版本>`；仍被当前项目选择引用时会拒绝，不删除历史 Run 的快照。
 
-模型 profile 管理当前是独立 CLI 子命令，不是会话内 `/models` 命令；可在使用相同 `AGENT_FLEET_HOME` 的另一终端操作，修改只影响未来任务。`fleet doctor` 检查原始项目注册，不代表所有 per-role profiles 已通过预检；有效模型组合在启动任务时完整预检。
+创建、更新和移除 profile 仍使用上述独立 CLI；可在使用相同 `AGENT_FLEET_HOME` 的另一终端操作。会话内可以查看与切换已经创建的 profile：
+
+```text
+/models
+/models use coding --role engineer
+/confirm <本次模型选择审查显示的-code>
+/models use planning --default
+/confirm <新的模型选择审查显示的-code>
+```
+
+`/models` 分别显示 profile 目录、未来任务的选择、正在查看的 Run 的冻结绑定，不把三者混为一谈。`use` 只准备审查；确认才发布明确的未来选择，不运行模型、改变当前 Run 或授予工具权限。必须在 `--default` 与 `--role <role>` 中选一个。审查绑定 profile/configuration/selection 的精确版本；过期、切换查看目标、并发修改或选择往返后，旧确认码失效，需要重新审查。`fleet doctor` 检查原始项目注册，不代表所有 per-role profiles 已通过预检；有效模型组合在启动任务时完整预检。
 
 显式 role override 优先于已许可的仓库 `modelProfile` 偏好，然后才是已审阅 default。仓库只能请求用户已经明确 permit 的别名；未许可、缺失、不支持或被禁用的选择失败，不自动换模型或凭证。实际路由与累计预算可在 `/status` / `fleet status <run-id> --json` 中检查。不同模型本身不构成独立验证证明。
 
+### 3a. 在会话内观察角色、准备情况和历史
+
+```text
+/roles
+/readiness
+/tasks
+/tasks select 2
+/status
+/diff
+/tasks current
+```
+
+序号以 `/tasks` 的实际输出为准。每页最多20项；使用 `/tasks <before-sequence>` 向前翻页。`select` 设置的是当前进程的只读历史查看目标，不会重新执行旧任务。查看历史时会拒绝应用、恢复、批准等变更；先用 `/tasks current` 返回当前任务，再重新审查。取消始终作用于当前会话实际拥有的活动任务，不会因历史查看而取消另一个 Run。
+
+`/roles` 显示职责类型、请求的权限上限和模型偏好，不展示完整 Prompt，也不等于已授予权限。`/readiness` 只做静态识别，最多输出1MiB并明确列出省略项；它不安装依赖、不执行测试、不调用模型，也不证明项目已经可运行。独立 CLI 的对应命令是 `fleet readiness . --json`。
+
+这些管理命令的 S2.2 独立验收为65项定向测试与144项兼容性测试，共209项；后续新增 provider/Harness 的验收另行记录在 README。
+
 ### 4. 自定义职责模板，保留版本和权限边界
+
+也可以先预览随包提供的四种组合：`general-change`（一般变更）、
+`public-interface`（接口兼容）、`stateful-change`（状态与恢复）、
+`design-guided`（研究与设计）。它们不是固定团队，不添加新权限或模型。
+以下 `code-change`、`python-test` 和路径必须换成当前项目实际声明的值：
+
+```bash
+fleet role-bundles list --json
+fleet role-bundles preview general-change --path . --workflow code-change --scope src --command python-test --json
+```
+
+预览包含完整文件、Patch、配置摘要、准确验证命令及 `adoption_brief`。
+先检查内容，再把单行 `adoption_brief` 作为 **新的 CoS 任务** 发送；接着按下文
+审查、应用 FleetPatch。预览本身不创建数据库、不调用模型、不写 `.fleet`。
+同名职责或文件冲突会拒绝，不覆盖现有内容；过大的 brief 会拒绝而非截断。
+原有 workflow 检查仍保留，新增检查只引用已声明命令。四条完整离线生命周期
+已经通过本轮定向测试，独立验收及真实模型采用体验另行记录在 README。
 
 内置 CoS/Engineer/Verifier/Researcher/Architect 模板继续可用。新增模板通过受审查的 `.fleet/agents/roles.yaml` 与其引用的指导文件加入组织，例如要求 CoS：
 
@@ -367,7 +412,7 @@ Canary 使用确定性的假模型，不消耗真实模型调用；这里的 Doc
 
 假模型只能执行受支持的确定性 fixture 场景，不能理解任意软件需求。真正使用 CoS 处理项目，需要显式选择 `pydantic-ai`：可以在最初注册时指定，也可以通过上文的用户模型 profiles 为未来任务配置。
 
-当前支持显式 `openai:<model-id>` 或 `openai-chat:<model-id>`。前者选择 Responses 路径，后者选择 Chat Completions 路径。模型 ID 由操作者明确提供；示例中的占位符不能直接当成可用模型。其他 provider 前缀会被拒绝，不会自动选择替代供应商。
+PydanticAI 的 OpenAI 路径支持显式 `openai:<model-id>` 或 `openai-chat:<model-id>`，分别选择 Responses 和 Chat Completions。`anthropic:<model-id>`、`google:<model-id>` 及逐角色绑定已通过真实 SDK 的离线测试，尚无这两个供应商的真实请求验收；`google-gla:` 不是 Fleet 公开别名。新增 `openai-agents` 和 `langgraph` Harness 只允许 `openai:<model-id>`，两者均有独立离线验收；具体源码快照与限制见 README 和当前 ExecPlan。不同角色混用这三个 Harness 的9个离线流程已通过实现测试，不等于3个真实混用任务已完成。系统不会自动切换供应商。模型 ID 由操作者明确提供，示例占位符不是已验证可用的模型。
 
 先通过你正常的安全环境配置方式设定 key；不要把 key 放进聊天、命令参数、仓库文件或截图。然后只传引用：
 
@@ -390,7 +435,7 @@ fleet init /absolute/path/to/new-project \
 - 项目一旦已有组织版本头，不能通过再次 init 改 runtime、模型、credential reference 或 sandbox；移动 `.fleet/` 也不能绕过这个约束。未来任务的模型选择使用显式用户 profiles；不同 sandbox 仍需要保留旧项目和状态并创建独立注册。
 - 在同一个已记录的环境引用下轮换 key 的**值**不需要修改组织配置。换成另一个引用名称是不同操作。
 
-本地离线 FunctionModel 测试验证接口、输出检查和控制流，不等于真实供应商可用性或模型质量验收。当前未提供/使用实际验收凭证。
+本地离线 FunctionModel 测试验证接口、输出检查和控制流，不等于真实供应商可用性或模型质量验收。用户已明确提供真实测试凭证并授权 canary；它只供临时可信控制平面进程使用，不写入项目、测试报告或工作容器。实际尝试及失败保留在 README 和 living canary plan，不能据凭证存在宣称端到端通过。
 
 ## 5. 与 Chief of Staff 对话
 
@@ -420,9 +465,11 @@ fleet chat /absolute/path/to/repo
 | `/permissions` 或 `/permissions <id>` | 列出或解释当前上下文的权限。 |
 | `/approve <request-id> --once` | 批准这一次精确操作；其他期限见权限章节。 |
 | `/approve`、`/approve --once` | 先显示 pending scope；唯一请求的无 ID 期限选择还需精确确认。 |
-| `/deny <request-id>` | 拒绝当前请求。 |
+| `/deny [request-id] [--reason <text>]` | 无 ID 时只拒绝唯一 pending 请求；多个请求则仅列出选择，不自动拒绝任何一个。 |
 | `/resume` | 在批准后恢复当前任务。批准本身不会偷偷恢复。 |
 | `/cancel` | 取消当前任务并等待受控清理。 |
+| `/recover` | 为当前任务准备只读的 stopped-owner 恢复审查，不执行清理。 |
+| `/recover --confirm-owner-stopped <code>` | 确认旧进程已停止后，消费一次恢复码并等待旧任务清理，不重放模型。 |
 | `/exit` | 退出；正在执行的本地任务先被取消和清理，而不是转成后台 daemon。 |
 
 一个对话同一时间只运行一个任务，不会自动排队你在忙碌时发出的新目标。Ctrl-C/退出遵循取消路径；不承诺强制杀死操作系统进程后仍能保留任意模型内存。
@@ -636,6 +683,18 @@ fleet fleet-patch rollback <current-applied-proposal-id> --json
 
 ### 运行资源恢复
 
+在同一个 Session 内，先确认此前执行任务的 Fleet 进程确实已停止：
+
+```text
+/tasks current
+/recover
+/recover --confirm-owner-stopped <刚显示的 recovery_code>
+```
+
+第一步审查不会修改 Run、执行工具或清理资源。恢复码只在当前进程内保留五分钟、使用一次，绑定当前会话、任务、ownership 和资源状态；切换历史、状态变化、重启、重复使用都需要重新审查。这个码不同于 `/confirm` 的权限或 Patch 确认码。恢复只终止并清理原任务，之后可以在同一会话输入一个新的目标；不会恢复丢失的模型内存或重新发送未知请求。
+
+正在本进程正常运行的任务应使用 `/cancel`，不能用 stopped-owner 声明抢占。程序不能仅凭你的确认判断另一个操作系统进程是否真的停止；不要在旧 owner 仍工作时确认。恢复期间的连续取消也必须等待已经开始的资源清理完成，不代表强杀后没有风险。此新增 Session 入口的独立验收状态见 README；原有独立 CLI 仍兼容：
+
 确认原进程已停止后：
 
 ```text
@@ -796,7 +855,7 @@ uv run --offline pytest -q -ra
 
 真实 Docker 测试需事先准备本地镜像，设置 Docker opt-in 和镜像变量。完整 suite 包含真实 pytest 的项目命令，stdlib-only runner 不足以通过全部场景。具体命令与准确结果见 README/验收账本，不把历史数字当成最新结果。
 
-真实供应商 smoke 是另一项明确授权、可能计费的验收。setup 已改为真实 Docker，并同时要求 live 与 Docker opt-in、本地 runner、受支持模型和明确 credential reference。未启用 live 时跳过；明确启用但缺少任一前置输入时 setup 失败。实际 live canary 尚未执行，不要发现或复用任意环境 key；跳过不是通过。
+真实供应商 smoke 是另一项明确授权、可能计费的验收。setup 已改为真实 Docker，并同时要求 live 与 Docker opt-in、本地 runner、受支持模型和明确 credential reference。未启用 live 时跳过；明确启用但缺少任一前置输入时 setup 失败。2026-09-09 已执行六次 nano canary：前两次在 CoS 阶段失败；第三次 Engineer 在模型请求边界失败；第四次 Verifier 漏传必填 command_id。第五次 CoS、Engineer、Verifier 均完成，Engineer 与独立 Verifier 的真实 Docker 测试都通过，但验收条件缺少或混用了证据引用，最终 verified_complete=false。第六次完整 canary 通过并经独立复核：7 次请求、36365 reported tokens，真实 Engineer/Verifier 命令均通过，最终 verified_complete=true，12 leases 全部释放且无残留容器；目标补丁未应用。模型自己的 pass 不能覆盖证据门禁。本次仅证明一个有界的 zero-division guard 任务，不能宣称一般任务成功率、build readiness 或 S1-S3 全部完成；实际账单未确认。准确复验状态以 README 与 living canary plan 为准。不要发现或复用任意环境 key；跳过不是通过，模型连通也不等于完整任务成功。
 
 发布检查把联网准备与离线安装分开。下面的准备命令只接受不存在的新目录，并记录当前 lock 与 wheel 的哈希；明确使用当前已激活环境的 Python。准备结束后再打开安装测试：
 
@@ -817,7 +876,7 @@ uv run --offline pytest -q -m 'installed_distribution and not docker_integration
 
 尚不能据此宣称任意模型稳定完成任意需求；Modal/Hosted sandbox、任意 harness/plugin、联网 worker、自动部署已经实现；或能隔离恶意宿主账户、daemon、内核和任意控制平面 adapter 代码。
 
-全新安装、Linux/macOS 矩阵、GitHub merge 与公开发布是独立结果，以验收记录为准。真实模型 canary、owner 许可证决定和公开发布仍未执行，不因本地或 CI 测试通过而自动完成。
+全新安装、Linux/macOS 矩阵、GitHub merge 与公开发布是独立结果，以验收记录为准。有界真实 OpenAI canary 已于2026-09-09独立验收通过，但没有应用目标 Patch，也不证明一般任务可靠性或 S1–S3 完成；owner 许可证决定和公开发布仍未完成，不因本地或 CI 测试通过而自动完成。
 
 推荐学习顺序：只读 preview → 确定性 Docker Canary → 在无敏感信息的独立项目配置明确 BYOK → Safe 审批 → 审查完整证据并 apply 代码 → 提议验证规则 → 检查后续任务要求变化 → 当前头 rollback。
 

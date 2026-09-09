@@ -6,9 +6,238 @@ It is deliberately not a generic multi-agent chat framework or a permanent roste
 
 This repository implements **Phase 0 through Phase 6**: deterministic repository profiling, all five bounded adaptive strategies, independent exact permissions and user-owned persistent trust, content-addressed evidence, real Git worktrees, guarded patch application, explicit BYOK PydanticAI, a hardened local Docker execution boundary, durable cumulative budgets, persistent CoS chat and reviewed versioned organization evolution. The deterministic fake runtime remains available for offline development and tests; no live model-provider call is required for the bootstrap canary.
 
-Phase7 adds packaged runner/learning assets, fresh-install/upgrade/scale verification, security tooling and platform CI. The [historical verification table](#release-candidate-verification-2026-09-05) reports that earlier candidate. The CLI's highest fully accepted whole-phase marker remains6: the Phase7 public-release gate still requires an explicitly authorized live-provider canary and an owner-selected license. Neither has been supplied, and neither is inferred from automated tests.
+Phase7 adds packaged runner/learning assets, fresh-install/upgrade/scale verification, security tooling and platform CI. The [historical verification table](#release-candidate-verification-2026-09-05) reports that earlier candidate. The CLI's highest fully accepted whole-phase marker remains6: the Phase7 public-release gate still requires passing live-provider evidence and an owner-selected license. The bounded live canary passed on September9 as recorded below; it does not infer a license or complete the broader release gates.
 
 The Session-first release adds a foreground session entry, exact in-session review, opt-in pre-execution planning approval, immutable per-role model bindings, operational custom role templates and an authenticated local read-only dashboard. Follow the [living release plan](.agent/plans/2026-09-07-session-first-release.md) for current verification; the September5 CI results below do not accept these additions.
+
+## S1–S3 development status — 2026-09-09 UTC
+
+Current local checkpoint: `21700932dcd8c262c16f00b17eb7355db6d5357a77aff5597b91bf1215ae9de5`.
+This accepts the implemented local foundations, **not completion of all S1–S3 OKRs**.
+
+**Latest live regression did not pass (17:41:48 UTC).** On this exact checkpoint,
+one real `openai:gpt-5-nano` / PydanticAI / Docker CLI attempt reached Verifier but
+failed strict structured-output validation after its independent command execution.
+No VerifierVerdict was accepted. The safe diagnostic is
+`structured_output_after_side_effect` / `schema_validation`; the invalid response
+was not retained, so its particular invalid field is unknown. Ten requests reported
+37173 input +12514 output =49687 tokens, seven tools and zero unknown/outstanding
+reservations. Monetary cost was not reported. Pytest failed in107.98s; the launcher
+finished in109.681s and reported cleanup complete. No automatic retry or target
+patch application occurred. The earlier passing canary below remains historical
+evidence, not a passing result for this latest attempt.
+
+| Gate | Exact result and boundary |
+| --- | --- |
+| Default unit/contract/integration/offline E2E collection | **3591 passed,23 optional skips**,3614 unique identities. Independent reconciliation combines870 freshly executed successor cases (867 passed/3 skipped) with2744 byte-identical predecessor cases (2724 passed/20 skipped). This is not3614 fresh reruns. |
+| Named adversarial replay | **737 passed/218.40s**, no skips; overlaps the default collection. |
+| Format/lint/types/schema/lock | Ruff format429 files and lint passed; mypy363 files passed;108 exact schemas;99-package offline lock check passed/21ms. |
+| Real Docker selection | **29 passed/462.21s**:19 actual Docker cases and10 helper cases.199 terminal leases,66 absent paths and19 empty installation scopes independently checked. |
+| Fresh installation journeys | **3 passed/484.59s**, using95 prepared locked wheels. Three environments/six archives matched316 runtime/guide files;54 leases released and18 paths absent. The optional entry's later strict-origin correction separately passed three full-entry positives,three symlink negatives andthree distinguishing old-entry controls. |
+
+Docker and installation executions belong to predecessor `afb64027`; the successor
+changes only five test files, with every production/dependency byte unchanged.
+The predecessor's eight failures are retained: old schema/provider fixtures and
+missing parent-budget setup, all independently replayed successfully after repair.
+All23 default skips remain explicit (19 Docker,3 installation,1 live); optional
+successes do not turn the skipped live test into a new provider run. Known Google
+Python3.14 deprecation and test-property/JUnit warnings remain recorded. Final
+documentation/archive readback and GitHub delivery are separate entries in the
+[living plan](.agent/plans/2026-09-09-s1-s3-system-development.md).
+
+The first S1 evaluation slice is implemented: immutable preregistered manifests,
+outcome records and deterministic reports preserve first-round denominators,
+failures, unknown usage, missing attempts and separate repeat results. A real CoS
+failure can retain its Run before any TaskSpec exists. Independent review passed
+123 focused tests in0.42s plus16 additional checks on source/test/script freeze
+`334c089e01b380b167d0950af8e6d11a564275f0ff33ad3e9f85d5853bc13092`;
+all92 existing schemas remained byte-identical and three evaluation schemas were
+added. A prior candidate failed the CoS-before-Task case and remains recorded.
+
+The next S1 slice adds an atomic, reopenable evaluation ledger: preregister a
+campaign, reserve its finite attempt budget and retain preflight failures without
+inventing a Run. Independent review passed143 tests/6.90s and38 additional checks
+on its19-file `39b9548c` inventory. It is a non-executing Python service; no campaign
+runner or external-oracle authority is granted. Reports remain `structural_only`
+and `not_evaluated`, and ledger `execution_authorized` is exactly false.
+
+The later reserved-execution service passed independent offline acceptance on
+32-file `851b996` /532-file `bc1021a5`:424 unique regression cases plus8 probes.
+It binds one permanently budgeted campaign attempt to the actual Workflow Run;
+the earlier non-executing ledger is not its dispatch authority. No public campaign
+CLI or external oracle is admitted. Its successor evidence observer **failed**
+independent security review: read inspection created WAL/SHM sidecars, and temporary
+Artifact/DB path replacements bypassed identity checks. The323 ordinary passes do
+not override those three adverse cases. Both terminal-recording entry points now
+reject before reading state; the original atomic-write criterion remains unmet.
+The separate-process read repair passed independent acceptance on seven-path
+`f346092d` plus security registry `524ecd19`, using frozen snapshot `8ec710a1`:
+79 unique tests,108 exact schemas and40 checked child/process-stage absences.
+Actual database/Artifact replacement, sidecar, cancellation and cleanup-failure
+cases were checked. Deliberate cleanup faults require test-owned recovery and
+are not reported as product-drained. The reader is still not exposed through
+public composition or CLI. It refuses an already or concurrently populated secret
+registry instead of copying secret forms into its child, so inspection requires
+a fresh credential-free process. Read acceptance is not terminal-write acceptance,
+successful campaign finalization or permission to replay an attempt.
+
+`fleet readiness . --json` now provides a read-only static repository report:
+detected commands, declared dependencies, repository boundaries, lockfile presence
+and explicit unsupported/omitted details. It does not install dependencies, open a
+model connection, run tests or declare the environment ready. Independent review
+passed76 tests/6.99s on corrected14-file inventory `7ab4f93e`, including actual
+Unicode output bounded to1MiB; legacy profiling and existing state stayed unchanged.
+Exit0 means static inspection finished, exit1 means incomplete inspection, and
+exit2 means admission failed safely—not task success or failure.
+
+Shared Fake/PydanticAI runtime admission now rejects mismatched roles, unsupported
+tools and checkpoint requests before dispatch (159 focused tests plus26 independent
+checks on `8ad3fdea`). Session management passed independent acceptance on11-file
+inventory `efda1d9c`:65 focused tests/51.72s plus144 compatibility tests/391.41s
+(209 unique cases). `/models`, reviewed future-only `/models use`, `/roles`,
+`/readiness` and bounded `/tasks` history are now available. Historical inspection
+does not retarget active cancellation or authorize mutations. Six read-only views
+preserved43 state tables; the Unicode readiness view stayed within1MiB. This
+acceptance does not cover the subsequent provider/SDK registration changes.
+The direct PydanticAI/Anthropic API-key path passed independent offline acceptance
+on14-file inventory `ff390b94`:233 tests/8.14s plus5 actual-SDK cleanup fault checks,
+with exact dependency hashes and persisted failure diagnostics. A repeated-cancel
+cleanup failure and a diagnostic-projection gap were fixed; prior failed evidence
+is retained. Its normal workflow uses FakeSandbox and keeps
+`SIMULATED_EVIDENCE_ONLY`. Anthropic live is not yet accepted. OpenAI Agents
+SDK0.22.1 and shared per-role provider routing passed independent offline acceptance
+on immutable521-file snapshot `7ea80a0d`:105 SDK tests/13.67s plus375 shared
+tests/9.07s, **480 unique cases**, and7 additional boundary probes. Exact raw usage,
+all three permission decisions and retained cancellation cleanup were checked.
+Ruff/format31 files, mypy15 modules and106 schema comparisons passed. This snapshot
+does not accept concurrent campaign/template drafts, live SDK qualification, Docker,
+packaging or the current whole checkout. The2MiB response bound is post-read;
+SDK tracing policy is process-global and version-specific. Terminal wire tools use
+`strict=false` while original strict local output validation remains mandatory.
+
+Google Developer API (`google:<model>`, PydanticAI) and the then-current shared
+provider/Harness paths passed independent offline acceptance on12-file `b16750cf`
+/544-file `bf83e3d7`:593 unique cases/34.49s plus9 probes/.58s,108 schemas,
+53 physical artifact hashes and34 released leases. All flows remain simulated;
+DENY's retained pre-cleanup bundle conservatively lacks a cleanup proof even when
+physical cleanup is observed. No Google credential or live request was used.
+LangGraph and its shared integration passed independent offline acceptance on
+19-file `17303dd0` /555-file `c0d9a5f0`:732 unique cases/84.43s, six direct
+config controls,108 schemas,53 artifact hashes,48 released leases and17 absent
+worktree paths. An earlier candidate passed718 tests but failed five edited-YAML/
+distributed-schema provider checks; that failure is retained and corrected in
+both validation paths. Dependency resolution adds15 exact pins without changing
+existing versions. This is **not live qualification**, current Session acceptance,
+or acceptance of the mutable whole checkout.
+
+The separate mixed-Harness overlay passed independent9-case acceptance in37.26s
+on556-file `71fedc`:three cyclic per-role assignments under ALLOW, explicit separate
+approvals/reopen and DENY. The original profile revision stayed pinned after future
+profiles changed.159 artifacts,42 reported requests/630 synthetic tokens,42 released
+leases and15 absent paths were checked. This is actual offline SDK routing through
+Fleet, with simulated HTTP/sandbox results—not three independently successful live
+mixed-Harness tasks.
+
+Four packaged role/verification bundles now have a read-only `fleet role-bundles`
+preview path. Independent acceptance on15-file `a9d2d609` passed55 focused/87.59s,
+43 compatibility/91.74s and20 additional/16.55s. All four new-CoS proposal,
+explicit review/apply, custom-role execution and rollback journeys were checked:
+165 artifacts,38 terminal leases and11 absent workspaces. Preview does not
+initialize state or publish configuration. This snapshot excludes later shared
+Session wiring and does not prove real-model/Docker completion.
+
+Session `/recover` now offers a one-use, five-minute stopped-owner review for the
+current task; `/recover --confirm-owner-stopped <code>` cleans that exact old task
+without model replay. `/deny` can select a sole pending request without its ID;
+multiple requests remain explicit choices. Independent replay passed275 cases,
+but an additional concurrency probe found that cleanup could include a resource
+created after review. That candidate **failed acceptance**. Its replacement binds
+reviewed ownership and exact resource payloads in one transaction. Its8-file
+`3a7fcc33` successor passed independent acceptance on557-file `f65a5eab`:
+353 regression cases/755.69s plus23 original/additional/resource probes,376 unique
+passes. The original late-resource failure now passes without expanding review
+scope.29 new CAS fixtures have64 terminal leases,46 absent worktree paths and
+zero active claims; all61 observed child processes are absent. Intentional legacy
+paused/failure fixtures retain six private worktrees and are not a global cleanup
+claim. Earlier275/344 results remain historical, not new execution. This acceptance
+excludes later observer/security/packaging edits and whole S1–S3 completion.
+Ten logical journeys and the five-strategy positive/negative gate
+are frozen in `tests/fixtures/session-journeys.json`, not counted as ten independent
+test executions or three real cold starts.
+
+Remaining S1–S3 acceptance includes the original-DB terminal-write boundary and
+external oracle,24 tasks across6 actual Python/Node repositories (including12 sealed
+first rounds), approved business baselines and3 cold starts, additional Provider/
+Harness six-task live qualifications, and three live mixed combinations. Static
+readiness is not an executed business baseline. No Anthropic/Google credentials
+were available, and neither their live support nor new Harness live reliability
+is inferred from offline SDK tests. No real24-task campaign or live qualification
+of an additional Provider/Harness is accepted yet. The historical canary below is
+one bounded real task, not new full-suite or full-roadmap proof. See the
+[contracts](docs/CONFIG_AND_SCHEMAS.md#evaluation-contracts-s1-foundation-no-execution-authority)
+and [living S1–S3 plan](.agent/plans/2026-09-09-s1-s3-system-development.md).
+
+## CoS, transport and evidence corrections — 2026-09-09 UTC (bounded live canary passed)
+
+**Attempt6 passed the real OpenAI nano / Docker / public-CLI canary**, independently accepted at10:37:04UTC against candidate7af below. One test passed/132.52s; launcher133.644s. Real CoS, Engineer and independent Verifier completed; both command stages ran genuine pytest against the same minimal single-file zero-division guard patch. All18 artifact hashes and116 events validated, and independent CompletionGate replay returned `verified_complete=true` with no proof gaps. Seven requests reported23498 input+12867 output=36365 tokens; four tools,zero unknown/outstanding/reserved usage. CoS1 request/9091 tokens,Engineer4/17023,Verifier2/10251. Monetary cost was not reported. Original target source/HEAD and its11 initialized Fleet files stayed unchanged; no target patch application. All12 leases released and the exact installation scope containedzero containers.
+
+This accepts one bounded, unapplied guard-change canary, not broader S1-S3 completion, general provider reliability, package-build readiness or GitHub delivery. CoS still emitted one procedural criterion alongside the behavioral guard criterion: its command receipt alone does not prove verdict content; the retained actual independent verdict establishes that procedural outcome here. Guidance does not guarantee behavior-only criteria. All five earlier paid failures remain retained, including unknown usage where recorded. The secret-safe launcher completed its registered-credential-form scan and export checks; no credential is stored in this repository.
+
+Current fixture-corrected candidate: `7af364db0934f12f46e35304e2feee07d7ebfb5a2e59ce5a54b693bca25d1577`. **Enabled Docker29 passed/220.27s.** Default coverage is **2462 passed,23 optional skips across2485 unique cases**:2452 passes/4 skips are explicitly carried forward from byte-identical53e5 dependency closures, replacing the entire old Docker subset with fresh10 passes/19 skips in39.46s. Independent comparison verified exactly2 changed test files,399 unchanged source/test/script files, unchanged config/conftest/lock, all four helper consumers replayed and no missing/extra/duplicate identities. This is not a claim that unchanged tests re-executed under7af. Formatting340 files, lint, mypy278, schemas, whitespace and offline lock55/31ms passed again. Product/runtime/asset bytes are unchanged from53e5; its audited offline installation3/285.06s remains applicable. Independent physical review passed:199 terminal leases (190 released,9 recovered),zero outstanding or remaining lease paths,zero containers across19 exact installation scopes. The repaired evolution journey proved all four real commands:Engineer and independent Verifier each ran5 baseline and2 integration tests against the same patch. Archive-content check1/1.86s passed; final archive hashes/read-back are recorded in the living plan and private manifest. The subsequent bounded live result is recorded above; these local results alone do not establish it.
+
+Criterion-guidance freeze `53e5cb815f2d8da1b92ed622ccef57b7b8a98119c75aa03f22837f7e8950c4f1` completed **2458 default passes,23 optional skips**, with an independently exact2481-case collection/JUnit union. Disjoint groups:135/862.67s,185/820.82s,230/810.21s,1907 passed plus23 skipped/776.49s, then the unchanged serial cancellation case1/7.73s after all heavy workloads. Formatting340 files, lint, mypy278, schemas, whitespace and offline lock55/21ms passed. Writer-focused205/57.55s and independent205/115.47s overlap that total. Installation3/285.06s passed;54 leases released,zero outstanding or exact-scope containers, with257 package/guide files matching fresh installs and archives.
+
+Historical53e5 enabled Docker gate: **24 passed,1 failed/366.12s**. All three new actual-Docker criterion-mapping cases passed, including unchanged rejection of empty and transcript-mixed proof. The existing organization-evolution journey exposed a shared test-helper assumption of exactly one required command, while its valid TaskSpec requires two. The subsequent7af correction changed only that helper and its evolution consumer, preserving the product and its two-command evidence checks. The failed gate remains retained. The fresh enabled/disabled Docker gates, affected consumers and exact dependency/identity reconciliation subsequently passed at7af as recorded above. Carried-forward results are explicitly labeled, not claimed as re-executed; current resource and archive receipts are recorded separately.
+
+Historical strict-action freeze: `85fe6944e76189da9707539ae25ad769f22579f9115d47e2a0194989bf68a652`. Fresh default regression completed **2447 passed,21 optional skips**, covering2468 collected cases. Disjoint selections: integration133/853.99s,185/820.05s,230/808.52s; other1898 passed plus21 skipped/763.73s; then the unchanged cancellation/recovery case1/8.29s after all heavy test workloads stopped. Independent exact2468-identity collection/JUnit review passed before attempt5. No production timeout, permission or completion validator was weakened.
+
+Formatting339 files, lint, mypy277 including launcher, generated schemas, whitespace and offline lock55/11ms passed. Writer-focused265/36.59s and fresh independent235/18.30s passed and overlap the default total. Separately enabled real Docker21/354.33s and fresh offline installation3/291.75s passed;175 Docker leases are166 released/9 recovered,54 installation leases released,zero outstanding andzero containers in every exact installation scope. All257 runtime/assets/guide files matched3 fresh installs,4 wheels and3 sdists. Refreshed archive1/1.92s and independent exact2468-identity/package/resource review passed before attempt5. Later result-only prose changes require their own archive read-back; earlier archive hashes remain bound to their original prose. These local gates do not prove live E2E success.
+
+An offline actual-SDK reproduction exposed response-cookie storage causing a later request to be rejected by the exact header policy. The stateless-cookie client correction keeps Cookie prohibited and passed its frozen local gates below. This is a plausible cause of attempt3, not a proven observation of its unretained response headers. The live fixture now reuses the shipped standalone-module metadata instead of the shared synthetic fixture's invalid `builtins` package-build backend. Engineer and independent Verifier must still execute genuine pytest commands; this canary does not establish package-build readiness. Attempt4 executed this corrected transport/fixture candidate but still failed at Verifier arguments. The subsequent strict action-tool correction passed fresh local gates above, live acceptance at that checkpoint was still pending and was subsequently achieved by attempt6. Earlier results are historical acceptance of their named freezes only.
+
+Transport/fixture freeze: `e0a3d908330c50c4ef35a3eab84dbdf7b3380c98b8145bb375974431a9a9480f`. Complete default regression: **2400 passed,21 optional skips** across2421 collected cases. Disjoint selections: integration133/861.30s,184/824.25s,206/814.58s; unit/contract/offline E2E/default optional directories1876 passed plus21 skipped/767.88s; the unchanged timing-sensitive cancellation case ran separately after other workloads and passed1/8.22s. Independent identity review passed with2421 exact identities andzero omissions/duplicates. Formatting336 files, lint, mypy274 including launcher, generated schemas, whitespace and offline lock55 passed. Targeted independent transport/diagnostic checks105/3.95s and fixture preflight2/28.74s overlap these totals.
+
+Separately enabled Docker:21 passed/315.21s, with175 terminal leases (166 released,9 recovered),zero outstanding across37 databases andzero containers across17 exact installation scopes. Fresh offline wheel/sdist and installed-Docker journeys:3 passed/288.98s;54 released leases,zero outstanding andzero exact-installation containers. These opt-in results overlap the default skips; no provider request or dependency/image download occurred. Final archive read-back after documentation updates is recorded in the living plan.
+
+Preflight limitation: the standalone success journey verifies in real Docker. In the fake repair-history scenario, actual command results are failure/failure/pass/pass, but existing unstructured evidence assembly retains the earlier failed/old-verifier receipts and does not grant verified completion. Initial preflight1 passed/1 failed in28.69s exposed an overstrong new test expectation; the corrected negative test asserts that conservative nonacceptance without weakening production completion rules. The original report remains. A later passing command is not being reported as accepted repair-history delivery.
+
+The [living canary plan](.agent/plans/2026-09-08-low-budget-live-e2e.md) now includes the user-authorized corrective slice. CoS receives reviewed workflow choices, and its packaged prompt/JSON Schema descriptions distinguish workflow, team strategy and parallel writer assignments. Existing validators remain unchanged. Runtime errors add fixed, secret-safe diagnostic categories to JSON details and durable `agent.failed` events; no raw exception text, provider bodies/headers, validation records or credentials are retained. Model choice, budgets, SDK retries and the post-side-effect retry prohibition are unchanged.
+
+Corrective source/tests/scripts freeze: `25aa6ec20b2577ce5a87412c774002afa64507f5cadbac02e3252edd61036515`. The complete2392-case default matrix now has **2373 passed,19 deliberately skipped**: integration133/842.73s,183/495.31s,206/791.07s; other1851 passed plus19 skipped/741.37s. Focused checks:122 passed/6.70s. Static checks passed: Ruff332 files, lint, mypy270 files and generated schemas. Independent targeted safety review:39 passed/5.85s plus eleven cause-free mapping probes. Fresh Docker:19 passed/267.80s, with zero outstanding leases in35 state databases and zero containers across15 exact installation scopes. Optional Docker results overlap the default selection and are not additional unique cases.
+
+The first parallel default replay had2372 passes,1 failure and19 skips. The sole failure hit a15-second test-fixture wait before cancellation assertions; the same case passed alone/16.05s, then its entire183-case partition passed with other workloads stopped. No timeout or safety check was weakened; all original evidence remains. Fresh wheel/sdist/installed-Docker validation passed3 cases/147.34s; archive-content check1/2.15s. Independent installation audit matched all255 runtime files and the guide, with54 released leases/zero outstanding andzero exact-installation containers.
+
+Historical real attempt5 **failed the final evidence-mapping gate**, not the model/tool loop. CoS, Engineer and independent Verifier all completed; both roles ran real isolated Docker `python-test` with exit0 against the same single-file patch. Verifier reported pass, but one criterion had no evidence references and two cited command-transcript IDs alongside CommandEvidence IDs. The strict current-verifier mapping rules rejected all three: `STRUCTURED_CRITERION_MAPPING_INVALID`, `CRITERION_NOT_PASSING`, `PROOF_GAPS_PRESENT`. Status is `ready_for_review` with `verified_complete=false`, not accepted delivery. Result:1 failed/163.89s, launcher165.036s;9 requests/responses,42781 input +15760 output =58541 reported tokens,zero unknown/outstanding,5 tools. Fresh independent audit verified all18 artifact hashes, the exact failed gate replay, unchanged original target,12 released leases andzero remaining paths/containers. The subsequent guidance and fixture corrections passed the bounded attempt6 above; this fifth attempt remains a failure and no gate was weakened.
+
+Historical real attempt4 **failed during Verifier tool-argument validation**, after CoS and Engineer completed. Engineer produced the exact single-file guard patch and ran real Docker `python-test` with exit0. Verifier inspected the diff, then requested `run_verification` without its required `command_id`; trusted validation refused it before any Verifier command. This exact shape was observed in the user-authorized Dashboard and is not an invalid final verdict claim. Result:1 failed/90.87s, launcher92.014s;8 responses,31993 input +8428 output =40421 reported tokens,zero unknown requests,4 tools. All11 leases released;zero exact-installation containers; target baseline unchanged. Its subsequent strict-tool correction ran in attempt5 above; this historical attempt remains a failure.
+
+The subsequent correction explicitly requests strict arguments for shipped external action tools, while original local validators and PermissionBroker remain authoritative. `run_verification` requires an exact `command_id` plus `reason`; unavailable real commands are not invented, and malformed batches receive fixed `tool_arguments` diagnostics before tool reservation or effects. Strict-incompatible schemas fail closed without fallback. The fresh local results above accept this frozen correction; attempt5 completed real independent verification but did not pass the final evidence gate.
+
+Corrected real attempt3 **failed** after CoS successfully produced an accepted `code-change`/`engineer_verifier` plan and Engineer executed `repo.list_files`. The next model-request boundary returned `PROVIDER_FAILED` with `provider_sdk`/`unknown`; the exact cause is under offline investigation, not attributed to billing or model availability. Result:1 failed/46.75s, launcher47.861s;3 request reservations,6325 input +4623 output =10948 reported tokens, plus1 unknown request/30248 conservative token debit. That debit is not measured usage or proof of dispatch. Cleanup completed withzero outstanding leases. No live Verifier, accepted patch or live verification command evidence exists. This was the third real attempt; no automatic whole-run retry occurred. Earlier attempts remain recorded below. Final archive/install receipts must be refreshed after these README changes.
+
+## Initial low-budget canary attempts — 2026-09-09 UTC (live acceptance failed)
+
+The [living canary plan](.agent/plans/2026-09-08-low-budget-live-e2e.md) tracks this slice. Thin one-shot CLI budget flags, real profile binding, safe retained evidence and a one-attempt `openai:gpt-5-nano` launcher are implemented. No model upgrade or whole-run retry is automatic. Both manually launched live attempts **failed during CoS**, before live Engineer/Verifier dispatch. The first returned invalid structured output; the second permitted one existing pre-effect correction under unchanged model/budgets, but the subsequent request failed at the provider boundary. Neither initial attempt establishes live E2E or general nano reliability.
+
+User-authorized read-only inspection of OpenAI Dashboard logs established that both responses actually called `submit_scope_decision`. Both selected `fleet_strategy="engineer_verifier"` with nonempty `writer_assignments`. Offline reproduction against the real `ScopeDecision` validator rejects both with `only the parallel strategy accepts writer assignments`. For this strategy, the control plane creates the Engineer and independent Verifier; assignments must be empty. Attempt 2 additionally proposed undeclared `workflow="engineer_verifier"` instead of `code-change`, a separate check it would fail after fixing the assignments. The later `PROVIDER_FAILED` cause remains unknown. These are observed output-contract failures, not evidence of a missing API key or a proven end-to-end fix. Paid attempts were stopped for diagnosis; the subsequently authorized corrective implementation later passed only the bounded attempt6 described above.
+
+Attempt-2 source/test/scripts identity is `3846df53077a2db00df688542e9ad542aabbd9956da01265042f11603e74ac52`. Its exhaustive disjoint local partitions cover all **2358 collected cases: 2339 passed, 19 deliberately skipped**, with no failures. Independent review matched every JUnit case identity to fresh collection. Skips are 15 Docker cases, 3 fresh-install cases and 1 live-provider case; enabled optional results below overlap that selection. The earlier zero-correction candidate (`fadda04b73f16a828bc61f3d122c4012416a0be011b90bc4a3117953018514db`) separately passed 2338 tests with the same 19 skips; both are historical, not an additional total or acceptance of the corrective candidate.
+
+| Attempt-2 historical local gate | Exact result |
+| --- | --- |
+| Unit/contract/offline E2E and default optional directories | 1820 passed, 19 skipped in 781.07s: 1164 unit, 623 contract, 28 offline E2E and 5 offline helper checks passed. |
+| Complete integration, three disjoint groups | 133 passed in 879.02s; 182 passed in 847.67s; 204 passed in 826.13s — 519 total. |
+| Separately enabled Docker | 19 passed in 171.44s (15 Docker and 4 helper cases), carried forward from the first freeze: calibration changed only three live test/helper files, not runtime or Docker code/tests. Independent audit: 15 exact installation scopes with zero containers; 35 state databases with zero outstanding leases. |
+| Focused launcher regressions (overlap) | 22 passed in 0.45s. |
+| Formatting / lint / types / schemas / lock | Ruff 327 files; lint passed; mypy 265 files; generated-schema check passed; offline lock validation resolved 55 packages. |
+| Real nano attempt 1, zero corrections | FAIL: 1 failed in 70.92s (launcher 71.991s). CoS `RUNTIME_OUTPUT_INVALID`; 1 request, 3907 input + 6929 output = 10836 reported tokens, 0 tools. Cleanup complete, no outstanding leases. |
+| Real nano attempt 2, one permitted pre-effect correction | FAIL: 1 failed in 82.61s (launcher 84.217s). CoS `PROVIDER_FAILED`; 2 requests reserved, 3904 input + 7999 output = 11903 reported tokens, plus 1 request with unknown usage; 0 tools. Cleanup complete, no outstanding leases. |
+
+Calibration changed only three test/helper files to permit one correction and assert the exact frozen profile. Focused calibration checks passed **23 tests, with 1 live case skipped in 10.73s**. The 32768-token unknown ledger charge in attempt 2 is conservative budget accounting, not measured billing or proof that its reserved request reached OpenAI. Across both attempts, 22739 tokens were reported, but total consumption/cost is unknown; no invoice is inferred. Neither attempt produced a live Engineer/Verifier result, patch or completion verdict. Final archive-input verification is recorded in the living plan after this README freeze; it is not a fresh dependency-install gate.
+
+Initial Docker preflight used an unshared macOS temporary directory and failed **14 cases, with 5 passing in 71.20s**; its failed-state leases/worktrees are retained for diagnosis. Exact installation-scoped checks found no surviving containers, but unknown dispatched execution leases are intentionally not marked recovered from absence alone. The first combined focused run had 1 failure and 46 passes; the macOS orphan-cleanup race was fixed and the final full suite replayed. See the living plan for the failed approaches, exact selections and evidence boundaries.
+
+No GitHub Actions, dependency/image downloads, commits, pushes, merges or target patch application are part of this slice. Host proof remains macOS arm64/Python3.14.6 with local Colima. See the launcher instructions below for the credential-owning terminal boundary.
 
 ## Session-first local verification — 2026-09-07
 
@@ -227,22 +456,26 @@ uv run fleet run "Fix the canary behavior" --project /path/to/repo --sandbox doc
 
 Use `openai-chat:<model>` only when the OpenAI Chat Completions model path is intended; `openai:<model>` uses the Responses model path. Run-time provider flags are optional when they match the reviewed project registration; if supplied, they must match exactly. `--fake-scenario` is rejected for `pydantic-ai`.
 
+One-shot `fleet run` accepts optional cumulative ceilings: `--max-agent-invocations`, `--max-model-requests`, `--max-tool-calls`, `--max-total-tokens`, and `--max-active-seconds`. Omitted options preserve existing defaults. Invalid values fail before creating a Run; accepted limits are persisted and do not reset on approval/resume. ModelProfile limits additionally constrain each role invocation. Reported-token limits are post-response accounting, not a guaranteed dollar or pre-spend ceiling.
+
 `fleet doctor` reports the original project registration, not readiness of every per-role model profile. Effective profile preflight occurs when starting a task. Users selecting profiles should omit legacy runtime override flags.
 
 `fleet doctor` inspects whether the selected environment reference is configured and valid without resolving/returning its value and without contacting a provider. The Phase 2 OpenAI client pins `https://api.openai.com/v1`, disables SDK redirects, retries, and ambient proxy/CA discovery, clears ambient OpenAI organization/project/admin/webhook selections, and supplies the explicitly resolved authorization value. A final request hook validates the SDK-merged method, endpoint, headers, content length, and serialized body before send; a response hook rejects registered-secret material and removes provider-controlled headers before OpenAI SDK parsing/logging. `OPENAI_BASE_URL`, proxy variables, and unrelated OpenAI identity variables cannot redirect the selected BYOK credential. A generated doctor report exits zero even when `data.healthy` is false: exit zero means diagnostics completed, while readiness is expressed by `data.healthy` and the individual required checks. A missing PydanticAI credential is a failed required check; the fake runtime reports `not_selected` and does not require a provider credential. A command-level Fleet error still returns its documented nonzero category.
 
-The live smoke test is deliberately opt-in and destructive only to its generated disposable fixture. Configure the referenced variable through a secure environment mechanism, then run:
+The live smoke test is deliberately opt-in and modifies only its generated disposable fixture. For the bounded low-cost source-checkout test, export `FLEET_OPENAI_TEST_KEY` securely in your own terminal, then launch from that **same terminal** using the prepared `.venv`. Do not print the key, paste it into a command argument, or copy it into a repository file.
 
 ```bash
-export AGENT_FLEET_ENABLE_LIVE_PROVIDER_TESTS=1
-export AGENT_FLEET_ENABLE_DOCKER_TESTS=1
-export AGENT_FLEET_DOCKER_TEST_IMAGE='agent-fleet-runner:0.1.0-py314-v1'
-export AGENT_FLEET_LIVE_PROVIDER_MODEL='openai:gpt-5-mini'
-export AGENT_FLEET_LIVE_PROVIDER_CREDENTIAL_REF='env:OPENAI_API_KEY'
-uv run pytest -q -m live_provider tests/live/test_provider_smoke.py
+# macOS/Colima: this existing parent must be shared with the VM.
+fleet_evidence_parent=$(mktemp -d "$HOME/.cache/agent-fleet-live.XXXXXX")
+.venv/bin/python scripts/run_live_canary.py --run \
+  --output "$fleet_evidence_parent/attempt-01"
 ```
 
-Without the live opt-in, pytest skips this case. Explicit live opt-in with missing provider or Docker inputs fails setup; readiness checking alone cannot enable requests. The canary now requires genuine isolated command/verifier evidence, approves only observed exact disposable-run requests, and checks credential redaction. It is unrun: no explicit test credential was supplied. Offline FunctionModel or bootstrap tests do not substitute for this release gate.
+The local Docker image `agent-fleet-runner:0.1.0-py314-v1` must already exist; `--image` may select another prepared compatible local image. The launcher pins `openai:gpt-5-nano`, strips unrelated provider/debug/pytest environment settings, never pulls or installs, and refuses a reused output directory. It sets explicit live/Docker opt-ins for its child only. A missing key fails before launching; ordinary pytest continues to skip the live case.
+
+The root task allows at most 12 agent invocations, 24 model requests, 32 tool calls, 65,536 reported tokens and 600 active seconds. Each role profile allows 8 requests, 12 tools, 32,768 reported tokens and a 120-second timeout. Attempt 1 used zero structured-output corrections; the current configuration permits one correction through the existing runtime, before any side-effecting tool attempt, under the same cumulative ceilings. SDK retries remain zero and provider reasoning defaults are unchanged. The launcher has a separate 900-second wall timeout. These limits are not guaranteed dollar caps, and a failed or interrupted response may have incurred charges. Do not repeat a failed attempt without inspecting its evidence.
+
+PASS requires actual CoS → Engineer → Verifier usage, exact model/profile revisions, real isolated command receipts, an independently verified single-file patch with no proof gaps, unchanged source checkout, complete accounting and cleanup. `canary-evidence.json` retains structured artifacts/commands/usage, `cleanup.json` records finalizer cleanup, and `summary.json` plus `pytest.log` record the original outcome. Diagnostic files are private and scanned for registered-secret forms before persistence. The synchronous test finalizer handles normal failures; the launcher never infers safe recovery after missing/incomplete finalization. Hard interruption can leave detached Docker/Git processes or leases requiring explicit reconciliation; it reports NOT_PASSED and withholds recovery. Offline FunctionModel/bootstrap tests and source-safety review do not substitute for the real-provider gate.
 
 ## Offline preview and fake test mode
 
@@ -449,7 +682,7 @@ Default skips are14 separately tested real-Docker cases,three separately tested 
 
 The public installed Docker journey exercises doctor, Safe/src init, chat with cross-process exact approvals and duplicate-submission read-back, independent real five-test receipts, explicit code apply, persistent-rule revocation and confirmed no-op recovery. A separate installed registration substitutes only offline FunctionModel responses to exercise CoS proposal/diff/apply/rollback. That fixture is neither stock fake behavior nor live-provider inference. Source fresh-process crash and real Docker interruption-recovery tests supply the separate interruption evidence.
 
-Live inference remains **unperformed**. Default opt-in skips are not passes, and automated local/CI acceptance does not establish arbitrary-model reliability, a public release, or a license. The repository remains private; no PyPI publication or public runner registry is assumed. [PR #5](https://github.com/meyowu/agent-fleet-codex-kit/pull/5) was merged on2026-09-05 at20:02:01 UTC as `0cead7dcafcace07d64892c0ff41ed72939d706a`. Local/remote main initially matched that merge, whose tree `7b052436feb7c537391d4f421a8ee35468a93380` exactly equals the accepted PR head. The documentation-only delivery record and proportionate post-merge/package checks are recorded in the [release plan](.agent/plans/2026-09-05-release-candidate.md); [main-branch checks](https://github.com/meyowu/agent-fleet-codex-kit/actions/workflows/ci.yml?query=branch%3Amain) expose the exact record revision's CI separately.
+Live inference was **unperformed in this September 5 snapshot**; the later unsuccessful nano attempts are recorded in the current canary section above. Default opt-in skips are not passes, and automated local/CI acceptance does not establish arbitrary-model reliability, a public release, or a license. The repository remains private; no PyPI publication or public runner registry is assumed. [PR #5](https://github.com/meyowu/agent-fleet-codex-kit/pull/5) was merged on2026-09-05 at20:02:01 UTC as `0cead7dcafcace07d64892c0ff41ed72939d706a`. Local/remote main initially matched that merge, whose tree `7b052436feb7c537391d4f421a8ee35468a93380` exactly equals the accepted PR head. The documentation-only delivery record and proportionate post-merge/package checks are recorded in the [release plan](.agent/plans/2026-09-05-release-candidate.md); [main-branch checks](https://github.com/meyowu/agent-fleet-codex-kit/actions/workflows/ci.yml?query=branch%3Amain) expose the exact record revision's CI separately.
 
 ## Historical acceptance
 
