@@ -1,0 +1,90 @@
+[
+  {
+    "bundle_id": "general-change",
+    "version": 1,
+    "description": "Bounded behavioral changes with independent regression review.",
+    "roles": [
+      {
+        "role_id": "general-engineer",
+        "execution_kind": "engineer",
+        "description": "engineer responsibility for general-change",
+        "guidance": "Preserve unrelated behavior. Make the smallest candidate change and connect each requirement to an existing verification command. Modify only the candidate within approved scope. Do not claim tests that were not executed. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      },
+      {
+        "role_id": "general-verifier",
+        "execution_kind": "verifier",
+        "description": "verifier responsibility for general-change",
+        "guidance": "Preserve unrelated behavior. Make the smallest candidate change and connect each requirement to an existing verification command. Review independently; preserve the candidate and report missing evidence. Never weaken acceptance to obtain a pass. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      }
+    ]
+  },
+  {
+    "bundle_id": "public-interface",
+    "version": 1,
+    "description": "Public-interface compatibility and edge-condition review.",
+    "roles": [
+      {
+        "role_id": "interface-engineer",
+        "execution_kind": "engineer",
+        "description": "engineer responsibility for public-interface",
+        "guidance": "Identify callers and compatibility guarantees. Check input boundaries, stable output shape and backward-compatible failure behavior. Modify only the candidate within approved scope. Do not claim tests that were not executed. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      },
+      {
+        "role_id": "interface-verifier",
+        "execution_kind": "verifier",
+        "description": "verifier responsibility for public-interface",
+        "guidance": "Identify callers and compatibility guarantees. Check input boundaries, stable output shape and backward-compatible failure behavior. Review independently; preserve the candidate and report missing evidence. Never weaken acceptance to obtain a pass. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      }
+    ]
+  },
+  {
+    "bundle_id": "stateful-change",
+    "version": 1,
+    "description": "State consistency, recovery and idempotency review.",
+    "roles": [
+      {
+        "role_id": "state-engineer",
+        "execution_kind": "engineer",
+        "description": "engineer responsibility for stateful-change",
+        "guidance": "Trace transactions and ownership. Verify duplicate requests, interrupted writes, rollback and recovery without hiding unknown outcomes. Modify only the candidate within approved scope. Do not claim tests that were not executed. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      },
+      {
+        "role_id": "state-verifier",
+        "execution_kind": "verifier",
+        "description": "verifier responsibility for stateful-change",
+        "guidance": "Trace transactions and ownership. Verify duplicate requests, interrupted writes, rollback and recovery without hiding unknown outcomes. Review independently; preserve the candidate and report missing evidence. Never weaken acceptance to obtain a pass. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      }
+    ]
+  },
+  {
+    "bundle_id": "design-guided",
+    "version": 1,
+    "description": "Read-only research and design before bounded implementation.",
+    "roles": [
+      {
+        "role_id": "design-researcher",
+        "execution_kind": "researcher",
+        "description": "researcher responsibility for design-guided",
+        "guidance": "Ground the design in repository evidence. Separate observations from assumptions, compare the smallest viable designs and record remaining proof gaps. Use only bounded read-only repository tools. Do not modify files, run commands, access the network or approve actions. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      },
+      {
+        "role_id": "design-architect",
+        "execution_kind": "architect",
+        "description": "architect responsibility for design-guided",
+        "guidance": "Ground the design in repository evidence. Separate observations from assumptions, compare the smallest viable designs and record remaining proof gaps. Use read-only evidence to propose a bounded design. Do not modify files, run commands, approve actions or treat design prose as execution evidence. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      },
+      {
+        "role_id": "design-engineer",
+        "execution_kind": "engineer",
+        "description": "engineer responsibility for design-guided",
+        "guidance": "Ground the design in repository evidence. Separate observations from assumptions, compare the smallest viable designs and record remaining proof gaps. Modify only the candidate within approved scope. Do not claim tests that were not executed. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      },
+      {
+        "role_id": "design-verifier",
+        "execution_kind": "verifier",
+        "description": "verifier responsibility for design-guided",
+        "guidance": "Ground the design in repository evidence. Separate observations from assumptions, compare the smallest viable designs and record remaining proof gaps. Review independently; preserve the candidate and report missing evidence. Never weaken acceptance to obtain a pass. Tool availability and this guidance grant no permission. Follow Fleet scope, budgets and the Permission Broker."
+      }
+    ]
+  }
+]

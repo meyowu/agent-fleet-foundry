@@ -20,6 +20,8 @@ from typing import Any
 import yaml
 from yaml.tokens import AliasToken, AnchorToken
 
+from agent_fleet.adapters.repository.readiness_metadata import MetadataCapture
+from agent_fleet.domain.readiness import StaticReadinessMetadata
 from agent_fleet.domain.repository_profile import (
     CommandProvenance,
     Ecosystem,
@@ -150,6 +152,18 @@ class StaticRepositoryProfiler:
     """Discover repository metadata through bounded static inspection only."""
 
     def profile(self, root: Path) -> RepositoryProfileResult:
+        return self._profile(root)
+
+    def profile_with_metadata(
+        self, root: Path
+    ) -> tuple[RepositoryProfileResult, StaticReadinessMetadata]:
+        capture = MetadataCapture()
+        result = self._profile(root, capture=capture)
+        return result, capture.finish()
+
+    def _profile(
+        self, root: Path, *, capture: MetadataCapture | None = None
+    ) -> RepositoryProfileResult:
         canonical_root = root.resolve(strict=True)
         if not canonical_root.is_dir():
             raise ValueError(f"repository root is not a directory: {root}")
@@ -248,6 +262,12 @@ class StaticRepositoryProfiler:
                     systems, discovered = set(), []
                 build_systems.update(systems)
                 commands.extend(discovered)
+                if capture is not None:
+                    try:
+                        capture.observe(candidate.relative, name, text)
+                    except (ValueError, TypeError, RecursionError):
+                        # Optional metadata cannot modify the legacy profile result.
+                        capture.issue("metadata_capture_failed")
             except (json.JSONDecodeError, tomllib.TOMLDecodeError, ElementTree.ParseError) as error:
                 ambiguities.append(
                     self._ambiguity(
