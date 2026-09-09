@@ -116,6 +116,11 @@ class Redactor:
 
         return sum(self.register_secret(secret) for secret in secrets)
 
+    def has_registered_secrets(self) -> bool:
+        """Expose registry presence without returning any secret representation."""
+        with self._lock:
+            return bool(self._registered_values)
+
     def redact_text(self, value: str) -> tuple[str, list[str]]:
         return self._redact_text(value, self._snapshot())
 
