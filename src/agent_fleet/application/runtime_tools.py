@@ -107,7 +107,10 @@ _LIST_FILES = RuntimeToolDefinition(
 _READ_FILE = RuntimeToolDefinition(
     name="repo_read_file",
     description=(
-        "Read one bounded UTF-8 regular file inside the TaskSpec scope without following symlinks."
+        "Read one bounded UTF-8 regular file by repository-relative path without following "
+        "symlinks. TaskSpec.allowed_paths and forbidden_paths constrain reads too. Never pass "
+        "a directory, .fleet, .git, or another protected or out-of-scope path. Use "
+        "workspace_get_diff for changed-path inspection."
     ),
     parameters_json_schema=_PathArguments.model_json_schema(),
     side_effect=False,
@@ -140,7 +143,11 @@ _DELETE_FILE = RuntimeToolDefinition(
 )
 _GET_DIFF = RuntimeToolDefinition(
     name="workspace_get_diff",
-    description="Return the canonical candidate patch and changed-path summary.",
+    description=(
+        "Return the canonical candidate patch and changed-path summary for scope inspection. "
+        "Use this or the supplied patch instead of reading directories or protected paths. "
+        "Patch inspection alone is not independently executed behavioral proof."
+    ),
     parameters_json_schema=_ReasonArguments.model_json_schema(),
     side_effect=False,
 )

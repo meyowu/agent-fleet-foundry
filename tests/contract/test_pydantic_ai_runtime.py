@@ -1725,6 +1725,50 @@ def test_package_owned_prompts_are_loadable_and_state_the_control_boundary(name:
     assert "control plane" in prompt.casefold()
 
 
+async def test_verifier_invocation_receives_scoped_read_and_proof_gap_guidance(
+    deny_socket_connections: None,
+) -> None:
+    del deny_socket_connections
+    calls = 0
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        assert messages
+        instructions = info.instructions or ""
+        assert (
+            "TaskSpec.allowed_paths and forbidden_paths constrain repository reads" in instructions
+        )
+        assert "never a directory, .fleet, .git" in instructions
+        assert "workspace_get_diff for changed-path scope inspection" in instructions
+        assert "no configuration\nread is needed" in instructions
+        assert "Missing proof remains INCONCLUSIVE" in instructions
+        assert "do not broaden the task, invent coverage" in instructions
+        assert "Inspection-only or missing/inadequate proof remains INCONCLUSIVE" in instructions
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    _verifier_verdict().model_dump(mode="json"),
+                    tool_call_id="scope-guidance-verdict",
+                )
+            ]
+        )
+
+    adapter = PydanticAIRuntimeAdapter.for_test_model(FunctionModel(model_function))
+    catalog = RecordingCatalog()
+    result = await adapter.invoke(
+        _invocation(AgentRole.VERIFIER, WorkflowStage.VERIFYING),
+        RuntimeInvocationServices(configuration=_configuration(), tools=catalog),
+    )
+
+    assert isinstance(result.usage, UsageRecord)
+    assert calls == result.usage.requests == 1
+    assert result.output == _verifier_verdict()
+    assert result.output.verdict is Verdict.INCONCLUSIVE
+    assert catalog.calls == []
+
+
 @pytest.mark.parametrize("role", [AgentRole.RESEARCHER, AgentRole.ARCHITECT])
 async def test_specialist_output_cannot_impersonate_other_role(role: AgentRole) -> None:
     wrong_role = "architect" if role is AgentRole.RESEARCHER else "researcher"
