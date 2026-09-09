@@ -69,8 +69,16 @@ class _DeleteArguments(StrictModel):
 
 
 class _VerificationArguments(StrictModel):
-    command_id: str = Field(min_length=1, max_length=100)
-    reason: str = Field(min_length=1, max_length=4096)
+    command_id: str = Field(
+        min_length=1,
+        max_length=100,
+        description="The exact command_id of one verification command admitted by the TaskSpec.",
+    )
+    reason: str = Field(
+        min_length=1,
+        max_length=4096,
+        description="Why this admitted command is needed; this does not replace command_id.",
+    )
 
 
 class _ApprovalProbeArguments(StrictModel):
@@ -202,19 +210,20 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         if self._agent.effective_kind in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}:
             return tuple(read_tools)
         run_verification = self._run_verification_definition()
+        verification_tools = () if run_verification is None else (run_verification,)
         if self._agent.effective_kind == AgentRole.ENGINEER:
             definitions = [
                 *read_tools,
                 _WRITE_FILE,
                 _APPLY_EDIT,
                 _DELETE_FILE,
-                run_verification,
+                *verification_tools,
             ]
             if self._run.fake_scenario is FakeScenario.APPROVAL:
                 definitions.append(_APPROVAL_PROBE)
             return tuple(definitions)
         if self._agent.effective_kind == AgentRole.VERIFIER:
-            return (*read_tools, run_verification)
+            return (*read_tools, *verification_tools)
         return ()
 
     @property
@@ -488,8 +497,10 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
             details={"command_id": command_id},
         )
 
-    def _run_verification_definition(self) -> RuntimeToolDefinition:
+    def _run_verification_definition(self) -> RuntimeToolDefinition | None:
         command_ids = [command.command_id for command in self._commands()]
+        if not command_ids:
+            return None
         schema = _VerificationArguments.model_json_schema()
         command_property = schema.get("properties", {}).get("command_id")
         if isinstance(command_property, dict):
@@ -498,8 +509,14 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
             name="run_verification",
             description=(
                 "Run one exact TaskSpec-bound verification command through the configured "
-                "sandbox. The control plane supplies executable, argv, cwd, environment, "
-                "limits, identity, and permission context."
+                "sandbox. Supply both its exact command_id and a reason; mentioning an ID "
+                "inside reason is not supplying command_id. The control plane supplies "
+                "executable, argv, cwd, environment, "
+                "limits, identity, and permission context. The returned "
+                "content.command_evidence_artifact_id names the CommandEvidence receipt; pair "
+                "only that ID with this command_id in criterion mappings. The generic artifact_ids "
+                "collection includes auxiliary artifacts; content.transcript_artifact_id is not "
+                "a CommandEvidence receipt."
             ),
             parameters_json_schema=schema,
             side_effect=True,
