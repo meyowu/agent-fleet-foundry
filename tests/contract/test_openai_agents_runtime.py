@@ -944,7 +944,9 @@ async def test_real_sdk_strict_actions_preserve_all_shipped_schemas(
     monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     catalog: RuntimeToolCatalog = (
-        make_action_tools().catalog if kind == "gateway" else ProposalHashToolCatalog(Redactor())
+        make_action_tools().catalog
+        if kind == "gateway"
+        else ProposalHashToolCatalog(Redactor(), visible_paths=frozenset({".fleet/README.md"}))
     )
     originals = {tool.name: tool.model_dump_json() for tool in catalog.definitions}
     sends = 0

@@ -839,6 +839,20 @@ At minimum:
 
 The Phase 6 publisher must validate both the full organization tree and logical configuration, retain exact unreferenced bytes/modes/empty directories, reject links/special files/unsupported metadata, and repeat registered-secret checks on proposal, journal and result-tree reads. `.fleet/fleet.yaml` and trust remain protected; added requirements do not grant commands. Bounded pure CoS hashing is not an alternate resource executor. Semantic/text display must not execute terminal controls.
 
+The pure `fleet_content_sha256` request requires exact `operation`, `path`, and
+`content` fields. Only `add`/`replace` and canonical permitted `.fleet/` targets
+are accepted; business source paths, protected configuration and sensitive names
+are rejected before hashing. Replacement requires an exact complete-visible path;
+addition rejects case-insensitive collisions with known visible paths. Omitted
+existing paths are not known here, so a digest does not prove target existence or
+authorize publication. The complete proposal/tree gates remain authoritative.
+Call identity binds all three fields, repeats recheck current registered secrets,
+and results return the bound target with the digest and byte count. The immutable
+visible context may contain complete but ineligible files; only individual hash
+targets must be eligible. This reduces accidental misuse, not reliable intent
+routing: a model can still mislabel text or repeat eligible calls until existing
+budgets stop it. No scope, retry, content-size, permission or spend limit is widened.
+
 Durable preparation must precede a single native directory exchange. Cross-state canonical-root locking, monotonic Run admission in the registration transaction and exact Project/source/index/HEAD checks prevent cooperating Fleet processes from applying or admitting stale work. A same-hash README update or rollback cannot revive old code candidates. Active and paused execution, unresolved descendant leases, retained chat owners and graph drivers block mutation. Headed initialization cannot rewrite registration. Unknown state never expires into authority.
 
 Before/after prepare/exchange/flush/commit failures, abrupt CLI exits, concurrent publishers, source/index/tree drift and partial backup deletion must leave exact recoverable evidence or an explicit retained gap. Recovery requires stopped-owner confirmation and the same native lock; it aborts the exact original orientation or synchronizes/commits the exact exchanged orientation, never performs another exchange or overwrites unknown user edits. Publication success is distinct from cleanup. Pre-receipt scratch has no invented journal recovery. Native macOS/Linux feature availability and hardware durability are not implied by schema validation; unsupported environments fail closed. See [ADR 0006](adr/0006-atomic-organization-publication.md) and the Phase 6 acceptance ledger.

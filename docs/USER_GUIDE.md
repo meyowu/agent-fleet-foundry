@@ -622,6 +622,11 @@ fleet patch apply <run-id> --json
 
 实际 backend 路径和验证命令必须来自你的项目。CoS 可以提出声明式要求，不能为了实现这句话偷偷放宽命令、路径或网络权限。
 
+普通代码任务不需要组织内容哈希。生成组织提案时，CoS 的纯哈希工具必须提供
+`operation`（`add`／`replace`）、精确的允许 `.fleet/` 路径和完整内容；业务源码路径
+会被拒绝。替换只能针对完整可见的组织文件。哈希结果不是文件存在、权限批准或
+提案通过的证明，也不保证模型不会重复调用；完整提案仍须经过下面的独立审查和发布门禁。
+
 ```text
 fleet fleet-patch list --path /absolute/path/to/repo --json
 fleet fleet-patch show <proposal-id> --json

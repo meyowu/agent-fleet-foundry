@@ -1089,7 +1089,9 @@ class WorkflowEngine:
                 tools=(
                     EMPTY_RUNTIME_TOOL_CATALOG
                     if runtime_configuration.runtime_name == "fake"
-                    else ProposalHashToolCatalog(self.redactor)
+                    else ProposalHashToolCatalog(
+                        self.redactor, visible_paths=organization_context.visible_paths
+                    )
                 ),
             ),
         )

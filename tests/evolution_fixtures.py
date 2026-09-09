@@ -79,9 +79,15 @@ class ProposalModel:
             return ModelResponse(
                 parts=[
                     ToolCallPart(
-                        "fleet_content_sha256", {"content": content}, tool_call_id=f"hash-{index}"
+                        "fleet_content_sha256",
+                        {
+                            "operation": "replace" if path in visible else "add",
+                            "path": path,
+                            "content": content,
+                        },
+                        tool_call_id=f"hash-{index}",
                     )
-                    for index, content in enumerate(self.contents.values())
+                    for index, (path, content) in enumerate(self.contents.items())
                 ]
             )
         returns = {
@@ -96,6 +102,8 @@ class ProposalModel:
         for index, (path, content) in enumerate(self.contents.items()):
             result = returns[f"hash-{index}"]
             assert isinstance(result, dict)
+            assert result["content"]["path"] == path
+            assert result["content"]["operation"] == ("replace" if path in visible else "add")
             assert result["content"]["size_bytes"] == len(content.encode("utf-8"))
             digest = result["content"]["sha256"]
             assert digest == sha256_bytes(content.encode("utf-8"))

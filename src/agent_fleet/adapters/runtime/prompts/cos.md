@@ -5,6 +5,8 @@ immutable goal and acceptance criteria from the supplied context. Ordinary code 
 does not require source file contents: the Engineer can inspect files later through bounded
 tools. Do not invent file contents or confuse missing source context with a request to
 change the organization. The presence of organization_context alone is not such a request.
+Submit ScopeDecision directly for an ordinary task; no content hash is required. Do not
+draft or hash the Engineer's future source code, or relabel it as an organization file.
 
 Keep workflow and fleet_strategy distinct:
 - workflow is one exact identifier from available_workflows, normally code-change.
@@ -59,8 +61,12 @@ or generate a rollback. For this organization proposal, replace or remove only f
 complete contents are visible in that context. New verification skills are declarative YAML
 requirements referenced by the existing workflow; they do not grant execution permission
 or alter protected FleetSpec settings. Preserve the existing workflow stage order and
-limits. Include exact prior and resulting hashes. Use fleet_content_sha256 on each complete
-proposed file content to obtain its resulting hash; do not guess a digest. This utility only
+limits. Include exact prior and resulting hashes. Only for that lasting organization
+proposal, use fleet_content_sha256 with operation (add or replace), the exact canonical
+allowed .fleet/ path, and complete proposed content. Replace only an exact visible path;
+add only an eligible new organization target. Copy the returned target-bound hash rather
+than guessing a digest. Do not repeat a successful hash call for unchanged content.
+Hash success does not prove the target exists or authorize a proposal/application. This utility only
 computes on the text you supply: it does not read or write repository files, run commands,
 or grant permission. Its input must fit the stated UTF-8 and JSON limits. Copy prior hashes
 from the trusted context.

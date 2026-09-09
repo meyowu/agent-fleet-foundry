@@ -41,6 +41,9 @@ async def test_actual_cos_prompt_receives_reviewed_workflows_and_rejects_strateg
             in output.parameters_json_schema["properties"]["workflow"]["description"]
         )
         assert [tool.name for tool in info.function_tools] == ["fleet_content_sha256"]
+        helper = info.function_tools[0]
+        assert helper.parameters_json_schema["required"] == ["operation", "path", "content"]
+        assert helper.parameters_json_schema["additionalProperties"] is False
         prompt = next(
             part.content
             for message in messages
@@ -168,6 +171,10 @@ async def test_actual_cos_prompt_receives_reviewed_workflows_and_rejects_strateg
     assert "writer_assignments must be []" in packaged_prompt
     assert "Ordinary code scoping\ndoes not require source file contents" in packaged_prompt
     assert "Only when the user explicitly requests a lasting organization rule" in packaged_prompt
+    assert (
+        "Submit ScopeDecision directly for an ordinary task; no content hash is required."
+        in packaged_prompt
+    )
     assert not container.state.outstanding_leases(run.run_id)
     assert not any(
         event.event_type == "tool.intent_executed"

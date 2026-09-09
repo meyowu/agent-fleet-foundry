@@ -31,7 +31,7 @@ from agent_fleet.domain.models import (
     RuntimeToolDefinition,
     RuntimeToolResult,
 )
-from agent_fleet.domain.security import Redactor
+from agent_fleet.domain.security import Redactor, sha256_bytes
 from agent_fleet.ports.runtime import RuntimeInvocationServices, RuntimeToolCatalog
 
 _VALID_ARGUMENTS: dict[str, dict[str, JsonValue]] = {
@@ -67,7 +67,9 @@ async def test_actual_sdk_advertises_all_builtin_action_schemas_as_strict(
 ) -> None:
     tools = make_action_tools()
     catalog: RuntimeToolCatalog = (
-        tools.catalog if kind == "gateway" else ProposalHashToolCatalog(Redactor())
+        tools.catalog
+        if kind == "gateway"
+        else ProposalHashToolCatalog(Redactor(), visible_paths=frozenset({".fleet/README.md"}))
     )
     originals = {d.name: d.model_dump_json() for d in catalog.definitions}
     seen: list[httpx2.Request] = []
@@ -138,10 +140,136 @@ async def test_actual_sdk_advertises_all_builtin_action_schemas_as_strict(
     assert tools.gateway.calls == [] and catalog.records == ()
 
 
+@pytest.mark.parametrize("provider", ["openai", "openai-chat"])
+async def test_target_bound_hash_crosses_real_sdk_round_trip_without_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    tools = make_action_tools()
+    catalog = ProposalHashToolCatalog(Redactor(), visible_paths=frozenset({".fleet/README.md"}))
+    seen: list[httpx2.Request] = []
+    content = "Reviewed organization note.\n"
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        if len(seen) == 1:
+            return tool_response(
+                request,
+                [
+                    (
+                        "fleet_content_sha256",
+                        {
+                            "operation": "replace",
+                            "path": ".fleet/README.md",
+                            "content": content,
+                        },
+                    )
+                ],
+            )
+        assert len(seen) == 2
+        body = json.loads(request.content)
+        if provider == "openai":
+            returns = [item for item in body["input"] if item.get("type") == "function_call_output"]
+            assert len(returns) == 1 and returns[0]["call_id"] == "call-1-0"
+            returned = json.loads(returns[0]["output"])
+        else:
+            returns = [item for item in body["messages"] if item["role"] == "tool"]
+            assert len(returns) == 1 and returns[0]["tool_call_id"] == "call-1-0"
+            returned = json.loads(returns[0]["content"])
+        assert returned["content"] == {
+            "operation": "replace",
+            "path": ".fleet/README.md",
+            "sha256": sha256_bytes(content.encode()),
+            "size_bytes": len(content.encode()),
+        }
+        return tool_response(
+            request,
+            [
+                (
+                    "submit_implementation_report",
+                    {
+                        "summary": "Offline pure helper contract only.",
+                        "intended_changed_paths": [],
+                        "tests_added_or_changed": [],
+                        "criterion_results": [],
+                        "evidence_artifact_ids": [],
+                        "unresolved_limitations": ["No actual project changes or model execution."],
+                        "verifier_focus": [],
+                    },
+                )
+            ],
+            index=2,
+        )
+
+    adapter, clients = sdk_adapter(monkeypatch, handler)
+    with override_allow_model_requests(True):
+        result = await adapter.invoke(
+            tools.invocation,
+            RuntimeInvocationServices(
+                configuration=configuration(provider),
+                tools=catalog,
+            ),
+        )
+    assert len(seen) == 2 and len(catalog.records) == 1
+    assert result.usage is not None and result.usage.tool_calls == 1
+    assert not catalog.records[0].side_effect_committed
+    assert tools.gateway.calls == [] and all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-chat"])
+async def test_invalid_target_in_real_sdk_batch_blocks_every_hash_before_execution(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+) -> None:
+    tools = make_action_tools()
+    catalog = ProposalHashToolCatalog(Redactor(), visible_paths=frozenset({".fleet/README.md"}))
+    seen: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        assert len(seen) == 1, "A rejected target must not trigger a retry"
+        return tool_response(
+            request,
+            [
+                (
+                    "fleet_content_sha256",
+                    {
+                        "operation": "replace",
+                        "path": ".fleet/README.md",
+                        "content": "Allowed note.",
+                    },
+                ),
+                (
+                    "fleet_content_sha256",
+                    {
+                        "operation": "add",
+                        "path": "src/calculator.py",
+                        "content": "Business source is not an organization target.",
+                    },
+                ),
+            ],
+        )
+
+    adapter, clients = sdk_adapter(monkeypatch, handler)
+    with override_allow_model_requests(True), pytest.raises(FleetError) as caught:
+        await adapter.invoke(
+            tools.invocation,
+            RuntimeInvocationServices(
+                configuration=configuration(provider),
+                tools=catalog,
+            ),
+        )
+    assert caught.value.code is ErrorCode.COMMAND_DENIED
+    assert len(seen) == 1 and catalog.records == () and catalog._completed == {}
+    assert tools.gateway.calls == [] and all(client.is_closed for client in clients)
+
+
 def test_all_shipped_action_schemas_match_the_reviewed_flat_closed_required_subset() -> None:
     definitions = (
         *make_action_tools().catalog.definitions,
-        *ProposalHashToolCatalog(Redactor()).definitions,
+        *ProposalHashToolCatalog(
+            Redactor(), visible_paths=frozenset({".fleet/README.md"})
+        ).definitions,
     )
     assert len(definitions) == 10
     for definition in definitions:

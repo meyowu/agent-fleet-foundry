@@ -217,7 +217,7 @@ async def test_fleet_patch_output_requires_actual_cos_organization_context(
     invocation = request("cos")
     if with_context:
         invocation.input["organization_context"] = {"proposal_id": patch.fleet_patch_id}
-    catalog = ProposalHashToolCatalog(Redactor())
+    catalog = ProposalHashToolCatalog(Redactor(), visible_paths=frozenset({".fleet/README.md"}))
     originals = tuple(tool.model_dump_json() for tool in catalog.definitions)
 
     def respond(received: httpx2.Request) -> httpx2.Response:
