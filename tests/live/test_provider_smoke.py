@@ -1,15 +1,22 @@
 from __future__ import annotations
 
-import base64
 import json
 import os
 import socket
 from pathlib import Path
 from typing import cast
-from urllib.parse import quote, quote_plus
 
 import pydantic_ai.models as pydantic_ai_models
 import pytest
+from live_provider_support import (
+    EVIDENCE_DIRECTORY_ENV,
+    PROFILE_LIMITS,
+    ROOT_LIMITS,
+    CanaryEvidence,
+    assert_live_canary_verification,
+    credential_forms,
+    prepare_live_canary_fixture,
+)
 from typer.testing import CliRunner
 
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
@@ -34,28 +41,7 @@ _CANARY_GOAL = (
 
 
 def _credential_forms(secret: str) -> tuple[bytes, ...]:
-    encoded = secret.encode("utf-8")
-    standard_base64 = base64.b64encode(encoded).decode("ascii")
-    urlsafe_base64 = base64.urlsafe_b64encode(encoded).decode("ascii")
-    json_escaped = json.dumps(secret, ensure_ascii=True)[1:-1]
-    text_forms = {
-        secret,
-        quote(secret, safe=""),
-        quote_plus(secret, safe=""),
-        standard_base64,
-        standard_base64.rstrip("="),
-        urlsafe_base64,
-        urlsafe_base64.rstrip("="),
-        encoded.hex(),
-        json_escaped,
-    }
-    return tuple(
-        sorted(
-            {item.encode("utf-8") for item in text_forms if item},
-            key=len,
-            reverse=True,
-        )
-    )
+    return credential_forms(secret)
 
 
 def _assert_no_credential_leak(
@@ -89,6 +75,7 @@ def _invoke_json(
     arguments: list[str],
     environment: dict[str, str],
     forms: tuple[bytes, ...],
+    recorder: CanaryEvidence,
 ) -> object:
     result = runner.invoke(app, arguments, env=environment)
     captured = result.stdout_bytes + (result.stderr_bytes or b"")
@@ -99,12 +86,15 @@ def _invoke_json(
             forms,
             "CLI exception",
         )
-    if result.exit_code != 0:
-        pytest.fail("live provider CLI canary failed with a redacted diagnostic", pytrace=False)
     try:
         envelope = json.loads(result.stdout)
     except (TypeError, ValueError):
         pytest.fail("live provider CLI canary returned invalid JSON", pytrace=False)
+    recorder.cli_observations.append({"exit_code": result.exit_code, "envelope": envelope})
+    if result.exit_code != 0:
+        pytest.fail(
+            "live provider CLI canary failed; inspect retained safe envelope", pytrace=False
+        )
     if not isinstance(envelope, dict) or envelope.get("ok") is not True:
         pytest.fail("live provider CLI canary returned an unsuccessful envelope", pytrace=False)
     return envelope.get("data")
@@ -146,6 +136,7 @@ def test_ordinary_suite_denies_network_and_live_model_requests() -> None:
 def test_live_provider_cli_cos_engineer_verifier_canary(
     tmp_path: Path,
     real_docker_image: str,
+    request: pytest.FixtureRequest,
 ) -> None:
     provider_model = os.environ[_LIVE_PROVIDER_MODEL]
     credential_ref = os.environ[_LIVE_PROVIDER_CREDENTIAL_REF]
@@ -155,25 +146,35 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
         pytest.fail("live provider credential must be at least 16 bytes", pytrace=False)
     forms = _credential_forms(credential)
 
-    repository = GitRepositoryAdapter(tmp_path, UuidIdGenerator()).create_canary_fixture(
-        tmp_path / "live-provider-repository"
-    )
-    manifest = repository / "pyproject.toml"
-    manifest.write_text(
-        manifest.read_text() + "\n[tool.pytest.ini_options]\npythonpath = ['src']\n"
-    )
-    git = GitRepositoryAdapter(tmp_path, UuidIdGenerator())
-    git._run(["git", "add", "--", "pyproject.toml"], cwd=repository)
-    git._run(
-        ["git", "commit", "--no-gpg-sign", "--no-verify", "-m", "Declare canary import path"],
-        cwd=repository,
-    )
     state_root = tmp_path / "live-provider-state"
+    evidence_directory = os.environ.get(EVIDENCE_DIRECTORY_ENV)
+    recorder = CanaryEvidence(
+        state_root=state_root,
+        repository=tmp_path / "live-provider-repository",
+        forms=forms,
+        directory=Path(evidence_directory) if evidence_directory else None,
+        selected_model=provider_model,
+    )
+    # CliRunner owns synchronous invocations: every call has exited before teardown.
+    # Register before init so bootstrap failures also retain evidence and clean leases.
+    request.addfinalizer(recorder.finish)
+
+    def invoke(
+        runner: CliRunner,
+        arguments: list[str],
+        environment: dict[str, str],
+        forms: tuple[bytes, ...],
+    ) -> object:
+        return _invoke_json(runner, arguments, environment, forms, recorder)
+
+    repository = prepare_live_canary_fixture(tmp_path / "live-provider-repository")
+    git = GitRepositoryAdapter(tmp_path, UuidIdGenerator())
+    original_source = (repository / "src/canary_calc/core.py").read_bytes()
     environment = {"AGENT_FLEET_HOME": str(state_root)}
     runner = CliRunner()
 
     initialized = _mapping(
-        _invoke_json(
+        invoke(
             runner,
             [
                 "init",
@@ -202,23 +203,53 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     assert initialized["security_level"] == "isolated"
     assert initialized["bootstrap_verified"] is True
     assert initialized["bootstrap_cleanup_complete"] is True
+    assert_live_canary_verification(repository)
+
+    invoke(
+        runner,
+        [
+            "models",
+            "set",
+            "live-canary",
+            "--runtime",
+            "pydantic-ai",
+            "--provider-model",
+            provider_model,
+            "--credential-ref",
+            credential_ref,
+            *[
+                argument
+                for name, value in PROFILE_LIMITS.items()
+                for argument in ("--" + name.replace("_", "-"), str(value))
+            ],
+            "--json",
+        ],
+        environment,
+        forms,
+    )
+    invoke(
+        runner,
+        ["models", "bind", "live-canary", "--path", str(repository), "--default", "--json"],
+        environment,
+        forms,
+    )
+    baseline = git.inspect(repository)
 
     executed = _mapping(
-        _invoke_json(
+        invoke(
             runner,
             [
                 "run",
                 _CANARY_GOAL,
                 "--project",
                 str(repository),
-                "--runtime",
-                "pydantic-ai",
-                "--provider-model",
-                provider_model,
-                "--credential-ref",
-                credential_ref,
                 "--sandbox",
                 "docker",
+                *[
+                    argument
+                    for name, value in ROOT_LIMITS.items()
+                    for argument in ("--" + name.replace("_", "-"), str(value))
+                ],
                 "--json",
             ],
             environment,
@@ -236,23 +267,23 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
             break
         request_id = executed.get("pending_approval_id")
         assert isinstance(request_id, str)
-        _invoke_json(runner, ["permissions", "explain", request_id, "--json"], environment, forms)
-        _invoke_json(runner, ["approve", request_id, "--run", "--json"], environment, forms)
+        invoke(runner, ["permissions", "explain", request_id, "--json"], environment, forms)
+        invoke(runner, ["approve", request_id, "--run", "--json"], environment, forms)
         executed = _mapping(
-            _invoke_json(runner, ["resume", run_id, "--json"], environment, forms), "resume data"
+            invoke(runner, ["resume", run_id, "--json"], environment, forms), "resume data"
         )
     assert executed["status"] == "ready_for_review"
 
     status = _mapping(
-        _invoke_json(runner, ["status", run_id, "--json"], environment, forms),
+        invoke(runner, ["status", run_id, "--json"], environment, forms),
         "status data",
     )
     log_items = _items(
-        _invoke_json(runner, ["logs", run_id, "--json"], environment, forms),
+        invoke(runner, ["logs", run_id, "--json"], environment, forms),
         "event history",
     )
     artifact_items = _items(
-        _invoke_json(runner, ["artifacts", run_id, "--json"], environment, forms),
+        invoke(runner, ["artifacts", run_id, "--json"], environment, forms),
         "artifact metadata",
     )
 
@@ -267,6 +298,36 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     evidence = _mapping(status.get("evidence"), "evidence")
     assert evidence["verified_complete"] is True
     assert evidence["proof_gaps"] == []
+    assert evidence["changed_paths"] == ["src/canary_calc/core.py"]
+    assert (repository / "src/canary_calc/core.py").read_bytes() == original_source
+    final_repository = git.inspect(repository)
+    assert final_repository.head_revision == baseline.head_revision
+    assert final_repository.status_fingerprint == baseline.status_fingerprint
+
+    budget = _mapping(status.get("runtime_budget"), "runtime budget")
+    assert budget["limits"] == ROOT_LIMITS
+    assert budget["completeness"] == "complete"
+    for name in ("reserved_tokens", "unknown_tokens", "outstanding_requests", "unknown_requests"):
+        assert budget[name] == 0
+    for usage_name, limit_name in (
+        ("agent_invocations", "max_agent_invocations"),
+        ("model_requests", "max_model_requests"),
+        ("tool_calls", "max_tool_calls"),
+        ("reported_total_tokens", "max_total_tokens"),
+        ("active_seconds", "max_active_seconds"),
+    ):
+        used = budget[usage_name]
+        assert isinstance(used, (int, float)) and 0 < used <= ROOT_LIMITS[limit_name]
+    bindings = _mapping(status.get("model_bindings"), "frozen model bindings")
+    bound_roles = _mapping(bindings.get("roles"), "model role bindings")
+    for bound_role in ("cos", "engineer", "verifier"):
+        binding = _mapping(bound_roles.get(bound_role), "model binding")
+        assert binding["profile_name"] == "live-canary" and binding["profile_revision"] == 1
+        configuration = _mapping(binding.get("configuration"), "role configuration")
+        assert configuration["runtime_name"] == "pydantic-ai"
+        assert configuration["provider_model"] == provider_model
+        for name, value in PROFILE_LIMITS.items():
+            assert configuration[name] == value
     reason_codes = _items(evidence.get("completion_reason_codes"), "completion reasons")
     assert "SIMULATED_EVIDENCE_ONLY" not in reason_codes
     command_results = _items(evidence.get("command_results"), "command evidence")
@@ -291,6 +352,12 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     usage_ids = _items(status.get("runtime_usage_artifact_ids"), "runtime usage bindings")
     assert len(usage_ids) >= 3
     container = build_container(state_root)
+    patch_id = status.get("patch_artifact_id")
+    assert isinstance(patch_id, str)
+    patch = container.artifacts.read_text(patch_id)
+    assert [line for line in patch.splitlines() if line.startswith("diff --git ")] == [
+        "diff --git a/src/canary_calc/core.py b/src/canary_calc/core.py"
+    ]
     usage_roles: list[str] = []
     for artifact_id in usage_ids:
         assert isinstance(artifact_id, str)
@@ -301,6 +368,9 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
             "runtime usage artifact",
         )
         observation_data = _mapping(observation, "runtime usage artifact")
+        selected = _mapping(observation_data.get("selected_model"), "invoked model binding")
+        assert selected["provider_model"] == provider_model
+        assert selected["max_retries"] == PROFILE_LIMITS["max_retries"]
         role = observation_data.get("role")
         assert isinstance(role, str)
         usage_roles.append(role)
@@ -332,3 +402,4 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     _assert_no_credential_leak(serialized_observations, forms, "application inspection data")
     _assert_tree_has_no_credential_leak(repository, forms)
     _assert_tree_has_no_credential_leak(state_root, forms)
+    recorder.passed = True

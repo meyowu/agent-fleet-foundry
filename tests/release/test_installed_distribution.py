@@ -42,7 +42,7 @@ socket.socket.connect_ex = connect_ex
 if hasattr(socket.socket, "sendmsg"):
     socket.socket.sendmsg = deny
 """
-_SMOKE = """import importlib.metadata as metadata
+_SMOKE = """import importlib, importlib.metadata as metadata
 import hashlib, json, pathlib, socket, sys
 from importlib.resources import files
 import agent_fleet
@@ -53,10 +53,25 @@ from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION, Sq
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.domain.security import Redactor
 from agent_fleet.schemas.generate import SCHEMAS
-environment = pathlib.Path(sys.prefix)
+from agent_fleet.adapters.config.role_bundle_assets import PackagedRoleBundles
+environment = pathlib.Path(sys.prefix).resolve(strict=True)
 assert environment != pathlib.Path(sys.base_prefix)
-assert pathlib.Path(agent_fleet.__file__).is_relative_to(environment)
+assert pathlib.Path(agent_fleet.__file__).resolve(strict=True).is_relative_to(environment)
 assert pydantic_ai.models.ALLOW_MODEL_REQUESTS is False
+packaged_modules = {}
+for suffix in (
+    "adapters.runtime.fake", "adapters.runtime.pydantic_ai",
+    "adapters.runtime.openai_agents", "adapters.runtime.langgraph",
+    "adapters.runtime.openai_client", "adapters.runtime.anthropic_provider",
+    "adapters.runtime.google_provider",
+):
+    module = importlib.import_module("agent_fleet." + suffix)
+    origin = pathlib.Path(module.__file__).resolve(strict=True)
+    assert origin.is_relative_to(environment)
+    packaged_modules[suffix] = hashlib.sha256(origin.read_bytes()).hexdigest()
+role_bundles = [item.bundle_id for item in PackagedRoleBundles().definitions()]
+assert set(role_bundles) == {
+    "general-change", "public-interface", "stateful-change", "design-guided"}
 try:
     socket.getaddrinfo("example.com", 443)
 except AssertionError:
@@ -79,6 +94,8 @@ print(json.dumps({
     "assets": str(files("agent_fleet").joinpath("assets")),
     "schemas": len(SCHEMAS),
     "dashboard_assets": dashboard_assets,
+    "packaged_modules": packaged_modules,
+    "role_bundles": role_bundles,
     "distributions": {
         d.metadata["Name"].lower().replace("_", "-"): d.version
         for d in metadata.distributions()
@@ -87,7 +104,9 @@ print(json.dumps({
 """
 _OFFLINE_PROPOSAL_ENTRY = """import importlib, importlib.util, pathlib, sys
 import agent_fleet
-assert pathlib.Path(agent_fleet.__file__).is_relative_to(pathlib.Path(sys.prefix))
+assert pathlib.Path(agent_fleet.__file__).resolve(strict=True).is_relative_to(
+    pathlib.Path(sys.prefix).resolve(strict=True)
+)
 # Load only a deterministic test response producer; never add checkout source to sys.path.
 spec = importlib.util.spec_from_file_location("release_proposal_fixture", sys.argv.pop(1))
 fixture = importlib.util.module_from_spec(spec)
@@ -294,9 +313,17 @@ def _install(root: Path, wheelhouse: Path, archive_kind: str) -> InstalledFleet:
     )
     assert smoke.returncode == 0, smoke.stdout + smoke.stderr
     report = json.loads(smoke.stdout)
-    assert Path(report["package"]).is_relative_to(virtual)
-    assert not Path(report["package"]).is_relative_to(_ROOT)
+    assert Path(report["package"]).resolve(strict=True).is_relative_to(virtual.resolve(strict=True))
+    assert (
+        not Path(report["package"]).resolve(strict=True).is_relative_to(_ROOT.resolve(strict=True))
+    )
     assert report["schemas"] == len(SCHEMAS)
+    assert report["packaged_modules"] == {
+        suffix: hashlib.sha256(
+            (_ROOT / "src/agent_fleet" / (suffix.replace(".", "/") + ".py")).read_bytes()
+        ).hexdigest()
+        for suffix in report["packaged_modules"]
+    }
     locked_versions = {
         package["name"]: package["version"]
         for package in tomllib.loads((_ROOT / "uv.lock").read_text())["package"]
@@ -420,9 +447,64 @@ assert run.verifier_verdict_artifact_id is None
     )
 
 
+def _installed_provider_harness_profiles(installed: InstalledFleet) -> None:
+    # Names are synthetic: configuration admission must not resolve any credential.
+    admitted = (
+        ("pydantic-ai", "openai"),
+        ("pydantic-ai", "openai-chat"),
+        ("pydantic-ai", "anthropic"),
+        ("pydantic-ai", "google"),
+        ("openai-agents", "openai"),
+        ("langgraph", "openai"),
+    )
+    for index, (runtime, provider) in enumerate(admitted):
+        name = f"release-admission-{index}"
+        profile = installed.invoke(
+            [
+                "models",
+                "set",
+                name,
+                "--runtime",
+                runtime,
+                "--provider-model",
+                f"{provider}:release-synthetic-model",
+                "--credential-ref",
+                "env:FLEET_RELEASE_ABSENT_KEY",
+                "--max-requests",
+                "1",
+                "--max-retries",
+                "0",
+            ]
+        )
+        configuration = cast(dict[str, object], profile["configuration"])
+        assert profile["credential_required"] is True
+        assert configuration["runtime_name"] == runtime
+        assert configuration["provider_model"] == f"{provider}:release-synthetic-model"
+        assert "credential_ref" not in configuration
+        assert installed.invoke(["models", "show", name]) == profile
+    for runtime in ("openai-agents", "langgraph"):
+        for provider in ("openai-chat", "anthropic", "google"):
+            denied = installed.invoke(
+                [
+                    "models",
+                    "set",
+                    "release-invalid-provider",
+                    "--runtime",
+                    runtime,
+                    "--provider-model",
+                    f"{provider}:release-synthetic-model",
+                    "--credential-ref",
+                    "env:FLEET_RELEASE_ABSENT_KEY",
+                ],
+                expected=2,
+            )
+            assert denied["code"] == "CONFIG_INVALID"
+
+
 def _installed_models_and_reviewed_plan(installed: InstalledFleet) -> None:
     help_result = installed.process([str(installed.executable), "dashboard", "--help"])
     assert "Observe local agents and evidence" in help_result.stdout
+    _installed_provider_harness_profiles(installed)
     target = _project(installed, "reviewed-plan-project")
     _test_seed_without_canary(installed, target)
     repository_configuration = {
@@ -732,9 +814,21 @@ def test_fresh_distribution_offline_resources_and_test_seeded_workflow(
     archive_kind: str,
 ) -> None:
     installed = _install(tmp_path / "fresh", prepared_wheelhouse, archive_kind)
-    assert installed.invoke(["version"])["phase"] == "6"
+    version = installed.invoke(["version"])
+    assert version["phase"] == "6"
+    assert version["runtimes"] == ["fake", "pydantic-ai", "openai-agents", "langgraph"]
     target = _project(installed)
     before = (target / "src/canary_calc/core.py").read_bytes()
+    readiness = installed.invoke(["readiness", str(target)])
+    assert readiness["baseline_status"] == "not_checked"
+    assert readiness["environment_status"] == "unverified"
+    assert readiness["commands_executed"] == 0
+    assert readiness["execution_authorized"] is False
+    bundles = installed.invoke(["role-bundles", "list"])
+    assert len(cast(list[object], bundles["bundles"])) == 4
+    assert bundles["execution_authorized"] is bundles["publication_authorized"] is False
+    assert not (target / ".fleet").exists() and not (installed.root / "state").exists()
+    assert (target / "src/canary_calc/core.py").read_bytes() == before
     installed.invoke(["init", str(target), "--runtime", "fake", "--sandbox", "fake", "--preview"])
     assert not (target / ".fleet").exists() and not (installed.root / "state").exists()
     error = installed.invoke(

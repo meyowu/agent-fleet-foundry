@@ -59,7 +59,7 @@ def register_model(
     container: ApplicationContainer, mode: Literal["proposal", "work", "probe"], roles: list[str]
 ) -> None:
     proposal = ProposalModel()
-    work = _TwoCriterionModel()
+    work = _TwoCriterionModel(primary_verification_command_id="python-test")
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         prompt = next(
