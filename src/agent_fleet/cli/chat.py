@@ -12,7 +12,7 @@ import sys
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Protocol, TextIO
+from typing import TYPE_CHECKING, Annotated, Protocol, TextIO, cast
 
 import typer
 from pydantic import JsonValue
@@ -22,6 +22,7 @@ from typer import _click as click
 from typer._click.exceptions import UsageError
 from typer.core import TyperCommand
 
+from agent_fleet.application.readiness import ReadinessService
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import ApprovalChoice, FakeScenario, jsonable
 from agent_fleet.domain.security import Redactor
@@ -37,8 +38,13 @@ _HELP = (
     "/status  /artifacts  /permissions [request-id]  /cancel  /resume\n"
     "/approve [request-id] --once|--run|--always --scope project\n"
     "/approve shows pending scopes; no-ID choices require an exact /confirm code.\n"
-    "/deny <request-id> [--reason <text>]  /help  /exit\n"
+    "/deny [request-id] [--reason <text>]  /help  /exit\n"
+    "/recover  /recover --confirm-owner-stopped <recovery-code>\n"
     "/plan [approve]  /diff  /apply  /confirm <review-code>  /dismiss\n"
+    "/models  /models use <alias> --default|--role <role>  /roles  /readiness\n"
+    "/tasks [before-sequence]  /tasks select <sequence>  /tasks current\n"
+    "History inspection never retargets /cancel or progress. "
+    "Model selection affects future tasks only.\n"
     "/fleet-patch list|show|diff|apply|rollback [proposal-id]\n"
     "New goals wait until the current turn settles. Approval never resumes automatically.\n"
     "--review-plan pauses new tasks before execution; /plan labels gate or inspection mode. "
@@ -76,6 +82,28 @@ class ConversationClient(Protocol):
 
     def artifacts(self, conversation_id: str) -> View: ...
 
+    def tasks(
+        self,
+        conversation_id: str,
+        *,
+        before_sequence: int | None = None,
+        select_sequence: int | None = None,
+        current: bool = False,
+    ) -> View: ...
+
+    def models(
+        self,
+        conversation_id: str,
+        *,
+        profile: str | None = None,
+        role: str | None = None,
+        default: bool = False,
+    ) -> View: ...
+
+    def roles(self, conversation_id: str) -> View: ...
+
+    def readiness(self, conversation_id: str) -> View: ...
+
     def review(
         self, conversation_id: str, *, action: str, arguments: tuple[str, ...] = ()
     ) -> View: ...
@@ -90,7 +118,17 @@ class ConversationClient(Protocol):
         choice: ApprovalChoice | None = None,
     ) -> View: ...
 
-    def deny(self, conversation_id: str, request_id: str, *, reason: str | None = None) -> View: ...
+    def deny(
+        self, conversation_id: str, request_id: str | None = None, *, reason: str | None = None
+    ) -> View: ...
+
+    async def recover(
+        self,
+        conversation_id: str,
+        *,
+        code: str | None = None,
+        confirm_owner_stopped: bool = False,
+    ) -> View: ...
 
     def progress(
         self, conversation_id: str, *, cursor: str | None = None, limit: int = 50
@@ -285,8 +323,31 @@ def _display_text(value: str, redactor: Redactor) -> str:
     )
 
 
+def _readiness_text(view: View, redactor: Redactor) -> str:
+    def encoded(data: dict[str, object]) -> str:
+        cleaned, _ = redactor.redact_data(data)
+        return _display_text(
+            json.dumps(cleaned, ensure_ascii=True, sort_keys=True, indent=2), redactor
+        )
+
+    # Session pretty-printing has its own wire size; the static report's compact
+    # JSON bound alone cannot cover indentation or the emitted trailing newline.
+    report = ReadinessService._bounded_report(
+        cast(dict[str, object], view),
+        wire_size=lambda data: len((encoded(data) + "\n").encode("utf-8")),
+    )
+    return encoded(report.model_dump(mode="json"))
+
+
 def _view_text(view: View) -> str:
     lines = [f"Conversation: {view.get('conversation_id')}"]
+    if "inspection_mode" in view:
+        lines.append(
+            f"Inspection: {view.get('inspection_mode')}  inspected={view.get('inspected_run_id')}  "
+            f"active={view.get('active_run_id')}"
+        )
+    if "cancelled_run_id" in view:
+        lines.append(f"Cancellation target (active task only): {view.get('cancelled_run_id')}")
     run = view.get("run")
     if isinstance(run, dict):
         lines.append(f"Run: {view.get('run_id')}  {run.get('status')} / {run.get('stage')}")
@@ -438,6 +499,32 @@ async def run_session(
                             result(service.status(conversation_id))
                         elif command == "/artifacts" and not arguments:
                             data(service.artifacts(conversation_id))
+                        elif command == "/roles" and not arguments:
+                            data(service.roles(conversation_id))
+                        elif command == "/readiness" and not arguments:
+                            display(_readiness_text(service.readiness(conversation_id), redactor))
+                        elif command == "/models":
+                            profile, role, default = _models(arguments)
+                            data(
+                                service.models(
+                                    conversation_id, profile=profile, role=role, default=default
+                                )
+                            )
+                        elif command == "/tasks":
+                            before, selected_sequence, current = _tasks(arguments)
+                            view = service.tasks(
+                                conversation_id,
+                                before_sequence=before,
+                                select_sequence=selected_sequence,
+                                current=current,
+                            )
+                            if selected_sequence is not None or current:
+                                cursor = None
+                                displayed_requests.clear()
+                                progress_enabled = True
+                                result(view)
+                            else:
+                                data(view)
                         elif command in {
                             "/plan",
                             "/diff",
@@ -470,6 +557,19 @@ async def run_session(
                             )
                         elif command == "/cancel" and not arguments:
                             result(await stop())
+                        elif command == "/recover" and (
+                            not arguments
+                            or (len(arguments) == 2 and arguments[0] == "--confirm-owner-stopped")
+                        ):
+                            if execution is not None:
+                                raise _busy_error()
+                            data(
+                                await service.recover(
+                                    conversation_id,
+                                    code=arguments[1] if arguments else None,
+                                    confirm_owner_stopped=bool(arguments),
+                                )
+                            )
                         elif command == "/resume" and not arguments:
                             if execution is not None:
                                 raise _busy_error()
@@ -483,14 +583,16 @@ async def run_session(
                             request_id, choice = _approval(arguments)
                             data(service.approve(conversation_id, request_id, choice=choice))
                         elif command == "/deny" and (
-                            len(arguments) == 1
+                            len(arguments) == 0
+                            or (len(arguments) == 1 and not arguments[0].startswith("--"))
+                            or (len(arguments) == 2 and arguments[0] == "--reason")
                             or (len(arguments) == 3 and arguments[1] == "--reason")
                         ):
                             data(
                                 service.deny(
                                     conversation_id,
-                                    arguments[0],
-                                    reason=arguments[2] if len(arguments) == 3 else None,
+                                    arguments[0] if len(arguments) in {1, 3} else None,
+                                    reason=arguments[-1] if len(arguments) >= 2 else None,
                                 )
                             )
                         else:
@@ -547,6 +649,30 @@ async def run_session(
             interrupt_task.cancel()
             await asyncio.gather(line_task, interrupt_task, return_exceptions=True)
     return service.status(conversation_id)
+
+
+def _models(arguments: list[str]) -> tuple[str | None, str | None, bool]:
+    if not arguments:
+        return None, None, False
+    if len(arguments) == 3 and arguments[0] == "use" and arguments[2] == "--default":
+        return arguments[1], None, True
+    if len(arguments) == 4 and arguments[0] == "use" and arguments[2] == "--role":
+        return arguments[1], arguments[3], False
+    raise _command_error()
+
+
+def _tasks(arguments: list[str]) -> tuple[int | None, int | None, bool]:
+    if not arguments:
+        return None, None, False
+    if arguments == ["current"]:
+        return None, None, True
+    if len(arguments) == 1 or (len(arguments) == 2 and arguments[0] == "select"):
+        raw = arguments[-1]
+        if not raw.isascii() or not raw.isdigit() or len(raw) > 4 or not 1 <= int(raw) <= 1000:
+            raise _command_error()
+        value = int(raw)
+        return (value, None, False) if len(arguments) == 1 else (None, value, False)
+    raise _command_error()
 
 
 def _busy_error() -> FleetError:

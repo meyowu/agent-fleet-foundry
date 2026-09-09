@@ -20,6 +20,7 @@ from agent_fleet.adapters.executable_resolution import (
     trusted_search_path,
 )
 from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.evaluation_execution import CommittedSource, SourceEntry
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     ApplyResult,
@@ -74,6 +75,7 @@ _ALLOWED_GIT_SUBCOMMANDS = frozenset(
         "init",
         "hash-object",
         "ls-files",
+        "ls-tree",
         "read-tree",
         "rev-parse",
         "status",
@@ -85,6 +87,82 @@ _OBJECT_ID = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
 class GitRepositoryAdapter:
+    def committed_source(self, root: Path, commit_sha: str) -> CommittedSource:
+        """Hash bounded committed blobs, never worktree bytes or filter output."""
+        result = None
+        try:
+            if not isinstance(commit_sha, str) or _OBJECT_ID.fullmatch(commit_sha) is None:
+                raise ValueError("invalid commit")
+            info = self.inspect(root)
+            if info.head_revision != commit_sha:
+                raise ValueError("source moved")
+            cwd = Path(info.root)
+            environment = _git_environment(cwd, self.state_root, self._state_root_input)
+            deadline = time.monotonic() + _GIT_TIMEOUT_SECONDS
+
+            def query(
+                args: list[str], maximum: int, capture: bool = True
+            ) -> tuple[bytes, str, int]:
+                argv = _secure_git_argv(
+                    ["git", *args],
+                    cwd=cwd,
+                    state_root=self.state_root,
+                    environment=environment,
+                    git_executable=self._git_binary,
+                    extra_untrusted_roots=(self._state_root_input,),
+                )
+                raw, digest, size, code = _bounded_organization_git(
+                    argv,
+                    cwd=cwd,
+                    environment=environment,
+                    deadline=deadline,
+                    maximum=maximum,
+                    capture=capture,
+                )
+                if code:
+                    raise ValueError("source query failed")
+                return raw, digest, size
+
+            raw, _, _ = query(["ls-tree", "-r", "-z", "--full-tree", commit_sha], 1_048_576)
+            rows = raw.split(b"\0")
+            if rows[-1] != b"" or len(rows) > 4097:
+                raise ValueError("source tree exceeded bound")
+            entries: list[SourceEntry] = []
+            total = 0
+            for row in rows[:-1]:
+                metadata, path = row.split(b"\t", 1)
+                mode, kind, object_id = metadata.decode("ascii").split(" ")
+                if (
+                    mode not in {"100644", "100755"}
+                    or kind != "blob"
+                    or _OBJECT_ID.fullmatch(object_id) is None
+                ):
+                    raise ValueError("unsupported source entry")
+                _, digest, size = query(
+                    ["cat-file", "blob", object_id], min(2_000_000, 32_000_000 - total), False
+                )
+                total += size
+                entries.append(
+                    SourceEntry.model_validate(
+                        {"path": path.decode("utf-8"), "mode": mode, "sha256": digest}
+                    )
+                )
+            candidate = CommittedSource(
+                commit_sha=commit_sha, entries=tuple(sorted(entries, key=lambda entry: entry.path))
+            )
+            if self.inspect(root).head_revision != commit_sha:
+                raise ValueError("source moved")
+            result = candidate
+        except (FleetError, OSError, ValueError, subprocess.SubprocessError):
+            pass
+        if result is None:
+            raise FleetError(
+                ErrorCode.RECOVERY_REQUIRED,
+                "The committed evaluation source is unavailable or unsafe.",
+                "Restore the exact bounded committed source before evaluation admission.",
+            )
+        return result
+
     def __init__(self, state_root: Path, ids: IdGenerator) -> None:
         self._state_root_input = Path(os.path.abspath(state_root))
         self.state_root = self._state_root_input.resolve()

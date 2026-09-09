@@ -8,10 +8,12 @@ from typing import Any
 
 import httpx2
 import pytest
+from google_provider_fixtures import install_transport
 from model_profiles_fixtures import make_profile_harness, model_configuration
 from openai import DefaultAsyncHttpxClient
 from pydantic_ai.models import override_allow_model_requests
 
+import agent_fleet.adapters.runtime.anthropic_provider as anthropic_module
 import agent_fleet.adapters.runtime.pydantic_ai as runtime_module
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
@@ -24,8 +26,13 @@ from agent_fleet.ports.runtime import EMPTY_RUNTIME_TOOL_CATALOG, RuntimeInvocat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("anthropic_role", [None, "cos", "engineer", "verifier"])
+@pytest.mark.parametrize("alternate_provider", ["anthropic", "google"])
 async def test_profile_routing_reaches_serialized_sdk_model_and_only_selected_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    anthropic_role: str | None,
+    alternate_provider: str,
 ) -> None:
     harness = make_profile_harness(tmp_path)
     payloads: dict[str, dict[str, object]] = {
@@ -64,14 +71,74 @@ async def test_profile_routing_reaches_serialized_sdk_model_and_only_selected_ke
 
     async def respond(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
+        selected_model = (
+            request.url.path.split("/")[-1].removesuffix(":generateContent")
+            if request.url.host == "generativelanguage.googleapis.com"
+            else body["model"]
+        )
+        api_key = request.headers.get("x-api-key", request.headers.get("x-goog-api-key"))
         sends.append(
             (
                 str(request.url),
-                body["model"],
-                request.headers["authorization"],
+                selected_model,
+                request.headers.get("authorization", f"Bearer {api_key}"),
                 request.content.decode(),
             )
         )
+        if request.url.host == "generativelanguage.googleapis.com":
+            output = next(
+                declaration["name"]
+                for tool in body["tools"]
+                for declaration in tool["functionDeclarations"]
+                if declaration["name"] in payloads
+            )
+            return httpx2.Response(
+                200,
+                request=request,
+                json={
+                    "modelVersion": selected_model,
+                    "candidates": [
+                        {
+                            "index": 0,
+                            "finishReason": "STOP",
+                            "content": {
+                                "role": "model",
+                                "parts": [
+                                    {"functionCall": {"name": output, "args": payloads[output]}}
+                                ],
+                            },
+                        }
+                    ],
+                    "usageMetadata": {
+                        "promptTokenCount": 10,
+                        "candidatesTokenCount": 10,
+                        "totalTokenCount": 20,
+                    },
+                },
+            )
+        if request.url.host == "api.anthropic.com":
+            output = next(tool["name"] for tool in body["tools"] if tool["name"] in payloads)
+            return httpx2.Response(
+                200,
+                request=request,
+                json={
+                    "id": "msg_fixture",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": body["model"],
+                    "content": [
+                        {
+                            "id": "output-fixture",
+                            "type": "tool_use",
+                            "name": output,
+                            "input": payloads[output],
+                        }
+                    ],
+                    "stop_reason": "tool_use",
+                    "stop_sequence": None,
+                    "usage": {"input_tokens": 10, "output_tokens": 10},
+                },
+            )
         output = next(
             tool["function"]["name"]
             for tool in body["tools"]
@@ -115,14 +182,32 @@ async def test_profile_routing_reaches_serialized_sdk_model_and_only_selected_ke
         return original(transport=httpx2.MockTransport(respond), **arguments)
 
     monkeypatch.setattr(runtime_module, "DefaultAsyncHttpxClient", transport)
+    monkeypatch.setattr(anthropic_module, "AsyncClient", transport)
+    install_transport(monkeypatch, respond)
     monkeypatch.setenv("OPENAI_API_KEY", "ambient-must-not-be-used")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://untrusted.invalid/v1")
     monkeypatch.delenv("OPENAI_CUSTOM_HEADERS", raising=False)
-    for name in ("planning", "coding", "reviewing"):
+    monkeypatch.delenv("ANTHROPIC_CUSTOM_HEADERS", raising=False)
+    monkeypatch.delenv("ANTHROPIC_LOG", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient-anthropic-must-not-be-used")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://untrusted.invalid")
+    monkeypatch.setenv("GOOGLE_API_KEY", "ambient-google-must-not-be-used")
+    monkeypatch.setenv("GEMINI_API_KEY", "ambient-gemini-must-not-be-used")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "1")
+    expected_urls: dict[str, str] = {}
+    for name, role in (("planning", "cos"), ("coding", "engineer"), ("reviewing", "verifier")):
+        provider = alternate_provider if role == anthropic_role else "openai-chat"
+        expected_urls[name] = (
+            "https://api.anthropic.com/v1/messages?beta=true"
+            if provider == "anthropic"
+            else f"https://generativelanguage.googleapis.com/v1beta/models/{name}:generateContent"
+            if provider == "google"
+            else "https://api.openai.com/v1/chat/completions"
+        )
         harness.environment[f"{name.upper()}_KEY"] = f"fixture-{name}-exact-key"
         harness.service.set(
             name,
-            configuration=model_configuration(f"openai-chat:{name}", f"env:{name.upper()}_KEY"),
+            configuration=model_configuration(f"{provider}:{name}", f"env:{name.upper()}_KEY"),
         )
     harness.service.bind(harness.project, profile="planning", default=True, expected_revision=0)
     harness.service.bind(harness.project, profile="coding", role="engineer", expected_revision=1)
@@ -160,9 +245,12 @@ async def test_profile_routing_reaches_serialized_sdk_model_and_only_selected_ke
         ("reviewing", "Bearer fixture-reviewing-exact-key"),
     ]
     assert len(sends) == 3
-    for url, _, _, body in sends:
-        assert url == "https://api.openai.com/v1/chat/completions"
+    for url, model, _, body in sends:
+        assert url == expected_urls[model]
         assert "ambient-must-not-be-used" not in body
+        assert "ambient-anthropic-must-not-be-used" not in body
+        assert "ambient-google-must-not-be-used" not in body
+        assert "ambient-gemini-must-not-be-used" not in body
         assert "env:" not in body
         for key in harness.environment.values():
             assert key not in body

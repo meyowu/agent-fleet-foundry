@@ -24,6 +24,11 @@ from agent_fleet.domain.models import (
     Workspace,
     WorkspaceKind,
 )
+from agent_fleet.domain.recovery_binding import (
+    RecoveryBinding,
+    RecoveryLeaseClaim,
+    ReviewedRecoveryPlan,
+)
 from agent_fleet.domain.security import canonical_json_hash
 from agent_fleet.domain.workflow import is_terminal
 from agent_fleet.ports.clock import Clock
@@ -50,6 +55,42 @@ class ResourceService:
         self.ids = ids
         self._run_cleanup_tasks: dict[str, tuple[LeaseStatus, asyncio.Task[None]]] = {}
         self._lease_cleanup_tasks: dict[str, tuple[LeaseStatus, asyncio.Task[None]]] = {}
+        self._reviewed_run_plans: dict[str, str] = {}
+        self._reviewed_lease_plans: dict[str, str] = {}
+
+    def validate_reviewed_recovery(self, binding: RecoveryBinding) -> None:
+        """Parse captured cleanup identities before ownership changes; perform no I/O."""
+        try:
+            for lease in binding.snapshot().leases:
+                if lease.status in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED}:
+                    continue
+                if lease.kind is LeaseKind.WORKTREE:
+                    _workspace_from_lease(lease)
+                elif lease.kind is LeaseKind.SANDBOX:
+                    _sandbox_handle_from_lease(lease)
+                else:
+                    raw_sandbox = lease.metadata.get("sandbox_handle")
+                    if not isinstance(raw_sandbox, dict):
+                        raise ValueError("missing sandbox identity")
+                    sandbox = SandboxHandle.model_validate(raw_sandbox)
+                    raw_execution = lease.metadata.get("execution_handle")
+                    if isinstance(raw_execution, dict):
+                        execution = SandboxExecutionHandle.model_validate(raw_execution)
+                        if not execution_lease_binding_is_valid(lease, execution, sandbox):
+                            raise ValueError("inconsistent execution identity")
+                    else:
+                        execution_recovery_request_from_lease(lease, sandbox)
+        except (FleetError, ValueError, TypeError, KeyError):
+            # Invalid untrusted metadata is never copied into an error/cause.
+            pass
+        else:
+            return
+        raise FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "A reviewed resource has an invalid cleanup identity.",
+            "Inspect the exact resource records before requesting a new stopped-owner review. "
+            "Fleet did not fence the owner or clean a resource.",
+        ) from None
 
     def lease_workspace(self, workspace: Workspace) -> ResourceLease:
         now = self.clock.now()
@@ -336,17 +377,37 @@ class ResourceService:
                 )
             )
 
-    async def cleanup_run(self, run: Run, *, recovered: bool = False) -> None:
+    async def cleanup_run(
+        self,
+        run: Run,
+        *,
+        recovered: bool = False,
+        review_plan: ReviewedRecoveryPlan | None = None,
+        recovery_store: ConversationStore | None = None,
+    ) -> None:
         target_status = LeaseStatus.RECOVERED if recovered else LeaseStatus.RELEASED
+        digest = review_plan.sha256 if review_plan else None
+        if review_plan is not None and (not recovered or recovery_store is None):
+            raise ConversationOwnershipUnavailableError()
         active_cleanup = self._run_cleanup_tasks.get(run.run_id)
         if active_cleanup is None:
             cleanup_task = asyncio.create_task(
-                self._cleanup_run_ordered(run, target_status=target_status)
+                self._cleanup_run_ordered(
+                    run,
+                    target_status=target_status,
+                    review_plan=review_plan,
+                    recovery_store=recovery_store,
+                )
             )
             self._run_cleanup_tasks[run.run_id] = (target_status, cleanup_task)
+            if digest is not None:
+                self._reviewed_run_plans[run.run_id] = digest
         else:
             active_status, cleanup_task = active_cleanup
-            if active_status is not target_status:
+            if (
+                active_status is not target_status
+                or self._reviewed_run_plans.get(run.run_id) != digest
+            ):
                 raise FleetError(
                     ErrorCode.RECOVERY_REQUIRED,
                     "A conflicting resource cleanup mode is already active for this run.",
@@ -363,19 +424,39 @@ class ResourceService:
             current = self._run_cleanup_tasks.get(run.run_id)
             if cleanup_task.done() and current is not None and current[1] is cleanup_task:
                 self._run_cleanup_tasks.pop(run.run_id, None)
+                self._reviewed_run_plans.pop(run.run_id, None)
 
     async def _cleanup_run_ordered(
         self,
         run: Run,
         *,
         target_status: LeaseStatus,
+        review_plan: ReviewedRecoveryPlan | None = None,
+        recovery_store: ConversationStore | None = None,
     ) -> None:
-        leases = list(self.state.outstanding_leases(run.run_id))
+        if review_plan is None:
+            leases = list(self.state.outstanding_leases(run.run_id))
+        else:
+            snapshot = review_plan.binding.snapshot()
+            if run not in snapshot.runs:
+                raise ConversationOwnershipUnavailableError()
+            leases = [
+                lease
+                for lease in snapshot.leases
+                if lease.run_id == run.run_id
+                and lease.status not in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED}
+            ]
         for kind in (LeaseKind.EXECUTION, LeaseKind.SANDBOX, LeaseKind.WORKTREE):
             failures: list[BaseException] = []
             for lease in (item for item in leases if item.kind is kind):
                 try:
-                    await self._join_lease_cleanup(run, lease, status=target_status)
+                    await self._join_lease_cleanup(
+                        run,
+                        lease,
+                        status=target_status,
+                        review_plan=review_plan,
+                        recovery_store=recovery_store,
+                    )
                 except BaseException as error:
                     failures.append(error)
             if failures:
@@ -403,8 +484,12 @@ class ResourceService:
         lease: ResourceLease,
         *,
         status: LeaseStatus,
+        review_plan: ReviewedRecoveryPlan | None = None,
+        recovery_store: ConversationStore | None = None,
     ) -> None:
-        cleanup_task = self._lease_cleanup_task(run, lease, status=status)
+        cleanup_task = self._lease_cleanup_task(
+            run, lease, status=status, review_plan=review_plan, recovery_store=recovery_store
+        )
         try:
             await cleanup_task
         finally:
@@ -416,17 +501,38 @@ class ResourceService:
         lease: ResourceLease,
         *,
         status: LeaseStatus,
+        review_plan: ReviewedRecoveryPlan | None = None,
+        recovery_store: ConversationStore | None = None,
     ) -> asyncio.Task[None]:
+        digest = (
+            canonical_json_hash(
+                {"plan": review_plan.sha256, "lease": lease.model_dump(mode="json")}
+            )
+            if review_plan
+            else None
+        )
         active_cleanup = self._lease_cleanup_tasks.get(lease.lease_id)
         if active_cleanup is None:
-            current = self.state.get_lease(lease.lease_id)
-            cleanup_task = asyncio.create_task(
-                self._cleanup_lease_once(run, current, status=status)
-            )
+            if review_plan is None:
+                current = self.state.get_lease(lease.lease_id)
+                cleanup_task = asyncio.create_task(
+                    self._cleanup_lease_once(run, current, status=status)
+                )
+            else:
+                if recovery_store is None or status is not LeaseStatus.RECOVERED:
+                    raise ConversationOwnershipUnavailableError()
+                cleanup_task = asyncio.create_task(
+                    self._cleanup_reviewed_lease(run, lease, review_plan, recovery_store)
+                )
             self._lease_cleanup_tasks[lease.lease_id] = (status, cleanup_task)
+            if digest is not None:
+                self._reviewed_lease_plans[lease.lease_id] = digest
         else:
             active_status, cleanup_task = active_cleanup
-            if active_status is not status:
+            if (
+                active_status is not status
+                or self._reviewed_lease_plans.get(lease.lease_id) != digest
+            ):
                 raise FleetError(
                     ErrorCode.RECOVERY_REQUIRED,
                     "A conflicting resource cleanup mode is already active for this lease.",
@@ -447,6 +553,26 @@ class ResourceService:
         active_cleanup = self._lease_cleanup_tasks.get(lease_id)
         if cleanup_task.done() and active_cleanup is not None and active_cleanup[1] is cleanup_task:
             self._lease_cleanup_tasks.pop(lease_id, None)
+            self._reviewed_lease_plans.pop(lease_id, None)
+
+    async def _cleanup_reviewed_lease(
+        self,
+        run: Run,
+        lease: ResourceLease,
+        plan: ReviewedRecoveryPlan,
+        store: ConversationStore,
+    ) -> None:
+        snapshot = plan.binding.snapshot()
+        if run not in snapshot.runs or lease not in snapshot.leases or lease.run_id != run.run_id:
+            raise ConversationOwnershipUnavailableError()
+        claim = store.claim_recovery_lease(plan, lease.lease_id)
+        await self._cleanup_lease_once(
+            run,
+            claim.lease(),
+            status=LeaseStatus.RECOVERED,
+            recovery_claim=claim,
+            recovery_store=store,
+        )
 
     async def _cleanup_lease_once(
         self,
@@ -454,8 +580,22 @@ class ResourceService:
         lease: ResourceLease,
         *,
         status: LeaseStatus,
+        recovery_claim: RecoveryLeaseClaim | None = None,
+        recovery_store: ConversationStore | None = None,
     ) -> None:
-        project = self.state.get_project(run.project_id)
+        def persist(target: LeaseStatus) -> None:
+            if recovery_claim is None:
+                self.state.update_lease_status(lease.lease_id, target.value)
+            elif recovery_store is not None:
+                recovery_store.finish_recovery_lease(recovery_claim, target)
+            else:
+                raise ConversationOwnershipUnavailableError()
+
+        project = (
+            recovery_claim.plan.binding.snapshot().project
+            if recovery_claim is not None
+            else self.state.get_project(run.project_id)
+        )
         if lease.status in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED}:
             return
         if lease.status is not LeaseStatus.RELEASING:
@@ -472,7 +612,7 @@ class ResourceService:
                         "Inspect the persisted lease before continuing.",
                     )
             except BaseException:
-                self.state.update_lease_status(lease.lease_id, LeaseStatus.FAILED.value)
+                persist(LeaseStatus.FAILED)
                 raise
         elif lease.kind is LeaseKind.EXECUTION:
             raw_handle = lease.metadata.get("execution_handle")
@@ -520,16 +660,16 @@ class ResourceService:
                         "Inspect the persisted execution lease before continuing.",
                     )
             except BaseException:
-                self.state.update_lease_status(lease.lease_id, LeaseStatus.FAILED.value)
+                persist(LeaseStatus.FAILED)
                 raise
         else:
             workspace = _workspace_from_lease(lease)
             try:
                 self.repository.cleanup_workspace(Path(project.canonical_root), workspace)
             except BaseException:
-                self.state.update_lease_status(lease.lease_id, LeaseStatus.FAILED.value)
+                persist(LeaseStatus.FAILED)
                 raise
-        self.state.update_lease_status(lease.lease_id, status.value)
+        persist(status)
 
 
 class RecoveryService:
@@ -545,13 +685,16 @@ class RecoveryService:
         self.resources = resources
         self.graphs = graphs
         self.conversations = conversations
+        self._reviewed_recoveries: dict[str, tuple[str, asyncio.Task[Run]]] = {}
 
     def owned_run_ids(self, run_id: str) -> tuple[str, ...]:
         """Return exact recovery ownership for user-visible lease accounting."""
         self.state.get_run(run_id)
         return (run_id, *(item.child_run_id for item in self.graphs.descendants(run_id)))
 
-    async def recover_run(self, run_id: str) -> Run:
+    async def recover_run(
+        self, run_id: str, *, reviewed_binding: RecoveryBinding | None = None
+    ) -> Run:
         """Recover one explicitly selected run after its prior owner has stopped.
 
         A blanket startup sweep cannot distinguish an orphan from a concurrently
@@ -559,6 +702,36 @@ class RecoveryService:
         confirmation and calls this exact-run primitive instead.
         """
 
+        active = self._reviewed_recoveries.get(run_id)
+        if reviewed_binding is not None:
+            if self.conversations is None or reviewed_binding.snapshot().runs[0].run_id != run_id:
+                raise ConversationOwnershipUnavailableError()
+            if active is None:
+                self.resources.validate_reviewed_recovery(reviewed_binding)
+                plan = self.conversations.prepare_reviewed_recovery(reviewed_binding)
+                task = asyncio.create_task(self._recover_reviewed_plan(plan))
+                self._reviewed_recoveries[run_id] = (reviewed_binding.sha256, task)
+            elif active[0] == reviewed_binding.sha256:
+                task = active[1]
+            else:
+                raise ConversationOwnershipUnavailableError()
+            cancellation: asyncio.CancelledError | None = None
+            try:
+                while not task.done():
+                    try:
+                        await asyncio.wait({task})
+                    except asyncio.CancelledError as error:
+                        cancellation = cancellation or error
+                result = task.result()
+            finally:
+                retained = self._reviewed_recoveries.get(run_id)
+                if task.done() and retained is not None and retained[1] is task:
+                    self._reviewed_recoveries.pop(run_id, None)
+            if cancellation is not None:
+                raise cancellation
+            return result
+        if active is not None:
+            raise ConversationOwnershipUnavailableError()
         run = self.state.get_run(run_id)
         conversation_fenced = False
         if self.conversations is not None:
@@ -617,6 +790,17 @@ class RecoveryService:
             turn = self.conversations.get_turn(binding.project_id, binding.turn_id)
             self.conversations.reconcile_fenced(run_id, expected_revision=turn.revision)
         return self.state.get_run(run_id)
+
+    async def _recover_reviewed_plan(self, plan: ReviewedRecoveryPlan) -> Run:
+        if self.conversations is None:
+            raise ConversationOwnershipUnavailableError()
+        # Captured breadth-first ownership reversed gives children before parents.
+        # Never call descendants()/outstanding_leases() to expand this plan.
+        for run in reversed(plan.binding.snapshot().runs):
+            await self.resources.cleanup_run(
+                run, recovered=True, review_plan=plan, recovery_store=self.conversations
+            )
+        return self.conversations.reconcile_reviewed_recovery(plan)
 
 
 class CancellationService:

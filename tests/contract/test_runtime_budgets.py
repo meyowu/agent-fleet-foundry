@@ -424,26 +424,28 @@ def test_root_owner_mapping_cannot_redirect_to_another_same_project_budget(
     assert captured.value.code is ErrorCode.RECOVERY_REQUIRED
 
 
-def test_declared_child_shares_exact_root_limits_and_usage_without_remapping(
+def test_undeclared_root_cannot_alias_another_root_as_its_budget_parent(
     tmp_path: Path,
 ) -> None:
     ledger = _ledger(tmp_path, RunBudgetLimits())
-    child = _related_run(ledger, parent=True)
+    # The former fixture set only an accounting parent, not Run/graph identity.
+    # Genuine graph inheritance is exercised by the graph-store/workflow contracts.
+    with pytest.raises(FleetError) as rejected:
+        _related_run(ledger, parent=True)
+    assert rejected.value.code is ErrorCode.RECOVERY_REQUIRED
     attempt = ledger.store.begin_attempt(ledger.request)
     attempt.reserve_tool_batch(1, ("parent-charge",))
     parent = ledger.store.snapshot(ledger.run.run_id)
-    shared = ledger.reopen().snapshot(child.run_id)
-    assert shared.owner_run_id == ledger.run.run_id
-    assert shared.tool_calls == parent.tool_calls == 1
-    assert shared.limits == parent.limits
+    assert parent.owner_run_id == ledger.run.run_id
+    assert parent.tool_calls == 1
     other = _related_run(ledger, parent=False)
     with sqlite3.connect(ledger.state.database_path) as connection:
         connection.execute(
             "UPDATE runtime_budget_runs SET owner_run_id = ? WHERE run_id = ?",
-            (other.run_id, child.run_id),
+            (other.run_id, ledger.run.run_id),
         )
     with pytest.raises(FleetError):
-        ledger.reopen().snapshot(child.run_id)
+        ledger.reopen().snapshot(ledger.run.run_id)
 
 
 @pytest.mark.parametrize("timing", ["before_attempt", "after_attempt"])

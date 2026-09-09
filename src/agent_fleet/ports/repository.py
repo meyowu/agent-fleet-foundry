@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
+from agent_fleet.domain.evaluation_execution import CommittedSource
 from agent_fleet.domain.models import (
     ApplyResult,
     PatchInfo,
@@ -14,6 +15,8 @@ from agent_fleet.domain.repository_boundary import OrganizationRepositoryBoundar
 
 
 class RepositoryPort(Protocol):
+    def committed_source(self, root: Path, commit_sha: str) -> CommittedSource: ...
+
     def inspect(self, root: Path) -> RepositoryInfo: ...
 
     def inspect_organization_boundary(self, root: Path) -> OrganizationRepositoryBoundary: ...

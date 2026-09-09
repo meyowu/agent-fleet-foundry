@@ -10,6 +10,7 @@ from typing import Literal, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
 
+from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
 from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION, SqliteStateStore
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.model_profiles import (
@@ -21,6 +22,7 @@ from agent_fleet.domain.model_profiles import (
 )
 from agent_fleet.domain.models import Project, ProjectId, RunId, StrictModel
 from agent_fleet.domain.security import canonical_json_hash
+from agent_fleet.domain.session_review import ModelSelectionReview
 
 _Model = TypeVar("_Model", bound=StrictModel)
 _MAX_RECORD_BYTES = 1_048_576
@@ -357,8 +359,17 @@ class SqliteModelProfileStore:
             return self._selection(connection, project_id)
 
     @_boundary
-    def save_selection(self, selection: ProjectModelSelection, *, expected_revision: int) -> None:
+    def save_selection(
+        self,
+        selection: ProjectModelSelection,
+        *,
+        expected_revision: int,
+        expected_review: ModelSelectionReview | None = None,
+        validate_review: Callable[[], None] | None = None,
+    ) -> None:
         selection = self._validated(ProjectModelSelection, selection)
+        if (expected_review is None) != (validate_review is None):
+            raise _stale()
         with self._transaction() as connection:
             current = self._selection(connection, selection.project_id)
             project = self._project(connection, selection.project_id)
@@ -374,6 +385,64 @@ class SqliteModelProfileStore:
                 profile, _ = self._profile(connection, alias)
                 if profile is None or not profile.enabled:
                     raise _stale()
+            if expected_review is not None:
+                expected = ModelSelectionReview.model_validate_json(
+                    expected_review.model_dump_json()
+                )
+                reviewed_profile, _ = self._profile(connection, expected.profile_name)
+                if (
+                    expected.selection.project_id != selection.project_id
+                    or expected.expected_selection_revision != expected_revision
+                    or reviewed_profile is None
+                    or not reviewed_profile.enabled
+                    or reviewed_profile.revision != expected.profile_revision
+                    or reviewed_profile.configuration_sha256 != expected.configuration_sha256
+                    or (
+                        selection.role_overrides.get(expected.role_id)
+                        if expected.role_id
+                        else selection.default_profile
+                    )
+                    != expected.profile_name
+                ):
+                    raise _stale()
+                # Reuse receipt-validating connection-local readers, never nest a
+                # ConversationStore transaction while this write lock is held.
+                conversations = SqliteConversationStore(
+                    self.state.database_path,
+                    self.state.clock,
+                    self.state.ids,
+                    self.redactor,
+                    self.state,
+                )
+                conversation = conversations._conversation(
+                    connection,
+                    selection.project_id,
+                    expected.selection.conversation_id,
+                )
+                if conversation.revision != expected.selection.conversation_revision:
+                    raise _stale()
+                turn_id = conversation.active_turn_id
+                if turn_id is None:
+                    row = connection.execute(
+                        "SELECT turn_id FROM conversation_turns WHERE conversation_id=? "
+                        "ORDER BY sequence DESC LIMIT 1",
+                        (conversation.conversation_id,),
+                    ).fetchone()
+                    turn_id = row["turn_id"] if row is not None else None
+                run_id = None
+                if turn_id is not None:
+                    turn = conversations._turn(connection, selection.project_id, turn_id)
+                    run = self.state._validated_run(connection, turn.binding.run_id)
+                    if (
+                        run.parent_run_id is not None
+                        or turn.binding.conversation_id != conversation.conversation_id
+                    ):
+                        raise _stale()
+                    run_id = run.run_id
+                if run_id != expected.selection.run_id:
+                    raise _stale()
+                assert validate_review is not None
+                validate_review()
             record_hash = canonical_json_hash(selection.model_dump(mode="json"))
             sequence = self._append(
                 connection, "selection.set", selection.project_id, selection.revision, record_hash
@@ -455,58 +524,64 @@ class SqliteModelProfileStore:
     def save_bindings(self, bindings: RunModelBindings) -> None:
         bindings = self._validated(RunModelBindings, bindings)
         with self._transaction() as connection:
-            existing = self._bindings(connection, bindings.project_id, bindings.root_run_id)
-            if existing is not None:
-                if existing != bindings:
-                    raise _stale()
-                return
-            project = self._project(connection, bindings.project_id)
-            run = self.state._validated_run(connection, bindings.root_run_id)
-            if bindings.repository_identity != project.identity_hash:
-                raise _invalid()
-            selection = self._selection(connection, bindings.project_id)
-            if bindings.selection_revision != (selection.revision if selection else None):
+            self._save_bindings_in_transaction(connection, bindings)
+
+    def _save_bindings_in_transaction(
+        self, connection: sqlite3.Connection, bindings: RunModelBindings
+    ) -> None:
+        bindings = self._validated(RunModelBindings, bindings)
+        existing = self._bindings(connection, bindings.project_id, bindings.root_run_id)
+        if existing is not None:
+            if existing != bindings:
                 raise _stale()
-            for role, binding in bindings.roles.items():
-                if binding.profile_name is None:
-                    configuration = binding.configuration
-                    if (
-                        configuration.runtime_name,
-                        configuration.provider_model,
-                        configuration.credential_ref,
-                    ) != (run.runtime_name, run.provider_model, run.credential_ref):
-                        raise _invalid()
-                    continue
-                profile, _ = self._profile(connection, binding.profile_name)
+            return
+        project = self._project(connection, bindings.project_id)
+        run = self.state._validated_run(connection, bindings.root_run_id)
+        if bindings.repository_identity != project.identity_hash:
+            raise _invalid()
+        selection = self._selection(connection, bindings.project_id)
+        if bindings.selection_revision != (selection.revision if selection else None):
+            raise _stale()
+        for role, binding in bindings.roles.items():
+            if binding.profile_name is None:
+                configuration = binding.configuration
                 if (
-                    selection is None
-                    or profile is None
-                    or not profile.enabled
-                    or profile.revision != binding.profile_revision
-                    or profile.configuration != binding.configuration
-                    or profile.name not in selection.permitted_profiles
-                ):
-                    raise _stale()
-                override = selection.role_overrides.get(role)
-                if (
-                    (binding.source == "override" and override != profile.name)
-                    or (binding.source != "override" and override is not None)
-                    or (binding.source == "default" and selection.default_profile != profile.name)
-                ):
+                    configuration.runtime_name,
+                    configuration.provider_model,
+                    configuration.credential_ref,
+                ) != (run.runtime_name, run.provider_model, run.credential_ref):
                     raise _invalid()
-            sequence = self._append(
-                connection, "run.bind", bindings.root_run_id, 1, bindings.bindings_sha256
-            )
-            connection.execute(
-                "INSERT INTO run_model_bindings VALUES (?,?,?,?,?)",
-                (
-                    bindings.root_run_id,
-                    bindings.project_id,
-                    bindings.bindings_sha256,
-                    bindings.model_dump_json(),
-                    sequence,
-                ),
-            )
+                continue
+            profile, _ = self._profile(connection, binding.profile_name)
+            if (
+                selection is None
+                or profile is None
+                or not profile.enabled
+                or profile.revision != binding.profile_revision
+                or profile.configuration != binding.configuration
+                or profile.name not in selection.permitted_profiles
+            ):
+                raise _stale()
+            override = selection.role_overrides.get(role)
+            if (
+                (binding.source == "override" and override != profile.name)
+                or (binding.source != "override" and override is not None)
+                or (binding.source == "default" and selection.default_profile != profile.name)
+            ):
+                raise _invalid()
+        sequence = self._append(
+            connection, "run.bind", bindings.root_run_id, 1, bindings.bindings_sha256
+        )
+        connection.execute(
+            "INSERT INTO run_model_bindings VALUES (?,?,?,?,?)",
+            (
+                bindings.root_run_id,
+                bindings.project_id,
+                bindings.bindings_sha256,
+                bindings.model_dump_json(),
+                sequence,
+            ),
+        )
 
     @_boundary
     def list_audit(

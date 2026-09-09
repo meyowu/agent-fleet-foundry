@@ -102,7 +102,16 @@ async def test_schema7_upgrade_preserves_real_paused_chat_budget_graph_and_lease
         original.backup(copy)
         # This isolated fixture models schema7; it is not an older-binary execution claim.
         copy.execute("PRAGMA foreign_keys=OFF")
-        for table in (*_PLAN_REVIEW_TABLES, *_MODEL_TABLES, *_ORGANIZATION_TABLES):
+        for table in (
+            "evaluation_executions",
+            "evaluation_outcomes",
+            "evaluation_reservations",
+            "evaluation_slots",
+            "evaluation_campaigns",
+            *_PLAN_REVIEW_TABLES,
+            *_MODEL_TABLES,
+            *_ORGANIZATION_TABLES,
+        ):
             copy.execute(f"DROP TABLE {table}")
         copy.execute("DELETE FROM schema_migrations WHERE version>=8")
         assert copy.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 7

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 
 import pytest
 from conftest import FleetHarness
+from model_profiles_fixtures import make_profile_harness
 from plan_review_fixtures import PlanReviewHarness, make_plan_review
 
 from agent_fleet.adapters.persistence.plan_review import SqlitePlanReviewStore
+from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.model_profiles import ModelProfile, ProjectModelSelection
@@ -163,33 +166,40 @@ def test_rolled_back_head_and_missing_consumed_version_are_not_replayable(
 
 
 def test_migration10_preserves_all_existing_model_and_run_bytes(
-    plan_review: PlanReviewHarness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    h = plan_review
-    state = h.fleet.container.state
-    service = h.fleet.container.model_profiles
-    project = state.get_project(h.run.project_id)
-    service.store.save_profile(
-        ModelProfile(name="fixture", revision=1, configuration=RuntimeConfiguration()),
-        expected_revision=0,
-    )
-    service.store.save_selection(
-        ProjectModelSelection(
-            project_id=project.project_id,
-            repository_identity=project.identity_hash,
-            revision=1,
-            default_profile="fixture",
-            permitted_profiles=("fixture",),
-        ),
-        expected_revision=0,
-    )
-    bindings = service.resolve(
-        project,
-        root_run_id=h.run.run_id,
-        roles=("cos",),
-        legacy_configuration=RuntimeConfiguration(),
-    )
-    service.save_bindings(bindings)
+    # Populate actual schema9 tables before newer migrations ever exist.
+    with monkeypatch.context() as historical:
+        historical.setattr("agent_fleet.adapters.persistence.sqlite.SUPPORTED_SCHEMA_VERSION", 9)
+        historical.setattr(
+            "agent_fleet.adapters.persistence.model_profiles.SUPPORTED_SCHEMA_VERSION", 9
+        )
+        historical.setattr("model_profiles_fixtures.SUPPORTED_SCHEMA_VERSION", 9)
+        h = make_profile_harness(tmp_path)
+        state, service, project = h.state, h.service, h.project
+        run = h.run()
+        service.store.save_profile(
+            ModelProfile(name="fixture", revision=1, configuration=RuntimeConfiguration()),
+            expected_revision=0,
+        )
+        service.store.save_selection(
+            ProjectModelSelection(
+                project_id=project.project_id,
+                repository_identity=project.identity_hash,
+                revision=1,
+                default_profile="fixture",
+                permitted_profiles=("fixture",),
+            ),
+            expected_revision=0,
+        )
+        bindings = service.resolve(
+            project,
+            root_run_id=run.run_id,
+            roles=("cos",),
+            legacy_configuration=RuntimeConfiguration(),
+        )
+        service.save_bindings(bindings)
     tables = (
         "runs",
         "projects",
@@ -205,16 +215,18 @@ def test_migration10_preserves_all_existing_model_and_run_bytes(
             table: connection.execute(f"SELECT * FROM {table}").fetchall() for table in tables
         }
         assert all(expected.values())
-        connection.execute("DROP TABLE plan_review_heads")
-        connection.execute("DROP TABLE plan_review_versions")
-        connection.execute("DELETE FROM schema_migrations WHERE version=10")
-    assert state.migrate() == 10
+        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 9
+        assert not connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE name IN ('plan_review_versions','evaluation_campaigns')"
+        ).fetchall()
+    assert state.migrate() == SUPPORTED_SCHEMA_VERSION
     with sqlite3.connect(state.database_path) as connection:
         actual = {
             table: connection.execute(f"SELECT * FROM {table}").fetchall() for table in tables
         }
         assert actual == expected
-    assert service.store.get_bindings(project.project_id, h.run.run_id) == bindings
+    assert service.store.get_bindings(project.project_id, run.run_id) == bindings
 
 
 def test_required_marker_missing_decision_and_legacy_false_do_not_fallback(

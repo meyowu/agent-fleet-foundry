@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "scope": "offline_session_acceptance",
+  "assurance": "simulated_workflow_not_live_or_business_baseline",
+  "journeys": [
+    {
+      "id": "task",
+      "test": "tests/e2e/test_session_recovery_cli.py::test_stopped_owner_recovery_and_next_task_stay_in_one_session",
+      "expects": ["new goal in the same Session", "new Run rather than replay", "target unapplied"]
+    },
+    {
+      "id": "plan",
+      "test": "tests/e2e/test_persistent_chat_cli.py::test_plan_review_session_restart_confirms_only_then_explicitly_resumes",
+      "expects": ["exact plan review", "confirmation alone does not execute", "explicit resume"]
+    },
+    {
+      "id": "approval",
+      "test": "tests/e2e/test_persistent_chat_cli.py::test_no_id_permission_choice_requires_confirmation_and_explicit_resume",
+      "expects": ["sole pending request selection", "exact confirmation", "explicit resume"]
+    },
+    {
+      "id": "denial",
+      "test": "tests/e2e/test_session_recovery_cli.py::test_no_id_deny_stays_in_session_and_does_not_execute_pending_tool",
+      "expects": ["no request ID required for sole request", "denied request", "zero pending tool effects"]
+    },
+    {
+      "id": "patch",
+      "test": "tests/e2e/test_persistent_chat_cli.py::test_bare_real_terminal_restores_reviews_and_applies_without_leaving_session",
+      "expects": ["full patch display", "target unchanged before confirmation", "one exact patch application"]
+    },
+    {
+      "id": "cancellation",
+      "test": "tests/e2e/test_persistent_chat_cli.py::test_real_pipe_or_tty_inspection_and_stop_remain_responsive_during_work",
+      "expects": ["responsive status during actual process work", "cancel or exit settles ownership", "released resource leases"]
+    },
+    {
+      "id": "recovery",
+      "test": "tests/e2e/test_session_recovery_cli.py::test_stopped_owner_recovery_and_next_task_stay_in_one_session",
+      "expects": ["old process physically stopped", "preview does not recover", "explicit one-use stopped-owner confirmation", "no model replay"]
+    },
+    {
+      "id": "model_selection",
+      "test": "tests/e2e/test_session_management_cli.py::test_same_real_session_inspects_history_and_confirms_future_model_selection",
+      "expects": ["review then confirm", "future tasks use selected profile", "old Run binding unchanged"]
+    },
+    {
+      "id": "roles_readiness",
+      "test": "tests/e2e/test_session_management_cli.py::test_same_real_session_inspects_history_and_confirms_future_model_selection",
+      "expects": ["bounded requested tool ceiling", "baseline explicitly not_checked", "no instructions or credential reference in view"]
+    },
+    {
+      "id": "history",
+      "test": "tests/e2e/test_session_management_cli.py::test_same_real_session_inspects_history_and_confirms_future_model_selection",
+      "expects": ["sequence-based historical selection", "historical apply rejected", "return to current task"]
+    }
+  ],
+  "counting": "Ten logical journeys share seven test functions; count unique collected pytest cases, never ten independent test runs.",
+  "strategy_checks": {
+    "test": "tests/integration/test_session_plan_gate.py::test_every_strategy_pauses_before_dispatch_then_resumes_frozen_plan",
+    "scenarios": ["success", "direct", "single_engineer", "parallel_engineers", "specialist"],
+    "negative": "Unapproved resume remains waiting with no leases, graph, execution or grant.",
+    "positive": "Explicit plan approval then resume delivers exactly the frozen task/plan without a second CoS invocation; terminal replay changes no events.",
+    "limitation": "Five actual offline Workflow strategies, not real-provider or independent functional-success proof."
+  }
+}

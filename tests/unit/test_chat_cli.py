@@ -13,10 +13,17 @@ import typer
 from typer.testing import CliRunner
 
 from agent_fleet.application.conversations import ChatExecutionOptions, SessionBootstrapOptions
+from agent_fleet.application.readiness import ReadinessService
 from agent_fleet.cli.app import _present_error, _present_with_warnings
 from agent_fleet.cli.chat import PosixLineInput, View, register_chat_command, run_session
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import ApprovalChoice, FakeScenario
+from agent_fleet.domain.readiness import (
+    MAX_READINESS_BYTES,
+    ReadinessReport,
+    StaticDeclaration,
+    StaticReadinessMetadata,
+)
 from agent_fleet.domain.security import Redactor
 
 
@@ -133,6 +140,51 @@ class StrictService:
         self.calls.append(("artifacts", conversation_id))
         return {"artifact_id": "art_" + "d" * 32}
 
+    def tasks(
+        self,
+        conversation_id: str,
+        *,
+        before_sequence: int | None = None,
+        select_sequence: int | None = None,
+        current: bool = False,
+    ) -> View:
+        self.calls.append(("tasks", before_sequence, select_sequence, current))
+        return self._view()
+
+    def models(
+        self,
+        conversation_id: str,
+        *,
+        profile: str | None = None,
+        role: str | None = None,
+        default: bool = False,
+    ) -> View:
+        self.calls.append(("models", profile, role, default))
+        return {"notice": "future tasks only"}
+
+    def roles(self, conversation_id: str) -> View:
+        self.calls.append(("roles",))
+        return {"roles": []}
+
+    def readiness(self, conversation_id: str) -> View:
+        self.calls.append(("readiness",))
+        return ReadinessReport(
+            repository_identity="a" * 64,
+            head_revision="b" * 40,
+            status_fingerprint="c" * 64,
+            dirty=False,
+            profile_sha256="d" * 64,
+            configuration_status="absent",
+            ecosystems=(),
+            boundaries=(),
+            metadata=StaticReadinessMetadata(),
+            detected_candidates=(),
+            configured_commands=(),
+            diagnostics=(),
+            inspection_complete=True,
+            next_steps=("prepare_reviewed_environment", "run_approved_baseline_later"),
+        ).model_dump(mode="json")
+
     def review(self, conversation_id: str, *, action: str, arguments: tuple[str, ...] = ()) -> View:
         self.calls.append(("review", conversation_id, action, arguments))
         return {"action": action, "patch": "--- before\n+++ after\n+safe [text]\x1b[31m"}
@@ -151,9 +203,21 @@ class StrictService:
         self.calls.append(("approve", conversation_id, request_id, choice))
         return {"request_id": request_id, "choice": choice.value if choice is not None else None}
 
-    def deny(self, conversation_id: str, request_id: str, *, reason: str | None = None) -> View:
+    def deny(
+        self, conversation_id: str, request_id: str | None = None, *, reason: str | None = None
+    ) -> View:
         self.calls.append(("deny", conversation_id, request_id, reason))
         return {"request_id": request_id, "resolution": "denied"}
+
+    async def recover(
+        self,
+        conversation_id: str,
+        *,
+        code: str | None = None,
+        confirm_owner_stopped: bool = False,
+    ) -> View:
+        self.calls.append(("recover", conversation_id, code, confirm_owner_stopped))
+        return {"recovery_code": "fedcba9876543210", "replayed": False}
 
     def progress(self, conversation_id: str, *, cursor: str | None = None, limit: int = 50) -> View:
         assert limit <= 100
@@ -264,6 +328,123 @@ async def test_review_commands_are_explicit_and_render_full_escaped_diff() -> No
     assert not any(call[0] in {"submit", "approve"} for call in service.calls)
 
 
+@pytest.mark.asyncio
+async def test_management_commands_stay_in_same_session_and_never_become_goals() -> None:
+    service, reader = StrictService(), QueuedInput()
+    errors: list[FleetError] = []
+    task = _session(service, reader, [], errors)
+    for command in (
+        "/models",
+        "/models use small --default",
+        "/models use small --role engineer",
+        "/roles",
+        "/readiness",
+        "/tasks",
+        "/tasks 21",
+        "/tasks select 3",
+        "/tasks current",
+        "/exit",
+    ):
+        reader.send(command)
+    await asyncio.wait_for(task, 3)
+    assert not errors
+    assert ("models", "small", None, True) in service.calls
+    assert ("models", "small", "engineer", False) in service.calls
+    assert ("tasks", 21, None, False) in service.calls
+    assert ("tasks", None, 3, False) in service.calls
+    assert ("tasks", None, None, True) in service.calls
+    assert not any(call[0] in {"submit", "approve", "resume", "cancel"} for call in service.calls)
+
+
+@pytest.mark.asyncio
+async def test_recovery_preview_and_confirmation_are_separate_explicit_commands() -> None:
+    service, reader = StrictService(), QueuedInput()
+    errors: list[FleetError] = []
+    task = _session(service, reader, [], errors)
+    reader.send("/recover")
+    reader.send("/recover --confirm-owner-stopped fedcba9876543210")
+    reader.send("/exit")
+    await asyncio.wait_for(task, 3)
+    assert not errors
+    recovery_calls = [call for call in service.calls if call[0] == "recover"]
+    assert len(recovery_calls) == 2
+    assert recovery_calls[0][2:] == (None, False)
+    assert recovery_calls[1][2:] == ("fedcba9876543210", True)
+    assert not any(call[0] in {"submit", "resume", "cancel"} for call in service.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/models small",
+        "/models use small",
+        "/models use small --default --role engineer",
+        "/models use small --role",
+        "/models set small",
+        "/roles extra",
+        "/readiness --run",
+        "/tasks 0",
+        "/tasks 1001",
+        "/tasks select run_abcdef",
+        "/tasks select -1",
+        "/tasks select \uff11",
+        "/tasks current extra",
+        "/recover --confirm-owner-stopped",
+        "/recover fedcba9876543210",
+        "/recover --force fedcba9876543210",
+        "/recover --confirm-owner-stopped fedcba9876543210 extra",
+    ],
+)
+async def test_management_command_invalid_syntax_has_no_service_side_effect(command: str) -> None:
+    service, reader = StrictService(), QueuedInput()
+    errors: list[FleetError] = []
+    task = _session(service, reader, [], errors)
+    reader.send(command)
+    reader.send("/exit")
+    await asyncio.wait_for(task, 3)
+    assert len(errors) == 1
+    assert not any(
+        call[0] in {"models", "roles", "readiness", "tasks", "submit", "recover"}
+        for call in service.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_readiness_bounds_the_actual_pretty_printed_unicode_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, reader = StrictService(), QueuedInput()
+    value = service.readiness("unused")
+    path = "/".join("界" * 45 + str(index) for index in range(8)) + "/package.json"
+    value["metadata"] = StaticReadinessMetadata(
+        declarations=tuple(
+            StaticDeclaration(
+                manifest_path=path,
+                ecosystem="node",
+                category="dependency",
+                name=f"dependency{index}",
+                source_type="registry",
+            )
+            for index in range(512)
+        )
+    ).model_dump(mode="json")
+    original = ReadinessService._bounded_report(dict(value))
+    monkeypatch.setattr(service, "readiness", lambda _: original.model_dump(mode="json"))
+    output: list[str] = []
+    errors: list[FleetError] = []
+    task = _session(service, reader, output, errors)
+    reader.send("/readiness")
+    reader.send("/exit")
+    await asyncio.wait_for(task, 10)
+    rendered = next(text for text in output if '"kind": "ReadinessReport"' in text)
+    assert len((rendered + "\n").encode("utf-8")) <= MAX_READINESS_BYTES
+    report = ReadinessReport.model_validate_json(rendered)
+    assert report.metadata.omitted_declarations > original.metadata.omitted_declarations
+    assert not report.inspection_complete and report.commands_executed == 0
+    assert not errors
+
+
 def test_bare_noninteractive_help_does_not_create_application_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -349,7 +530,8 @@ async def test_slash_commands_are_exact_and_never_implicitly_resume_or_submit() 
         ApprovalChoice.ALLOW_ALWAYS,
     ]
     assert next(call[-1] for call in service.calls if call[0] == "deny") == "not needed"
-    assert len(errors) == 7 and all("SECRET" not in error.message for error in errors)
+    assert len(errors) == 6 and all("SECRET" not in error.message for error in errors)
+    assert [call[2] for call in service.calls if call[0] == "deny"] == ["perm_4", None]
 
 
 @pytest.mark.asyncio

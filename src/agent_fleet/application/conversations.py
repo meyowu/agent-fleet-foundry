@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -19,7 +20,9 @@ from agent_fleet.application.conversation_results import bounded_summary
 from agent_fleet.application.inspection import InspectionService
 from agent_fleet.application.model_profiles import ModelProfileService
 from agent_fleet.application.permission_policy import PermissionPolicyService
+from agent_fleet.application.readiness import ReadinessService
 from agent_fleet.application.resources import CancellationService
+from agent_fleet.application.session_recovery import SessionRecoveryService, recovery_review_error
 from agent_fleet.application.session_review import SessionReviewService
 from agent_fleet.application.workflow import WorkflowEngine
 from agent_fleet.domain.conversation import (
@@ -35,6 +38,7 @@ from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     AgentRole,
     ApprovalChoice,
+    ApprovalRequest,
     ApprovalStatus,
     FakeScenario,
     FrozenStrictModel,
@@ -44,8 +48,9 @@ from agent_fleet.domain.models import (
     WorkflowStage,
     jsonable,
 )
-from agent_fleet.domain.security import Redactor, sha256_bytes
-from agent_fleet.domain.session_review import SessionSelection
+from agent_fleet.domain.role_templates import ResolvedRoleTemplate
+from agent_fleet.domain.security import Redactor, canonical_json_hash, sha256_bytes
+from agent_fleet.domain.session_review import ModelSelectionReview, SessionSelection
 from agent_fleet.domain.trust import TrustMode
 from agent_fleet.ports.conversation import ConversationStore
 from agent_fleet.ports.id_generator import IdGenerator
@@ -69,7 +74,7 @@ class ChatExecutionOptions:
 
 
 class SessionBootstrapOptions(FrozenStrictModel):
-    runtime_name: Literal["fake", "pydantic-ai"] = "fake"
+    runtime_name: Literal["fake", "pydantic-ai", "openai-agents"] = "fake"
     provider_model: str | None = Field(default=None, max_length=256)
     credential_ref: str | None = Field(default=None, max_length=256)
     docker_image: str = Field(min_length=1, max_length=512)
@@ -106,6 +111,8 @@ class ConversationService:
         reviews: SessionReviewService,
         bootstrap: BootstrapService,
         model_profiles: ModelProfileService | None = None,
+        readiness: ReadinessService | None = None,
+        recovery: SessionRecoveryService | None = None,
     ) -> None:
         self.store = store
         self.state = state
@@ -122,10 +129,16 @@ class ConversationService:
         self.reviews = reviews
         self.bootstrap = bootstrap
         self.model_profiles = model_profiles
+        self.readiness_service = readiness
+        self.session_recovery = recovery
         self._bootstrap_review: _BootstrapReview | None = None
         self._selected: dict[str, str] = {}
         self._executions: dict[str, asyncio.Task[Run]] = {}
         self._cancellations: dict[str, asyncio.Task[None]] = {}
+        self._inspection: dict[str, str] = {}
+        self._selection_generation: dict[str, int] = {}
+        self._task_choices: dict[str, dict[int, str]] = {}
+        self._cancellation_targets: dict[str, str | None] = {}
 
     def select(
         self,
@@ -162,9 +175,278 @@ class ConversationService:
             raise _invalid("The conversation does not belong to this repository identity.")
         # Changing the foreground selection requires another review even when
         # later returning to the same conversation (selection ABA).
-        self.reviews.invalidate_selection()
         self._selected[conversation.conversation_id] = project.project_id
+        self._change_inspection(conversation.conversation_id, None)
         return self.status(conversation.conversation_id)
+
+    def _change_inspection(self, conversation_id: str, turn_id: str | None) -> None:
+        self.reviews.invalidate_selection()
+        self._selection_generation[conversation_id] = (
+            self._selection_generation.get(conversation_id, 0) + 1
+        )
+        self._task_choices.pop(conversation_id, None)
+        if turn_id is None:
+            self._inspection.pop(conversation_id, None)
+        else:
+            self._inspection[conversation_id] = turn_id
+
+    def _history_turn(self, conversation: Conversation, turn_id: str) -> ConversationTurn:
+        turn = self.store.get_turn(conversation.project_id, turn_id)
+        binding = self.store.binding_for_run(turn.binding.run_id)
+        run = self.state.get_run(turn.binding.run_id)
+        if (
+            binding != turn.binding
+            or turn.binding.conversation_id != conversation.conversation_id
+            or turn.binding.project_id != conversation.project_id
+            or turn.binding.repository_identity != conversation.repository_identity
+            or run.project_id != conversation.project_id
+            or run.parent_run_id is not None
+        ):
+            raise _invalid("The displayed task is not a root task in this conversation.")
+        self._register_run_redaction(run.run_id)
+        reloaded = self.store.get_turn(conversation.project_id, turn_id)
+        if reloaded.binding != turn.binding:
+            raise _invalid("The displayed task binding changed during inspection.")
+        return reloaded
+
+    def _inspected_turn(self, conversation: Conversation) -> ConversationTurn | None:
+        selected = self._inspection.get(conversation.conversation_id)
+        return (
+            self._history_turn(conversation, selected)
+            if selected is not None
+            else self._turn(conversation)
+        )
+
+    def _require_current(self, conversation_id: str) -> None:
+        if self.session_recovery is not None and self.session_recovery.active(conversation_id):
+            raise _busy()
+        conversation = self._conversation(conversation_id)
+        current = self._turn(conversation)
+        selected = self._inspection.get(conversation_id)
+        if selected is not None and (current is None or selected != current.binding.turn_id):
+            raise _invalid("Historical inspection cannot mutate a task. Use /tasks current first.")
+
+    def tasks(
+        self,
+        conversation_id: str,
+        *,
+        before_sequence: int | None = None,
+        select_sequence: int | None = None,
+        current: bool = False,
+    ) -> ConversationView:
+        conversation = self._conversation(conversation_id)
+        if (
+            type(current) is not bool
+            or sum((before_sequence is not None, select_sequence is not None, current)) > 1
+        ):
+            raise _invalid(
+                "Use /tasks [before-sequence], /tasks select <sequence>, or /tasks current."
+            )
+        for number in (before_sequence, select_sequence):
+            if number is not None and (type(number) is not int or not 1 <= number <= 1000):
+                raise _invalid("Task sequences must be integers from 1 through 1000.")
+        if current:
+            self._change_inspection(conversation_id, None)
+            return self.status(conversation_id)
+        if select_sequence is not None:
+            turn_id = self._task_choices.get(conversation_id, {}).get(select_sequence)
+            if turn_id is None:
+                raise _invalid("List /tasks and select a sequence from that displayed page.")
+            turn = self._history_turn(conversation, turn_id)
+            if turn.binding.sequence != select_sequence:
+                raise _invalid("The displayed task sequence no longer matches its binding.")
+            self._change_inspection(conversation_id, turn_id)
+            return self.status(conversation_id)
+        turns = self.store.list_turns(
+            conversation.project_id,
+            conversation_id,
+            before_sequence=before_sequence,
+            limit=21,
+        )
+        choices: dict[int, str] = {}
+        summaries: list[JsonValue] = []
+        for item in turns[:20]:
+            turn = self._history_turn(conversation, item.binding.turn_id)
+            choices[turn.binding.sequence] = turn.binding.turn_id
+            summaries.append(
+                {
+                    "sequence": turn.binding.sequence,
+                    "status": turn.status.value,
+                    "user_summary": turn.user_summary.text,
+                    "result_summary": turn.result_summary.text if turn.result_summary else None,
+                    "summary_truncated": turn.user_summary.truncated
+                    or bool(turn.result_summary and turn.result_summary.truncated),
+                    "active": conversation.active_turn_id == turn.binding.turn_id,
+                    "inspected": self._inspection.get(conversation_id) == turn.binding.turn_id,
+                }
+            )
+        self._task_choices[conversation_id] = choices
+        view: ConversationView = {
+            "conversation_id": conversation_id,
+            "tasks": summaries,
+            "has_more": len(turns) > 20,
+            "next_before_sequence": turns[19].binding.sequence if len(turns) > 20 else None,
+            "notice": "Select a displayed sequence with /tasks select <sequence>; "
+            "/tasks current returns to the current task.",
+        }
+        self._reject_secret(view)
+        return view
+
+    def _role_configuration(self, project: Project) -> tuple[str, dict[str, ResolvedRoleTemplate]]:
+        spec, snapshot = self.workflow.config.load_snapshot(
+            Path(project.canonical_root) / ".fleet/fleet.yaml"
+        )
+        return self.workflow.config.snapshot_hash(snapshot), self.workflow.config.role_templates(
+            spec, snapshot
+        )
+
+    def roles(self, conversation_id: str) -> ConversationView:
+        conversation = self._conversation(conversation_id)
+        digest, templates = self._role_configuration(
+            self.state.get_project(conversation.project_id)
+        )
+        view: ConversationView = {
+            "conversation_id": conversation_id,
+            "config_snapshot_sha256": digest,
+            "roles": [
+                {
+                    "role_id": role,
+                    "execution_kind": template.execution_kind.value,
+                    "requested_tool_ceiling": list(template.allowed_tools),
+                    "requested_step_ceiling": template.max_steps,
+                    "requested_path_ceiling": list(template.allowed_paths)
+                    if template.allowed_paths is not None
+                    else None,
+                    "model_preference": template.model_profile,
+                    "template_sha256": canonical_json_hash(template.model_dump(mode="json")),
+                }
+                for role, template in sorted(templates.items())
+            ],
+            "notice": "Repository role requests are ceilings, not permission grants. "
+            "Prompt bodies are not displayed.",
+        }
+        self._reject_secret(view)
+        return view
+
+    def readiness(self, conversation_id: str) -> ConversationView:
+        conversation = self._conversation(conversation_id)
+        if self.readiness_service is None:
+            raise _invalid("The static readiness service is unavailable.")
+        project = self.state.get_project(conversation.project_id)
+        report = self.readiness_service.inspect(Path(project.canonical_root))
+        view = report.model_dump(mode="json")
+        self._reject_secret(view)
+        return view
+
+    def models(
+        self,
+        conversation_id: str,
+        *,
+        profile: str | None = None,
+        role: str | None = None,
+        default: bool = False,
+    ) -> ConversationView:
+        conversation = self._conversation(conversation_id)
+        service = self.model_profiles
+        if service is None:
+            raise _invalid("The model profile service is unavailable.")
+        if type(default) is not bool:
+            raise _invalid("The model default selection flag must be a boolean.")
+        project = self.state.get_project(conversation.project_id)
+        if profile is not None:
+            self._require_current(conversation_id)
+            if (role is None) != default:
+                raise _invalid("Use /models use <alias> --default or --role <configured-role>.")
+            digest, templates = self._role_configuration(project)
+            if role is not None and role not in templates:
+                raise _invalid("The requested model role is not configured in this project.")
+            shown = service.show(profile)
+            if shown.get("enabled") is not True:
+                raise _invalid("A disabled model profile cannot be selected.")
+            selection = self._review_selection(conversation_id)
+            expected = ModelSelectionReview(
+                selection=selection,
+                profile_name=profile,
+                profile_revision=cast(int, shown["revision"]),
+                configuration_sha256=cast(str, shown["configuration_sha256"]),
+                role_id=role,
+                expected_selection_revision=cast(int, service.selection(project)["revision"]),
+                config_snapshot_sha256=digest,
+            )
+            view = self.reviews.prepare_model_selection(selection, expected, shown)
+        else:
+            if role is not None or default:
+                raise _invalid("Choose a model profile before a target role/default.")
+            turn = self._inspected_turn(conversation)
+            pinned: JsonValue = None
+            if turn is not None:
+                run = self.state.get_run(turn.binding.run_id)
+                if run.model_bindings_sha256 is not None:
+                    pinned = jsonable(
+                        service.inspect_bindings(
+                            project,
+                            root_run_id=run.run_id,
+                            expected_sha256=run.model_bindings_sha256,
+                        ).safe_projection()
+                    )
+                else:
+                    pinned = {
+                        "run_id": run.run_id,
+                        "mode": "legacy",
+                        "runtime": run.runtime_name,
+                        "provider_model": run.provider_model,
+                    }
+            view = {
+                "conversation_id": conversation_id,
+                "catalog": jsonable(service.list()),
+                "future_task_selection": jsonable(service.selection(project)),
+                "inspected_run_id": turn.binding.run_id if turn is not None else None,
+                "inspected_run_binding": pinned,
+                "notice": "Catalog and future-task selection are separate from immutable "
+                "historical Run bindings. No provider connectivity was tested.",
+            }
+        self._reject_secret(view)
+        return view
+
+    def _memory_selection(self, expected: SessionSelection) -> SessionSelection:
+        if (
+            self._selected.get(expected.conversation_id) != expected.project_id
+            or self._selection_generation.get(expected.conversation_id, 0)
+            != expected.inspection_revision
+        ):
+            raise _invalid("The foreground session inspection changed; prepare a new review.")
+        return expected
+
+    def _select_model(
+        self, expected: ModelSelectionReview, validate: Callable[[], None]
+    ) -> ConversationView:
+        service = self.model_profiles
+        if service is None:
+            raise _invalid("The model profile service is unavailable.")
+        project = self.state.get_project(expected.selection.project_id)
+
+        def check() -> None:
+            validate()  # RAM generation/expiry only: no nested SQLite transaction.
+            digest, templates = self._role_configuration(project)
+            if digest != expected.config_snapshot_sha256 or (
+                expected.role_id is not None and expected.role_id not in templates
+            ):
+                raise _invalid("The reviewed project role configuration changed.")
+
+        check()
+        result = service.bind(
+            project,
+            expected_revision=expected.expected_selection_revision,
+            profile=expected.profile_name,
+            role=expected.role_id,
+            default=expected.role_id is None,
+            expected_review=expected,
+            validate_review=check,
+        )
+        return {
+            "future_task_selection": jsonable(result),
+            "notice": "Model selection saved for future tasks only; no provider was contacted.",
+        }
 
     def _conversation(self, conversation_id: str) -> Conversation:
         project_id = self._selected.get(conversation_id)
@@ -305,7 +587,7 @@ class ConversationService:
 
     def status(self, conversation_id: str) -> ConversationView:
         conversation = self._conversation(conversation_id)
-        return self._view(conversation, self._turn(conversation))
+        return self._view(conversation, self._inspected_turn(conversation))
 
     def _view(self, conversation: Conversation, turn: ConversationTurn | None) -> ConversationView:
         conversation_id = conversation.conversation_id
@@ -338,13 +620,23 @@ class ConversationService:
         if recovery_required:
             warnings.append(
                 "Execution ownership is unresolved. Inspect the run and use explicit "
-                "owner-stopped recovery; chat will not replay it."
+                "owner-stopped /recover review; chat will not replay it."
             )
         data: ConversationView = {
             "conversation_id": conversation.conversation_id,
             "project_id": conversation.project_id,
             "revision": conversation.revision,
             "active_turn_id": conversation.active_turn_id,
+            "active_run_id": (
+                self.store.get_turn(
+                    conversation.project_id, conversation.active_turn_id
+                ).binding.run_id
+                if conversation.active_turn_id is not None
+                else None
+            ),
+            "inspected_run_id": turn.binding.run_id if turn is not None else None,
+            "inspection_mode": "selected" if conversation_id in self._inspection else "current",
+            "inspection_revision": self._selection_generation.get(conversation_id, 0),
             "turn_id": turn.binding.turn_id if turn is not None else None,
             "run_id": turn.binding.run_id if turn is not None else None,
             "turn_status": turn.status.value if turn is not None else None,
@@ -388,12 +680,16 @@ class ConversationService:
             raise _invalid("A chat goal must be nonempty and at most 16384 UTF-8 bytes.")
         if message.lstrip().startswith("/"):
             raise _invalid("Slash commands are local controls, not submitted model goals.")
-        if conversation_id in self._executions:
+        if conversation_id in self._executions or (
+            self.session_recovery is not None and self.session_recovery.active(conversation_id)
+        ):
             raise _busy()
         key = submission_id or self.ids.new(IdPrefix.CORRELATION)
         prior = self.store.get_submission(conversation.project_id, conversation_id, key)
         if conversation.active_turn_id is not None and prior is None:
             raise _busy()
+        if conversation_id in self._inspection:
+            self._change_inspection(conversation_id, None)
         context = prior.context if prior is not None else self._context(conversation)
         redacted, _ = self.redactor.redact_text(message)
         submission: ConversationSubmission | None = None
@@ -505,6 +801,7 @@ class ConversationService:
     async def resume(
         self, conversation_id: str, *, allow_unsafe_local: bool = False
     ) -> ConversationView:
+        self._require_current(conversation_id)
         conversation = self._conversation(conversation_id)
         turn = self._turn(conversation)
         if turn is None:
@@ -535,13 +832,18 @@ class ConversationService:
                 self._executions.pop(conversation_id, None)
 
     async def cancel(self, conversation_id: str) -> ConversationView:
+        if self.session_recovery is not None and self.session_recovery.active(conversation_id):
+            raise _busy()
         conversation = self._conversation(conversation_id)
         cleanup = self._cancellations.get(conversation_id)
         if cleanup is None:
             # Bind the user's cancellation before scheduling or awaiting work.
             # Another process can submit a newer turn as soon as this owner's
             # cleanup settles; it must never become this operation's target.
-            turn = self._turn(conversation)
+            turn = self._turn(conversation) if conversation.active_turn_id is not None else None
+            self._cancellation_targets[conversation_id] = (
+                turn.binding.run_id if turn is not None else None
+            )
             cleanup = asyncio.create_task(
                 self._cancel(
                     turn.binding.run_id if turn is not None else None,
@@ -549,6 +851,7 @@ class ConversationService:
                 )
             )
             self._cancellations[conversation_id] = cleanup
+        target_run_id = self._cancellation_targets.get(conversation_id)
         cancellation: asyncio.CancelledError | None = None
         try:
             while not cleanup.done():
@@ -560,9 +863,12 @@ class ConversationService:
         finally:
             if cleanup.done() and self._cancellations.get(conversation_id) is cleanup:
                 self._cancellations.pop(conversation_id, None)
+                self._cancellation_targets.pop(conversation_id, None)
         if cancellation is not None:
             raise cancellation
-        return self.status(conversation_id)
+        view = self.status(conversation_id)
+        view["cancelled_run_id"] = target_run_id
+        return view
 
     async def _cancel(self, run_id: str | None, execution: asyncio.Task[Run] | None) -> None:
         if execution is not None and not execution.done():
@@ -571,8 +877,40 @@ class ConversationService:
         if run_id is not None:
             await self.cancellation.cancel(run_id)
 
+    async def recover(
+        self,
+        conversation_id: str,
+        *,
+        code: str | None = None,
+        confirm_owner_stopped: bool = False,
+    ) -> ConversationView:
+        self._require_current(conversation_id)
+        if self.session_recovery is None:
+            raise recovery_review_error()
+
+        def locally_busy() -> bool:
+            return conversation_id in self._executions or conversation_id in self._cancellations
+
+        if locally_busy():
+            raise _busy()
+        selection = self._review_selection(conversation_id)
+        if code is None and not confirm_owner_stopped:
+            view = self.session_recovery.prepare(selection)
+        elif code is not None and confirm_owner_stopped is True:
+            view = await self.session_recovery.confirm(
+                selection,
+                code,
+                owner_stopped=confirm_owner_stopped,
+                current_selection=lambda: self._review_selection(conversation_id),
+                locally_busy=locally_busy,
+            )
+        else:
+            raise recovery_review_error()
+        self._reject_secret(view)
+        return view
+
     def artifacts(self, conversation_id: str) -> dict[str, JsonValue]:
-        turn = self._turn(self._conversation(conversation_id))
+        turn = self._inspected_turn(self._conversation(conversation_id))
         return {
             "conversation_id": conversation_id,
             "run_id": turn.binding.run_id if turn is not None else None,
@@ -585,18 +923,25 @@ class ConversationService:
 
     def _review_selection(self, conversation_id: str) -> SessionSelection:
         conversation = self._conversation(conversation_id)
-        turn = self._turn(conversation)
+        turn = self._inspected_turn(conversation)
         return SessionSelection(
             project_id=conversation.project_id,
             conversation_id=conversation_id,
             conversation_revision=conversation.revision,
             run_id=turn.binding.run_id if turn is not None else None,
+            inspection_revision=self._selection_generation.get(conversation_id, 0),
         )
 
     def review(
         self, conversation_id: str, *, action: str, arguments: tuple[str, ...] = ()
     ) -> dict[str, JsonValue]:
         """Human control entry only; no model text is parsed as a review command."""
+        if (
+            action == "apply"
+            or (action == "plan" and arguments == ("approve",))
+            or (action == "fleet-patch" and arguments and arguments[0] in {"apply", "rollback"})
+        ):
+            self._require_current(conversation_id)
         selection = self._review_selection(conversation_id)
         if action == "plan" and not arguments:
             view = self.reviews.plan(selection)
@@ -618,6 +963,8 @@ class ConversationService:
                 approve_request=lambda request_id, choice: self.approve(
                     conversation_id, request_id, choice=choice
                 ),
+                select_model=self._select_model,
+                current_model_selection=lambda: self._memory_selection(selection),
             )
         elif action == "dismiss" and not arguments:
             view = self.reviews.dismiss(selection)
@@ -662,19 +1009,10 @@ class ConversationService:
         *,
         choice: ApprovalChoice | None = None,
     ) -> dict[str, JsonValue]:
+        self._require_current(conversation_id)
         if request_id is None:
             selection = self._review_selection(conversation_id)
-            run_ids = [] if selection.run_id is None else [selection.run_id]
-            if selection.run_id is not None:
-                run_ids.extend(
-                    item.child_run_id for item in self.workflow.graphs.descendants(selection.run_id)
-                )
-            requests = [
-                self.state.get_approval(run.pending_approval_id)
-                for run_id in run_ids
-                if (run := self.state.get_run(run_id)).pending_approval_id is not None
-            ]
-            pending = [request for request in requests if request.status is ApprovalStatus.PENDING]
+            pending = self._pending_requests(conversation_id)
             if len(pending) != 1:
                 return {
                     "selection_required": len(pending) > 1,
@@ -702,9 +1040,35 @@ class ConversationService:
             return self.permissions(conversation_id, identifier=request_id)
         return self.approvals.approve(request_id, choice=choice).model_dump(mode="json")
 
+    def _pending_requests(self, conversation_id: str) -> list[ApprovalRequest]:
+        selection = self._review_selection(conversation_id)
+        run_ids = [] if selection.run_id is None else [selection.run_id]
+        if selection.run_id is not None:
+            run_ids.extend(
+                item.child_run_id for item in self.workflow.graphs.descendants(selection.run_id)
+            )
+        requests = [
+            self.state.get_approval(run.pending_approval_id)
+            for run_id in run_ids
+            if (run := self.state.get_run(run_id)).pending_approval_id is not None
+        ]
+        return [request for request in requests if request.status is ApprovalStatus.PENDING]
+
     def deny(
-        self, conversation_id: str, request_id: str, *, reason: str | None = None
+        self, conversation_id: str, request_id: str | None = None, *, reason: str | None = None
     ) -> dict[str, JsonValue]:
+        self._require_current(conversation_id)
+        if request_id is None:
+            pending = self._pending_requests(conversation_id)
+            if len(pending) != 1:
+                view: dict[str, JsonValue] = {
+                    "selection_required": len(pending) > 1,
+                    "pending_requests": [request.model_dump(mode="json") for request in pending],
+                    "notice": "No sole pending request was selected; no denial was performed.",
+                }
+                self._reject_secret(view)
+                return view
+            request_id = pending[0].request_id
         self._require_request(conversation_id, request_id)
         self.approvals.deny(request_id, reason)
         return {"request_id": request_id, "denied": True}

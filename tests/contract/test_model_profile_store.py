@@ -11,6 +11,7 @@ from threading import Barrier
 import pytest
 from model_profiles_fixtures import ProfileHarness, make_profile_harness
 
+from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.model_profiles import ModelProfile, ProjectModelSelection
 from agent_fleet.domain.models import RuntimeConfiguration
@@ -304,22 +305,22 @@ def test_read_without_migration_does_not_create_database(tmp_path: Path) -> None
     assert not absent.exists()
 
 
-def test_migration9_preserves_existing_project_bytes(harness: ProfileHarness) -> None:
+def test_migration9_preserves_existing_project_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Construct a genuine schema8 database; never delete markers under newer tables.
+    with monkeypatch.context() as historical:
+        historical.setattr("agent_fleet.adapters.persistence.sqlite.SUPPORTED_SCHEMA_VERSION", 8)
+        historical.setattr("model_profiles_fixtures.SUPPORTED_SCHEMA_VERSION", 8)
+        harness = make_profile_harness(tmp_path)
     with sqlite3.connect(harness.state.database_path) as connection:
         expected = connection.execute("SELECT data_json FROM projects").fetchone()[0]
-        for table in (
-            "plan_review_heads",
-            "plan_review_versions",
-            "run_model_bindings",
-            "project_model_selection_heads",
-            "project_model_selection_versions",
-            "model_profile_heads",
-            "model_profile_versions",
-            "model_configuration_audit",
-        ):
-            connection.execute(f"DROP TABLE {table}")
-        connection.execute("DELETE FROM schema_migrations WHERE version>=9")
-    assert harness.state.migrate() == 10
+        assert connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 8
+        assert not connection.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE name IN ('model_profile_versions','evaluation_campaigns')"
+        ).fetchall()
+    assert harness.state.migrate() == SUPPORTED_SCHEMA_VERSION
     with sqlite3.connect(harness.state.database_path) as connection:
         assert connection.execute("SELECT data_json FROM projects").fetchone()[0] == expected
         assert connection.execute("SELECT COUNT(*) FROM model_profile_versions").fetchone()[0] == 0

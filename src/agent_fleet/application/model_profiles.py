@@ -27,6 +27,7 @@ from agent_fleet.domain.models import (
     RuntimeCredentialCheck,
 )
 from agent_fleet.domain.security import Redactor
+from agent_fleet.domain.session_review import ModelSelectionReview
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.model_profiles import ModelProfileStore
 from agent_fleet.ports.repository import RepositoryPort
@@ -270,8 +271,21 @@ class ModelProfileService:
         clear: bool = False,
         permit: Sequence[str] = (),
         revoke: Sequence[str] = (),
+        expected_review: ModelSelectionReview | None = None,
+        validate_review: Callable[[], None] | None = None,
     ) -> dict[str, object]:
         project = self._registered_project(project)
+        if expected_review is not None and (
+            clear
+            or permit
+            or revoke
+            or expected_review.selection.project_id != project.project_id
+            or expected_review.profile_name != profile
+            or expected_review.role_id != role
+            or default != (role is None)
+            or expected_review.expected_selection_revision != expected_revision
+        ):
+            raise _invalid()
         if (
             type(expected_revision) is not int
             or expected_revision < 0
@@ -316,7 +330,15 @@ class ModelProfileService:
             permitted_profiles=tuple(sorted(allowed)),
         )
         self._clean(selection.model_dump(mode="json"))
-        self.store.save_selection(selection, expected_revision=expected_revision)
+        if expected_review is None and validate_review is None:
+            self.store.save_selection(selection, expected_revision=expected_revision)
+        else:
+            self.store.save_selection(
+                selection,
+                expected_revision=expected_revision,
+                expected_review=expected_review,
+                validate_review=validate_review,
+            )
         return selection.model_dump(mode="json")
 
     def _preflight(self, bindings: RunModelBindings) -> None:

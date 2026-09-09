@@ -814,6 +814,20 @@ class SqliteGraphStore:
                     "manifest_sha256": canonical_json_hash(manifest.model_dump(mode="json")),
                 },
             )
+            from agent_fleet.adapters.persistence.runtime_budgets import SqliteRuntimeBudgetStore
+            from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
+
+            state = SqliteStateStore(self.database_path, self.clock, self.ids, self.redactor)
+            budgets = SqliteRuntimeBudgetStore(
+                self.database_path, self.clock, self.ids, self.redactor, state
+            )
+            owner = budgets._owner(connection, parent_run_id)
+            if owner is None:
+                raise _invalid()
+            for record in records:
+                budgets._initialize_run_in_transaction(
+                    connection, record.binding.child_run_id, owner[1], parent_run_id=parent_run_id
+                )
             return graph
 
     def _validate_seed(
@@ -1512,63 +1526,67 @@ class SqliteGraphStore:
     @_boundary
     def request_cancel(self, parent_run_id: str, *, expected_revision: int) -> GraphSnapshot:
         with self._transaction() as connection:
-            graph = self._get(connection, parent_run_id)
-            if graph is None:
-                raise _invalid()
-            self._revision(graph.revision, expected_revision)
-            if graph.cancel_requested_at is not None:
-                return graph
-            now = self.clock.now()
-            nodes: list[GraphNodeRecord] = []
-            for node in graph.nodes:
-                child = self._run(connection, node.binding.child_run_id)
-                if child.status not in _TERMINAL_RUNS:
-                    cancelled = child.model_copy(
-                        update={"status": RunStatus.CANCELLED, "updated_at": now}
-                    )
-                    connection.execute(
-                        "UPDATE runs SET status=?,data_json=? WHERE run_id=?",
-                        (
-                            cancelled.status.value,
-                            cancelled.model_dump_json(),
-                            child.run_id,
-                        ),
-                    )
-                    self._event(
-                        connection, cancelled, "run.cancelled", {"parent_run_id": parent_run_id}
-                    )
-                if node.status not in _TERMINAL_NODES:
-                    node = self._validated(
-                        GraphNodeRecord,
-                        node.model_copy(
-                            update={
-                                "status": GraphNodeStatus.CANCELLED,
-                                "revision": node.revision + 1,
-                                "finished_at": now,
-                                "updated_at": now,
-                            }
-                        ),
-                    )
-                    self._save_node(connection, node, "graph.node_cancelled")
-                nodes.append(node)
-            if graph.driver_claim is not None:
-                connection.execute(
-                    "UPDATE fleet_graph_driver_claims SET status='cancelled',released_at=? "
-                    "WHERE claim_id=?",
-                    (now.isoformat(), graph.driver_claim.claim_id),
-                )
-            updated = self._validated(
-                GraphSnapshot,
-                graph.model_copy(
-                    update={
-                        "nodes": tuple(nodes),
-                        "driver_claim": None,
-                        "cancel_requested_at": now,
-                        "status": GraphStatus.CANCELLED,
-                        "revision": graph.revision + 1,
-                        "updated_at": now,
-                    }
-                ),
+            return self._request_cancel_in_transaction(
+                connection, parent_run_id, expected_revision=expected_revision
             )
-            self._save_graph(connection, updated, "graph.cancel_requested")
-            return updated
+
+    def _request_cancel_in_transaction(
+        self, connection: sqlite3.Connection, parent_run_id: str, *, expected_revision: int
+    ) -> GraphSnapshot:
+        """Reuse exact graph fencing inside a reviewed conversation transaction."""
+        graph = self._get(connection, parent_run_id)
+        if graph is None:
+            raise _invalid()
+        self._revision(graph.revision, expected_revision)
+        if graph.cancel_requested_at is not None:
+            return graph
+        now = self.clock.now()
+        nodes: list[GraphNodeRecord] = []
+        for node in graph.nodes:
+            child = self._run(connection, node.binding.child_run_id)
+            if child.status not in _TERMINAL_RUNS:
+                cancelled = child.model_copy(
+                    update={"status": RunStatus.CANCELLED, "updated_at": now}
+                )
+                connection.execute(
+                    "UPDATE runs SET status=?,data_json=? WHERE run_id=?",
+                    (cancelled.status.value, cancelled.model_dump_json(), child.run_id),
+                )
+                self._event(
+                    connection, cancelled, "run.cancelled", {"parent_run_id": parent_run_id}
+                )
+            if node.status not in _TERMINAL_NODES:
+                node = self._validated(
+                    GraphNodeRecord,
+                    node.model_copy(
+                        update={
+                            "status": GraphNodeStatus.CANCELLED,
+                            "revision": node.revision + 1,
+                            "finished_at": now,
+                            "updated_at": now,
+                        }
+                    ),
+                )
+                self._save_node(connection, node, "graph.node_cancelled")
+            nodes.append(node)
+        if graph.driver_claim is not None:
+            connection.execute(
+                "UPDATE fleet_graph_driver_claims SET status='cancelled',released_at=? "
+                "WHERE claim_id=?",
+                (now.isoformat(), graph.driver_claim.claim_id),
+            )
+        updated = self._validated(
+            GraphSnapshot,
+            graph.model_copy(
+                update={
+                    "nodes": tuple(nodes),
+                    "driver_claim": None,
+                    "cancel_requested_at": now,
+                    "status": GraphStatus.CANCELLED,
+                    "revision": graph.revision + 1,
+                    "updated_at": now,
+                }
+            ),
+        )
+        self._save_graph(connection, updated, "graph.cancel_requested")
+        return updated
