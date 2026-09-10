@@ -23,7 +23,7 @@ into tracked files. Keep all old failures under their original identities.
 
 ## Current repository state
 
-Branch `codex/s1-s3-verified-foundations` and PR7 head are `2eb44d8`;
+Initial snapshot: branch `codex/s1-s3-verified-foundations` and PR7 head were `2eb44d8`;
 main is `3fb0971`. There are sixteen existing foundation commits and thirty
 accepted dirty/untracked paths. The index is empty. Live GitHub readback finds
 PR7 OPEN/draft/MERGEABLE/CLEAN, no required checks on main, and zero Actions runs
@@ -112,15 +112,32 @@ and reassess its acceptance rather than reusing the old freeze.
   its plan and ADR) and read-scope `e522c93` (10 source/test files and its plan).
   Index membership matched each declared set before commit; staged whitespace
   checks passed. No production source was edited during delivery.
-- [ ] Documentation commit, push and remote PR head readback.
-- [ ] Exact-head merge and local/remote main alignment.
-- [ ] Final delivery documentation and progress/limitations summary.
+- [x] Documentation `ccf1f288386b6505aeae72091ab0fc180efda0d1` committed;
+  normal branch push original parent67709 exited0. Remote PR head readback
+  matched exactly, with unchanged main3fb0971. PR title/body updated to current
+  accepted evidence and remaining limitations, then marked ready.
+- [x] Exact-head merge exited0; GitHub reports PR7 MERGED at2026-09-10 04:03:03UTC,
+  merge `cea291098780f39e9d985cea0b77a5687f7fda3f`. Remote main and local
+  fast-forwarded main match that commit; merge and accepted head trees are both
+  `ca7e54cfc84c9e3e5dd40d601b1008e9dec891a3`. All546 frozen source hashes still
+  match. Exact head and merge Actions queries returned total_count0/runs[].
+- [x] Final README and parent-plan merge/status wording updated. Post-merge
+  existing distribution test exited0 (original result e0be9a):1 passed/2.57s,
+  checking the actual final README, wheel/sdist and installed-wheel smoke.
+  Same cleared/offline environment and opt-ins as pre-merge; new private paths
+  are `postmerge-fixtures`, `postmerge.xml` and `postmerge-cache` under the
+  existing delivery evidence directory. No expensive or paid gate was repeated.
+  Whitespace and all546 frozen source hashes passed afterward. This plan is
+  outside the package and its result-only update does not change checked archives.
+  The result-only documentation commit is delivered separately on main; its exact
+  remote ref/tree and Actions state must be read back before the final user handoff.
 
 ## Discoveries
 
-- PR7 still describes the predecessor30b8 live failure and excludes Session/read-scope.
-  Its draft-only gate was based on older scope; the owner now explicitly requests
+- Initially PR7 described the predecessor30b8 live failure and excluded Session/read-scope.
+  Its draft-only gate was based on older scope; the owner explicitly requested
   merging the currently verified foundation while reporting unfinished OKRs.
+  The updated PR now records the actual accepted current-source live canary.
 - The current paid canary passed, but only tests zero division. Other providers,
   mixed Harnesses, cold starts and campaign outcomes remain separately unverified.
 
@@ -133,7 +150,10 @@ and reassess its acceptance rather than reusing the old freeze.
 
 ## Outcomes
 
-Pending actual GitHub merge and final readback. No remote mutation or delivery
-success is implied by this plan. The original-DB outcome writer remains NOT_GO;
+PR7 is merged and the GitHub/local tree identity is verified above. Final result
+documentation's post-merge distribution check passed1/2.57s; no source or dependency was changed
+and no new provider/Docker execution occurred during delivery. All new Git
+messages retain `[skip ci]`; no workflow dispatch, protection bypass, force push
+or branch deletion was used. The original-DB outcome writer remains NOT_GO;
 Provider/Harness campaigns, broader Session/coldstart, Dashboard expansion,
 connectors and project Memory/evolution are not completed by this delivery.

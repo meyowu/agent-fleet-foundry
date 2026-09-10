@@ -1356,6 +1356,14 @@ First slice has no migrations or external effects; rollback is only its exact re
 
 ## Progress
 
+- [x] (2026-09-10 04:03:03 UTC GitHub delivery) Session `ecb668b`, read-scope
+  `e522c93` and evidence docs `ccf1f28` were pushed; PR7 was updated, marked ready
+  and merged with an exact-head guard as `cea291098780f39e9d985cea0b77a5687f7fda3f`.
+  GitHub MERGED readback and merge/head tree equality passed; local main was
+  fast-forwarded. All546 frozen source/dependency hashes still match61e79cba.
+  Exact head/merge Actions queries returned zero runs; no CI/protection changes,
+  paid calls or feature work. Final documentation delivery and package details
+  are maintained in the dedicated delivery plan; whole S1–S3 remains incomplete.
 - [x] (2026-09-10 subsequent owner request) The owner explicitly requests GitHub
   merge of this development round and a progress/remaining-work report. Delivery
   resumes under `.agent/plans/2026-09-10-verified-foundations-merge.md` only:
@@ -2214,6 +2222,14 @@ support a separately written archive execution release.
 
 ## Outcomes
 
+Subsequent owner-authorized GitHub delivery (2026-09-10 04:03:03UTC): PR7 is
+MERGED as `cea2910`, including the accepted Session/read-scope slices and result
+documentation. Local/remote merge trees equal the accepted head `ccf1f28`.
+Fresh delivery statics and offline distribution1/2.53s passed; exact source546
+still matches the full-suite/live acceptance. The dedicated delivery plan records
+post-merge documentation/package checks. This changes delivery status only:
+all remaining S1–S3 limitations below continue to apply.
+
 Final bounded closeout (2026-09-10): current546/source61e79cba passes the full
 4093/23 default matrix, six statics, Docker29, installed3, one warm model-free
 physical Session, final pre-live archive1 and now the actual nano/PydanticAI
@@ -2226,8 +2242,8 @@ This is the user's requested stopping point, not completion of every S1–S3 KR.
 S1 original-DB terminal writes remain disabled/NOT_GO; external campaigns, Node/
 coldstart, broader Session, new-provider and mixed-Harness live qualification
 remain unfinished. Codex/Claude native adapters remain NOT_ADMITTED. Current
-Session11/read-scope10 and result documentation remain uncommitted/unpushed;
-earlier draft PR7/head2eb44d8 is not newly merged or changed by this closeout.
+Session11/read-scope10 and result documentation were still uncommitted/unpushed
+at that closeout; the newer explicitly authorized delivery is recorded above.
 
 Pre-live working-state update (2026-09-10 02:53 UTC): root integrated the independently
 accepted Session-baseline11 and read-scope10 slices; main is546/source61e79cba.

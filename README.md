@@ -12,12 +12,15 @@ The Session-first release adds a foreground session entry, exact in-session revi
 
 ## S1–S3 development status — 2026-09-10 UTC
 
-Delivery scope: the owner has requested merging this verified foundation through
-[PR7](https://github.com/meyowu/agent-fleet-codex-kit/pull/7), with unfinished OKRs
-explicitly retained. The prior stop remains in force for new feature work and
-paid calls; only GitHub delivery and local verification resume. See the
-[delivery ExecPlan](.agent/plans/2026-09-10-verified-foundations-merge.md) for actual
-commit/merge readback, rather than treating historical draft status as current.
+**Merged to main:** [PR7](https://github.com/meyowu/agent-fleet-codex-kit/pull/7)
+merged at2026-09-10 04:03:03UTC as `cea291098780f39e9d985cea0b77a5687f7fda3f`.
+GitHub's merge tree exactly equals the accepted PR head `ccf1f28`; local main
+fast-forwarded to that merge. Session `ecb668b`, read-scope `e522c93` and evidence
+documentation `ccf1f28` are included. This delivers the verified foundation, not
+all S1–S3 OKRs. All new commits use `[skip ci]`; exact head/merge Actions readback
+returned zero runs, so no fresh remote CI success is claimed. The stop remains in
+force for feature work and paid calls. Final documentation/package and remote
+readbacks are recorded in the [delivery ExecPlan](.agent/plans/2026-09-10-verified-foundations-merge.md).
 
 Current tested working source is `61e79cba` (546 source/dependency inputs),
 including the eleven-file Session-baseline slice and ten-file read-scope slice.
@@ -33,14 +36,16 @@ reconciled; this is **not completion of all S1–S3 OKRs**.
 | Model-free physical Session | One complete six-phase journey independently passed | Three actual business tests, two read-only filesystem probes, actual `/baseline show` and exact container/worktree cleanup; warm Python baseline observation only. |
 | Final pre-live archives | 1 passed/2.60s; independent archive readback passed | Current source and all 60 final input documents held; wheel/sdist contents, import origins and 9837 runtime files checked. These archives precede this post-live result wording. |
 | Real-model CLI E2E | 1 passed/77.00s; independent original-evidence audit passed | One `openai:gpt-5-nano` / PydanticAI / Docker CoS → Engineer → Verifier canary; no automatic repeat or target patch application. |
+| GitHub delivery refresh | Six static checks passed; pre-merge distribution1 passed/2.53s | Ruff format463 files, lint, mypy390 files,115 schemas, offline99-package lock and whitespace; wheel/sdist plus installed-wheel smoke using existing dependencies, not another fresh dependency install. |
 
 Each gate binds its own frozen inputs. The default, Docker and installation
 gates held the source and29 pre-result public documents unchanged.
 The installation result binds the pre-result README/guide; refreshed pre-live
 documentation and archive verification subsequently passed. After the live audit
-released the document hold, this result wording was updated without rebuilding
-those archives. No source or dependency changed; packaging this final wording is
-deferred under the user's instruction to stop after the real-model E2E test.
+released the document hold, result wording changed. The later owner-authorized
+GitHub delivery refreshed static and offline package checks; final post-merge
+documentation/package results are recorded in the delivery plan. No source or
+dependency changed, and no new provider or Docker execution was performed for delivery.
 Exact commands, original timings, hashes and failure history are in the
 [S1–S3 ExecPlan](.agent/plans/2026-09-09-s1-s3-system-development.md) and
 [Session-baseline plan](.agent/plans/2026-09-09-session-business-baseline.md).
@@ -63,9 +68,9 @@ Latest full-suite checkpoint:
 The latest bounded paid model attempt passed at03:37:39UTC and its independent
 audit passed at03:43:42UTC, as detailed below. S1 original-database terminal writes remain disabled/NOT_GO;
 external campaign, other-provider live, coldstart and broader Session/Harness
-acceptance remain incomplete. No automatic paid retry or merge follows from the
-local passes. This development turn is stopped after the requested E2E and
-evidence reconciliation; no subsequent feature work or Git delivery is implied.
+acceptance remain incomplete. Local passes did not authorize an automatic paid
+retry or merge. The subsequent explicit owner request authorized only GitHub
+delivery; its actual merged status is recorded above. Feature work remains stopped.
 
 The preceding fully tested checkpoint is `30b8f476` (543 source/dependency inputs).
 Its full default matrix passed22:32:07UTC:3966 passed,23 optional skips and3989
@@ -94,12 +99,12 @@ budgets remain unchanged. The current30b8 paid regression tested this guidance
 and still failed on an out-of-scope read; prompt guidance is not reliable scope
 selection by itself. Guidance commit `fd958db` and baseline commit `8fdf7eb`
 were pushed with documentation commit `2eb44d8` to draft PR7. Readback confirmed
-its exact head, no branch Actions runs and unchanged main `3fb0971`; it is not
-merged. The newer working-tree Session and read-scope slices have not been
-committed or pushed.
+its exact head, no branch Actions runs and unchanged main `3fb0971`; it was not
+merged at that checkpoint. The then-uncommitted Session/read-scope slices have
+since been committed, pushed and merged as recorded above.
 The diagnostic and configuration-warning corrections are commits `8afffe7`
 and `864ad43`. Those and strict-output commit `a4952dd` are pushed to the development
-branch; draft PR7 remains open and unmerged. The target-bound CoS hash correction
+branch and were still in an open draft PR7 at that checkpoint. The target-bound CoS hash correction
 is commit `584c551`, with a fresh passing whole offline suite and independent
 component/pre-key package acceptance; its latest live regression failed. Exact
 result-document packaging and GitHub readback are recorded in the living plan.
@@ -124,8 +129,9 @@ Source546,all60 input documents and9837 dependency files did not drift.
 Only the zero-divisor behavior was tested; the ordinary nonzero branch was not
 separately tested, despite the model's broader narrative. Docker's documented
 isolation limits remain. Earlier failures below are retained, not relabeled.
-No additional paid attempt,model upgrade,permission relaxation,commit,push or
-merge follows. The one-test stop requested by the user is now honored.
+No additional paid attempt,model upgrade or permission relaxation followed.
+The one-test stop was honored; subsequent commit/push/merge occurred only after
+the owner's separate delivery request.
 
 **Previous live regression did not pass (23:35:50 UTC).** On predecessor `30b8f476`,
 one bounded `openai:gpt-5-nano` / PydanticAI / Docker CLI attempt completed CoS
