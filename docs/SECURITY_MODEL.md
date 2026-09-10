@@ -42,8 +42,10 @@ availability limitation, not weaker redaction or permission to use another key.
 
 ### Reviewed model-free baseline boundary
 
-The independently reviewed baseline is integrated into the working candidate, not yet a
-physical-Docker acceptance claim. See [ADR0011](adr/0011-reviewed-model-free-business-baselines.md)
+The independently reviewed baseline is integrated into the working candidate.
+Its narrow physical standalone fixture and Session/offline qualifications are
+separate; see README for exact results, not a general physical-Docker claim.
+See [ADR0011](adr/0011-reviewed-model-free-business-baselines.md)
 and its living ExecPlan. It observes one configured command under explicit user
 allow-once consent, through the existing Broker/Gateway/resource/sandbox boundary;
 it is never a model tool or a fabricated agent Run. Distinct immutable owner,
@@ -75,6 +77,19 @@ ceilings. Application guards do not exclude hostile same-user processes or prove
 atomic host filesystem snapshots. Standalone baseline composition and the existing
 Session credential/redaction lifecycle are separate; no whole-Session credential-
 free guarantee follows from the standalone path.
+
+The Session route adds no model capability. Confirmation only authorizes; explicit
+run consumes the exact grant after checking current conversation/repository/revision
+and local generation in one existing transaction. The injected local validator is
+trusted, synchronous RAM-only code; callback reentry into baseline transactions
+fails closed. It does not grant filesystem/SQL authority to a model callback.
+The original review expiry cannot be extended by a Session code, and a consumed
+code cannot fall through to ordinary history. Process-local notification is only
+UI routing, never a substitute for durable claim admission. Rejected baseline
+entry preserves ordinary Run cancellation; admitted work retains independent
+baseline cleanup through repeated cancellation/EOF. Unknown results stay spent,
+and restart cannot restore confirmation authority. The no-additional-secret or
+runtime-access claim starts after ordinary Session selection, not process startup.
 
 ### Persistent conversation invariants
 
@@ -301,6 +316,19 @@ The simulated approval fixture always asks. Local-unsafe command execution also 
 A runtime may propose a typed action using the tool catalog. In Phase 3, `GatewayRuntimeToolCatalog` constructs trusted principal/stage/workspace/provider identity, validates exact supported logical resource shapes, and asks ToolGateway and PermissionBroker. After authorization, bounded list/read/search/write/edit/delete operations use descriptor-relative no-follow filesystem primitives, diff remains a trusted repository operation, and exact reviewed command IDs resolve server-side to structured no-shell execution through the selected sandbox. Fake commands and the approval fixture remain simulated; local-unsafe requires its separate high-risk confirmation; only Docker can supply isolated evidence. The PydanticAI adapter exposes the catalog through its external-tool transport but cannot replace it with native shell, filesystem, code-execution, MCP, hosted, or arbitrary network tools. Built-in runtime modules must not import concrete repository or sandbox implementations or perform filesystem/subprocess side effects. A verifier mutation test submits a forbidden intent and proves denial, not mutate a host path directly.
 
 The runtime registry performs exact adapter selection and typed capability checks with no fallback. PydanticAI admits `openai:<model>`, `openai-chat:<model>`, `anthropic:<model>` and `google:<model>`; OpenAI Agents SDK and LangGraph admit only `openai:<model>`. Other prefixes fail before credential resolution or network. Actual-SDK offline acceptance does not imply provider or Harness live qualification: only the bounded historical OpenAI/PydanticAI canary has that proof. CoS receives no execution tools; Engineer and Verifier receive only their stage-bound catalog. Fleet-owned instructions, tool definitions, output schemas, and bounded dynamic context are registered-secret scanned before model invocation. Complete new provider messages are scanned before any deferred tool, and the SDK-serialized body is scanned at the last request hook before send. Model output, usage, and provider metadata are bounded and projected into project-owned types before they cross the adapter boundary.
+
+Read-path patterns are conservative model guidance, not permissions. Raw immutable
+scope strings are registered-secret checked before encoding; unsupported, broad,
+noncanonical or sensitive inputs fall back to the generic schema. Fresh definitions
+prevent caller mutation from poisoning the next catalog. LangGraph repeats its
+synchronous preparation after registering the selected key, preserving pre-key
+rejection and detecting secrets from raw provenance rather than relying on an
+encoded-pattern scan. This qualification covers selected-key construction, not
+arbitrary different keys registered later between awaited requests. Anthropic's
+strict wire adapter moves pattern constraints into descriptions; PydanticAI's
+external-tool path does not locally enforce this pattern. The Broker remains
+authoritative. LangGraph may reject an invalid path earlier as tool_arguments,
+before a Broker intent exists; this is not the same audit event as Broker DENY.
 
 The shared pure invocation-admission guard also checks the actual selected adapter,
 trusted execution kind and declared invocation capabilities before any shipped

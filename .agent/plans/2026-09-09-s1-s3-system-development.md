@@ -1356,6 +1356,418 @@ First slice has no migrations or external effects; rollback is only its exact re
 
 ## Progress
 
+- [x] (2026-09-10 subsequent owner request) The owner explicitly requests GitHub
+  merge of this development round and a progress/remaining-work report. Delivery
+  resumes under `.agent/plans/2026-09-10-verified-foundations-merge.md` only:
+  unchanged source61e79cba, scoped small commits, current-document verification,
+  exact-head PR7 merge and remote readback. No new feature/paid work is authorized
+  by this narrow resumption; all unfinished S1–S3 KRs remain unfinished. Earlier
+  stop/draft/no-merge entries are historical, not a veto of this newer request.
+- [x] (2026-09-10 03:43:42 UTC final bounded acceptance) The current real-model
+  E2E passed and its original evidence was independently accepted. One public
+  `scripts/run_live_canary.py --run --output <private-attempt> --image
+  agent-fleet-runner:0.1.0-py314-v1` invocation selected the existing
+  `tests/live/test_provider_smoke.py::test_live_provider_cli_cos_engineer_verifier_canary`.
+  Original PTY11760/launcher55193 exited0, pytest1 passed/77.00s, launcher78.662s,
+  started03:36:20.959171UTC and finished03:37:39.621216UTC; normal stop, no diagnostics.
+  Private combined-canary-receiver.l7Nprz retains release
+  d1f5de742995f7152daa7147e56cc7a12ecc2c815a10d91cbfd889d02c7b09b2,
+  receiver-resultbfbdf241, summaryb5963d4e and canary-evidence8043ef29.
+  Real run_af9ed5228b5249568518ba84ee0dd1fa / task_5d3f3b08747c4f02a9d67b373b639bf6
+  completed CoS, Engineer and Verifier with strict structured verdict/pass,
+  ready_for_review, CompletionGate true and no proof gaps. Both live Docker
+  `python -m pytest` commands exited0 against canonical minimal two-line guard
+  patch11c4bbdd87dabff7d9f98d68c7e5c20642d00ba26c68e1b192eef60873629ac5.
+  No target application, repair iteration or automatic whole-test repeat occurred.
+  Eight requests:32870 input+9093 output=41963 tokens (CoS2/15287,
+  Engineer4/17236,Verifier2/9440); four tools,66.682625 active seconds,
+  zero unknown/outstanding/reserved requests/tokens and unknown monetary cost.
+  Independent combined-live-audit.yhIn3o original read-only audit exited0/4.418007333s,
+  verification-pass
+  a9681755a782cb6ba615c951d33d127dd305036c9e8dcdc2c61e5fe761fee3b6,
+  original-tool-receiptf471b081. It reconciled46 actual Artifact bindings,
+  118 live+91 distinct Fake-bootstrap events, eight raw request rows,12 released
+  leases,four absent worktree paths/four exact native IDs, empty installation
+  scope and receiver/launcher PIDs. Eleven read-only native/Git/PID probes,
+  source546/runtime9837/documents60 and original152 fixture files remain unchanged.
+  Audit released the documentation hold. Root now records the result and stops;
+  no further feature work, model requests, commit, push or merge in this turn.
+- [x] (2026-09-10 03:32:44 UTC receiver prerequisite) Fresh key-free receiver
+  l7Nprz revision002 passed149 independent controls, including all97 historical
+  identities and26 byte-identical synthetic terminal controls. Receipt3037fbc2,
+  seal9046bec6 bind receiver7490dc40, prerequisitesbd7a1079 and contracta50e4276.
+  The earlier746e2878 revision remains pre-execution FAIL: system Python3.9.6
+  cannot execute the new zip strict keyword. Root authorized only its removal;
+  both lists remain exactly six entries. No model request occurred for that
+  preparation failure. Hidden input, one-use marker, launcher, budgets, endpoint,
+  permission and shutdown behavior were unchanged. Root read all final files,
+  actual thirteen gates and independent review before creating the300s release.
+- [x] (2026-09-10 03:18:00 UTC final pre-live archives) E9r1xF original archive
+  pytest parent54239 exited0,1 passed/2.60s, wrapper4.685s; root session96640
+  terminal0. Raw7f7c6caa, parent93e42807, manifestbf56ef90 and releasee1f759cc
+  bind current source61e79cba and all60 final input documents. Wheel862bb40b
+  and sdist60310d1e contain332 package/guide files,115 schemas and13 migrations.
+  Independent jEKmz0 original readback exited0/1.884133s, verdict0203fb88,
+  seal3c130bf8; original imports/snapshot/runtime9837/fixture bookkeeping/cache
+  and complete document inventory agree. Final input-document attestationf4e741ec
+  binds these actual archives. They intentionally precede the post-live result
+  wording recorded after the current audit; no post-live archive rebuild is claimed.
+- [x] (2026-09-10 03:16 UTC scope update) User directs this turn to stop after
+  the current bounded real-model end-to-end test and evidence/cleanup readback,
+  then summarize development progress. No further feature work, commit, push or
+  merge is authorized as continuation of this turn; no automatic paid retry.
+  The broader S1–S3 goal remains incomplete and is not relabeled complete.
+- [x] (2026-09-10 03:15 UTC root read) Fixture/cache-only archive successor
+  E9r1xF is independently accepted: Rc4Ulo verdict2ca2c36f9c45d557dd551f253aedbd267ea0f3a4074b5ad007bf6878d2d85cd3,
+  seal049d34a9a1f423458d1ed2b3ae0a4401f7441502fcc1a00c7d0030e471097987.
+  Original138 enumerated stdlib controls all passed/exit0, no test/native child.
+  Root fully read delta/HANDOFF and exact raw hashes: helper9c34eeef1bc2ee1ca802d7382ec595613504a61ee6d86f8b20dd7de71ac9f15b,
+  bundle7183be4095bf4406af68fb562f25b06fc2b2104e73412f1d935d15f9f356e90d.
+  Strict source/runtime/snapshot checks remain; only exact pytest bookkeeping and
+  external cache are separately observed. Earlier rejected/preparation histories
+  stay unchanged. Root now freezes all Git-listed root/.agent/docs Markdown for
+  one final archive and one subsequently qualified nano canary. Any new terminal
+  results are held in exclusive private receipts until post-test documentation;
+  no source or frozen-document edit may silently escape the pre/post checks.
+
+- [x] (2026-09-10 03:05 UTC) After installed independent seal626d9890 and
+  explicit public-document hold release, root refreshed README with the exact
+  current matrix/static/Docker/installed/physical-Session results and their
+  separate limits. CONFIG now precisely names PydanticAI's OpenAI wire paths,
+  retaining Anthropic description-only and local-Broker distinctions. Historical
+  failures remain; latest live still FAIL, no new request/commit/push/merge.
+  First multi-file documentation patch rejected an unmatched plan context before
+  any writes; verified no partial edits and applied the corrected patch once.
+  Diff whitespace check0; long project-key-pattern search over source/tests/
+  scripts/README/docs/plans returned no matches without exposing any values.
+
+### Combined-source one-canary receiver contract — before preparation
+
+After accepting combined546/61e79cba default4093+23/4116, all six statics,
+Docker29 and installed3 with their independent receipts, root permits key-free
+preparation of one NEW private receiver sibling. This preparation may overlap
+final archive-helper qualification; unknown final archive/document/review hashes
+stay null blockers, never fabricated PASS. Actual release, credential acquisition
+and paid execution remain prohibited until all thirteen current gates, final full
+Markdown map/runtime/archives and fresh independent receiver acceptance exist.
+This explicit scheduling amendment supersedes the preparation report's stricter
+sequential order only for file preparation; it grants no request or retry.
+
+Preserve spent8l4T1I and its latest live FAIL unchanged. Start from receivera5bb3e,
+retaining the entire hidden-input/restore protocol, one durable spent marker,
+one launcher dispatch, deadline/owned shutdown, output projection and key boundary.
+Only source count/digest, concrete receipt bindings and known receipt validation
+may change:546/61e,4093passed+23skipped/4116exactidentities, current optional
+terminal/identity fields, all six static commands, and actual final archive's full
+Git-listed root/.agent/docs Markdown map instead of the old two-document subset.
+Enforce strict integer exits/PIDs/counts/totals (not bool/float), zero failures,
+no timeout/unknown/missing/extra/duplicates/drift and actual independent bindings.
+All13 named gates remain required. No generic hashed-PASS substitute. Final-doc
+and receiver-review bodies retain explicit reviewed operator-attestation semantics
+unless their actual known schemas are separately validated and documented.
+
+Keep public launcher6e5cc32a unchanged, nano/public endpoint, root/profile budgets,
+retry policy,950/900-second deadlines, fixed Docker tuple, no target apply or
+automatic retry. No ambient credential read, TTY/receiver import or execution,
+test/install/native/model operation during Writer preparation. Writer owns only
+its new private files and retained revisions; main/frozen evidence stays untouched.
+Root reads full delta/three-file contract; a different independent verifier must
+rebase the historical97 named controls without discarding the26 unchanged terminal
+controls, using actual current gate receipts as positives only after they exist.
+Any unavoidable schema/control delta must be explicit. These selected-function
+controls are not PTY/process/native E2E or actual paid acceptance. Preserve every
+failed revision and disclose the original audit's limited function coverage.
+
+- [x] (2026-09-10 02:59:43.901098 UTC) Combined61e installed gate original
+  root46797 exited0:3 passed/253.29s pytest/255.316s wrapper, no timeout,
+  gaps/duplicates/source/public29 or pinned-native-binding drift. Exact raw
+  036b9e0ab8d3f13d35e0348acee9e42624081edc6d56c574a7a56cc19b1d0216;
+  public documentation freeze02aa08135357076f25f61272cf6f7607560ed710678f851e8c25f277af6c1233.
+  Corrected NSc9O6 independent original audit/finalizer exited0/0 at03:01:24UTC,
+  verification8402821b922ad6d7fb9a740d9d0e86efc76ff2903b3f831516b7d092f0555cab:
+  six original archives/three installed environments,332 runtime+guide files,
+  115schemas/13migrations,95 locked wheels,54 released leases/18 absent paths,
+  215 Artifact bindings/ten CompletionGate evaluations and20 expected CLI refusals.
+  Sixty empty baseline-table observations across six DBs do not prove a baseline
+  workflow ran. All29 docs are source-freeze inputs; only configured shipped
+  README/guide/src/pyproject members are archive-byte checked. No new model call,
+  install/test replay or native mutation by the independent auditor.
+
+### Private archive fixture-bookkeeping correction contract — before edits
+
+At02:59UTC independent source review found that zwYiXS strict recursive fixture
+inventory rejects pytest9.1.1's normal `test_wheel_and_sdist_ship_runtcurrent`
+symlink. The pinned `_pytest/pathlib.py` creates that link to its numbered fixture;
+the unchanged historical original test fixture confirms the exact absolute target.
+No archive stage ran. Retain zwYiXS/JTq42f narrow validator PASS and this newly
+discovered execution blocker; do not relabel preparation as actual archive PASS.
+
+One private Writer may create a new sibling based on zwYiXS, changing only archive
+fixture enumeration plus direct tests, normal path/hash bindings and contract.
+Keep source/runtime/snapshot `tree_inventory` strict and unchanged. A new bounded
+fixture helper must require the basetemp root's exact single real numbered fixture
+`test_wheel_and_sdist_ship_runt0`, optionally its exact `...runtcurrent` symlink
+whose raw absolute target is that same real sibling, and no other entries. The
+link is recorded as pytest bookkeeping, never traversed or counted as an archive.
+Reject missing/foreign/malformed/additional entries, outside/relative/wrong links,
+symlinked real fixture and nested symlinks. Enumerate only the real directory using
+unchanged strict inventory, preserving its root-relative archive names. Recheck
+the bounded root/link identity after enumeration. No blanket symlink exclusion,
+new target authority, cleanup or product/test/plugin/process/numeric-gate change.
+
+Use only private stdlib filesystem controls for ordinary real-directory+exact-link
+and negative cases, plus original108 pure controls/static checks; no pytest/native/
+model/archive stage. Root full narrow delta read and fresh independent actual
+fixture-shape control are required before any separate release. jEKmz0 final
+archive auditor must bind the eventual accepted sibling, not silently follow a
+changed frozen zwYiXS bundle. Existing full/Docker/installed gates stay unchanged.
+
+Before successor freeze, root additionally verified the retained rR245B candidate
+contains pytest's ordinary `.pytest_cache`; unchanged pyproject/plugin do not
+redirect it. Therefore strict full snapshot equality would also reject a normal
+successful test. Extend only this private contract: add explicit pytest
+`-o cache_dir=<new-private-root>/pytest-cache` to the same one-test argv and add
+that exact external output to fresh-absence checks. Keep the candidate/source
+membership checks strict, original test/plugin unchanged, and record the separate
+cache directory/bytes as non-product test bookkeeping. Do not delete/ignore files
+inside the candidate or alter the real test. Add exact-argv/path and fresh-cache
+controls; preserve this read-only discovery, not an invented executed failure.
+
+- [x] (2026-09-10 02:54:58.693835 UTC) Combined61e Docker optional original
+  root58221 exited0:29 passed/212.23s pytest/214.454s wrapper; no timeout,
+  source/public29 or pinned daemon/image/endpoint drift. Raw9a7d1799bd33e2acbdad21139cce99bbd5775274c03f1b87cd426ec87b844d5a.
+  Independent ePTD1h original audit0/6.941s and finalizer0/.247s sealed
+  5c428a0e5a2fe1ed440b40ee24dbb84ad5c8922fdf1916c0d093ec386dc5806a:
+  45 DBs,41 Runs,681 Artifacts,199 leases (190 released,9 recovered),66 absent
+  paths,52 known native IDs,19 exact installation scopes and2 explicit no-handle
+  cases. Ten cases overlap default helpers;19 are actual optional Docker cases.
+  No model call or independent test replay. Installed3 original46797 began
+  02:55:28UTC using the95-wheel offline closure and unchanged source/public29.
+- [x] (2026-09-10 02:56 UTC root read) Frozen archive successor zwYiXS passes
+  fresh independent JTq42f pre-execution review84fc1192d6bea641ff55b6a0ac5d10d63080a17aaa51c42b15ad5bad6ef198ca.
+  Original six numerical counterexamples reject and genuine seven-field receipt
+  projection accepts;108 distinct enumerated controls (147 executions including
+  overlap), original exit0. AST delta contains only the three released validators
+  and two numeric helpers; original controls/process/plugin and predecessor remain
+  unchanged. This is preparation acceptance only; no archive stage was dispatched.
+
+- [x] (2026-09-10 02:45:47.899405 UTC) Combined main546/61e79cba default
+  matrix completed with4093 passed,23 optional skips,4116 exact unique collected
+  identities; zero failed/errors/missing/extra/duplicates, code or public-document
+  drift. Original root wrapper20071 exited0. Default-other3333passed+23skips
+  /832.13s pytest/835.447s wrapper; isolated cancellation1passed/7.90s/9.94s
+  ran after all other groups. Total39 warnings. Raw receipt5eedeb85f1dd9d4f47945e05dda1e36b51163d0bdc51cf0b9e339f53c5d2b71c.
+  CQfxc3 independent original readback exited0/0.247986s and sealed PASS
+  4788e9f772192f0a7e59cbf7e597cab87a7de9101aa67f6439607a88e2a4f3f4;
+  all six static gates and original parent/serial ordering independently agree.
+  No test replay or fixture-cleanup claim by that auditor. Docker29 original
+  optional gate began02:51:24UTC with live disabled and held source/public29.
+- [x] (2026-09-10 02:51 UTC root read) Private archive validator successor
+  zwYiXS is frozen: bundle75dbc2739aa255b48ce92e9d6c048dd32f661945a3c98a7a76c81c6372c6a6dc,
+  runnerbfb72a32d34361ff9c1fdb0400a4319ee9f9e8dd232f478b7c03aa58ac684132.
+  Root read its complete narrow delta and contract. Writer32 original+76 direct
+  controls and static checks pass; a control-only B023 revision remains retained.
+  Fresh independent replay remains required before any archive release. No stage,
+  pytest child, installation or native/model action ran for this preparation.
+
+- [x] (2026-09-10 02:40 UTC observed) All three combined integration groups
+  ended0 without timeout: group1 254passed/1178.37s pytest/1180.919s wrapper,
+  35warnings; group2 252passed/715.76s/718.156s,3warnings+serial1deselected;
+  group3 253passed/878.05s/880.376s,no warnings. These759 are disjoint group
+  identities, not final total: default-other and final isolated cancellation
+  remain running/pending. Raw per-parent receipts/JUnits/logs preserved inZvUulu.
+
+### Private archive validation successor contract — before edits, 2026-09-10
+
+Retain frozen ZpAhRW and independent68rwC6 failure unchanged; no actual archive
+was run. One private Writer may prepare one NEW sibling with the smallest repair
+to prerequisites/terminal/numeric validation and direct controls only, plus normal
+new path/hash/contract bindings. Preserve original distribution test, originplugin,
+gate_process, snapshot/source/doc/runtime ownership and all other stage predicates.
+
+The four required independent matrix input digests must be checked by required
+projection; permit the actual CQfxc3 additional provenance fields without dropping
+or rewriting them. Continue hash-binding the complete genuine independent receipt.
+This is not acceptance of arbitrary missing fields or a generic hashed PASS.
+Known raw exits, parent PIDs, test/collection/count totals and independent counts
+must be strict integers (bool/float rejected), with valid nonnegative counts,
+positive PID/collection cardinality, exact required four total keys, zero failures
+and errors, passed+skipped equal the observed unique collection. Validate per-mode
+optional counts exactly29/3 and reject negative compensated totals. Preserve all
+normal source/terminal/timeout/signal/identity requirements and raw gate meanings.
+No changing actual receipts to fit the helper; no future PASS records created.
+
+Retain/replay the original32 pure controls and add actual-seven-key-shape positive,
+missing/wrong required-binding negatives and every independent numeric
+counterexample. Run only pure non-pytest controls/static checks, no child dispatch,
+release,archive/setup/install/native/model or main edits. Retain all tested bytes
+and original outputs. Freeze new bundle/HANDOFF/delta; root fully reads and fresh
+independent reviewer reruns unchanged counterexample logic plus full pure cohort.
+Only independent preparation PASS and later actual full/optional/doc gates can
+support a separately written archive execution release.
+
+- [ ] (2026-09-10, fresh source-only S1 seam finding) Independent eV0W2w brief
+  SHA0aa7b797 (root fully read/hash-checked) confirms the exact pinned APSW
+  Python VFS has no overridable SHM methods: tagged C forwards them directly to
+  the native base, whose SHM pathname opens bypass Python xOpen. This is not a
+  complete descriptor-aware original writer. SQLite's public native VFSv2 can
+  supply the missing boundary only through new backend engineering; exclusive
+  WAL or native syscall test hooks do not satisfy the unchanged contract. No
+  state/probe/import/install/compile/test was performed. Both current terminal
+  write guards and accepted read repair remain unchanged; NOT_GO persists.
+  A future fixed-helper/native-VFS handle-and-locking design and independently
+  qualified original-transaction CAS are still required, not implied by this
+  source feasibility finding. No platform-wide impossibility is claimed.
+
+- [ ] (2026-09-10, archive preparation review before any execution) Root fully
+  read frozenZpAhRW595-line runner, contract8f98ef0d/HANDOFF9992257c and found an
+  actual receipt compatibility defect: exact-four-key independent.inputs equality
+  rejects the genuine CQfxc3 schema, which retains three additional provenance
+  fields. Original terminal() also uses coercive exit_code==0. Fresh independent
+  bounded review is checking these seams; ZpAhRW remains frozen/unreleased and no
+  archive stage was attempted. Retain32 pure passes and both earlier static
+  failures as their exact revision evidence, not final preparation acceptance.
+
+- [x] (2026-09-10 02:27:33 UTC) One actual model-free Session/Docker journey
+  on546/61e independently PASS53f97483 (sG3d6c): plan/preconfirmrefusal/confirm/
+  run/show allactual, PID15828 exit0/full73233bytes/25.982928s,3realtests+2EROFS30,
+  nine fixedDBsnapshots+currentstate and exact canonicalrecords match. Exactnative
+  andworktree absent,14targetfiles unchanged,zeroordinaryRun/model effects.
+  Earlier9jlfrb remainsfailed; not a live/coldstart/Node/whole-matrix claim.
+
+- [x] (2026-09-10 02:20:12.963300 UTC) Combined61e79cba six static gates all
+  exit0 with zero code/public-document drift: Ruff format/check, mypy src/tests
+  plus live-canary script,115-schema equality, offline lock and whitespace.
+  Original root wrapper3500 ended0; per-command PIDs/exits/timing remain in
+  ZvUulu/static-*-result.json. This is not the unfinished full default result.
+- [ ] (2026-09-10 02:20 UTC) Full matrix originalwrapper20071 is running with
+  fresh4116 exact identities: integration254/252/253,default-other3356 and the
+  unchanged serial cancellation1 scheduled only after all other parents settle.
+  Writer and independent physical synthetic parents were confirmed terminal
+  before these three pytest parents began. No source/publicdoc changes permitted.
+
+- [ ] (2026-09-10, before private final-archive successor edits) Root releases
+  preparation only of a new private archive runner to one Writer. Preserve the
+  historical rR245B runner/plugin/receipts. Rebase its source binding to546/61e79cba
+  and gate path ZvUulu; keep the original distribution test and origin plugin
+  behavior unchanged. The new runner must require actual passed matrix/static,
+  exact collection identities and independent matrix seal before execution,
+  plus all later passed Docker/installed gates and their independent seals in
+  root's explicit release. Final release documents must exactly enumerate all
+  Git-listed root/.agent/docs Markdown files; hold membership and hashes during
+  snapshot/execution/postflight, not just README/guide. Use existing isolated
+  interpreter/prepared dependencies and no network or provider. Reuse accepted
+  gate_process owned timeout/parent terminal capture; persist original parent
+  receipt before fallible postflight, retaining UNKNOWN/failure without replay.
+  Require fresh exclusive targets, regular non-symlink source ancestry and fresh
+  source/runtime inventories, exact two archives, unchanged snapshot and physical
+  import origins. Known raw result schemas must be validated; independently
+  sealed opaque receipts remain disclosed root-attested bindings, never a generic
+  hashed PASS. Preserve failed receipts and all original bytes. Writer owns only
+  new private preparation and pure-control files, no main edits/releases/archive
+  test/setup/install/native/model execution; no pytest parent while matrix owns3.
+  Root full delta read and fresh bounded independent review precede any release.
+
+- [x] (2026-09-10 02:10:20 UTC) Exact read-scope10 integration passed root's
+  before/after guards, producing546/61e79cba from938589, retaining Session11,
+  all536 other source inputs and9837 inventoried runtime files. Actual spent
+  physical9jlfrb has independent FAILED_JOURNEY sealb94d9dc8: three real tests,
+  two EROFS probes and exact cleanup pass, but private oracle stopped before show.
+  Current snapshot digest is correct; no production fix or replay is authorized.
+- [ ] (2026-09-10 02:14 UTC) Combined source546/61e79cba and all29 README/docs
+  inputs are explicitly frozen by ZvUulu/qualification-release.json. The full
+  matrix/static start waits only for the independent private physical synthetic
+  parent to settle, preserving the global three-pytest-parent limit. Root read
+  complete oracle-only z7zFWN delta/contract/HANDOFF and hash-checked bundle32fb5e51,
+  runnera30168dc, unchangedprotocol439301bd and test79534c5d. Writer67 passed3.41s
+  (3.787033708s wrapper), Ruff/format0; fresh independent acceptance precedes
+  any physical prepare/execute stage. No new model request or product test result
+  is inferred from private controls. GitHub readback still shows PR7 OPEN/draft,
+  head2eb44d8 and no checks; newer slices are not pushed or merged.
+
+- [x] (2026-09-10, private main-gate preparation) Independent bg7wi7 review
+  closes six original source findings and two exclusive-output follow-ups;
+  31 pure synthetic controls pass,exit0,0.326457708s tool wall. Root read and
+  hash-checked verdict42338d82 and terminala0505735. Eight gate scripts and
+  PREPARATION bytes unchanged. This is not product test execution: no Fleet,
+  pytest, network or native child was used by those31 controls, and Git listings
+  were mocked. Separate root process3/scheduler4 controls are not independently
+  replayed. Full/default/static/optional scripts remain unreleased pending exact
+  combined source/document freeze and terminal status of all other test parents.
+- [x] (2026-09-10 01:29 UTC) Read-scope successor03/source3aff14e6 received
+  fresh independent896-case offline PASS and six statics; verdict1f1a8e5f and
+  md ea22b907, sealed01:12:12UTC. Root completely read verdict/delivery. Its
+  ten files remain outside main while Session's546/938589 physical binding is
+  held. The first private physical bundle has concrete pre-execution review
+  failures: old-target default argument and transport UTF8/deadline/SIGINT
+  bookkeeping. No setup/Session/Docker/model request was executed. Preserve
+  all failed bundle/probe bytes; require a new narrow successor and fresh review.
+  Main full-gate scripts' six initial review findings are repaired at source
+  level; two additional exclusive-output freshness controls are being tested.
+- [x] (2026-09-10 00:49 UTC) Session-baseline successor938589 has narrow
+  independent offline PASS (seal3f7b3917): Writer604 plus independent62 overlapping
+  cases, six static gates and49 fixture DB readbacks; no main integration or
+  physical Session claim. In parallel, read-scope candidate02/source2e853 is
+  independently FAIL (seal23e929de): a late selected synthetic key reached actual
+  LangGraph MockTransport in regex-encoded schema form. Its499 Worker passes do
+  not override the counterexample. Root retained both predecessors and froze a
+  narrow ten-file successor contract in2026-09-10-read-scope-tool-schema.md before
+  any adapter repair. Main remains543/30b8; no new live request or merge occurred.
+
+- [x] (2026-09-10 00:26 UTC) After preparing both isolated clone environments,
+  root's read-only held-main identity check exited0. The exact543 source set and
+  all bytes still match30b8; all9837 previously inventoried main runtime files
+  match digest e64c68e9. This bounded check did not enumerate extra runtime files
+  and excluded changing documentation from the source closure; it is not a new
+  complete runtime-install qualification. No product import, test or model call.
+
+- [ ] (2026-09-10 00:17 UTC) Prepared and released a separate bounded offline
+  [read-scope tool-schema slice](2026-09-10-read-scope-tool-schema.md) before its
+  implementation. Only runtime_tools.py and eight test modules in a new isolated
+  clone may change. Conservative ASCII path-prefix hint includes an all-non-ASCII
+  escape, exact broad fallback and late registered-secret guard; no filesystem,
+  permission, adapter implementation, prompt, model setting or paid-request change.
+  Root accepts the explicit LangGraph pre-catalog refusal vs PydanticAI Broker-
+  denial distinction; neither proves new live reliability. Session successor9385
+  is separately frozen with fresh tests/review underway. Main remains30b8, remote
+  checkpoint2eb44d8 and current live FAIL. Neither moving clone is integrated.
+
+- [x] (2026-09-10 00:12 UTC) Root completely read and hash-checked the independent
+  terminal-write review c0f550bb3439f71f7bf7a4307044b687d13d93f1c6f7a5d632240452162ceba8,
+  fresh at00:09:01UTC, readback command0 and unchanged543-source30b8. Its
+  historical native JUnit reconciliation is35 passed/5 failed, not a new probe.
+  Both entry bodies remain a single unconditional containment error; ordinary
+  pathname SQLite connect and the internal insert helper do not supply the
+  required original-file transaction boundary. Exact auxiliary/locking failure
+  identities and bounded future qualification requirements are retained privately.
+  No universal platform-impossibility, external credential blocker or write
+  enablement is inferred; the stronger S1 acceptance remains unmet.
+
+- [ ] (2026-09-10 00:10 UTC) Fresh bounded read-only investigation reconfirms
+  the original-DB terminal-write qualification gap, not a credential failure.
+  The preserved five failures are native WAL/SHM outside-parent opens despite
+  NOFOLLOW, same-process APSW/std-lib lock interoperability in DELETE/WAL, and
+  parent raw-descriptor closure releasing a std-lib DELETE lock. A clean child
+  avoids the observed same-process/descriptor-close hazards but does not prove
+  pathname/sidecar ABA safety. No small enablement is accepted; terminal entries
+  remain STATE_UNAVAILABLE before dependencies. A separately frozen original-
+  write backend qualification would have to prove main/sidecar descriptor and
+  parent binding, real writer interoperability, and fresh fingerprint CAS plus
+  immutable insertion in one original transaction. The accepted child read
+  observer does not establish this. No source/SQLite/test/credential mutation by
+  this investigation; no weaker trusted-root contract silently substituted.
+
+- [x] (2026-09-10 00:05 UTC) Documentation commit2eb44d8 recorded exactly four
+  reviewed paths,707 insertions/19 deletions, after scoped secret/machine-path
+  checks and staged/worktree equality. Non-forced branch push advanced origin
+  from65e04e5 to2eb44d8ff5478c179a22c415b19dd8227e44986e, delivering all16
+  scoped commits includingfd958db and8fdf7eb. Exact GitHub ref and PR7 readback
+  agree: OPEN,draft=true,CLEAN,checks[],base/main unchanged3fb09711; branch Actions
+  list is empty. PR body now reports current30b8 local gates and the current live
+  scope-denial FAIL, not older3fe counts or whole-goal completion. No merge,
+  workflow/protection change, additional paid request or Session integration.
+  This post-delivery ledger entry is later documentation, not part of2eb44d8.
+
 - [x] (2026-09-10 00:04 UTC) Root read and SHA-checked the complete independent
   post-result archive/static verdict, sealed23:55:44UTC as
   b5b10f701fb915bc2d4dc5e578e121b352bfa6cec5820faaa1f04551e8232662.
@@ -1759,6 +2171,16 @@ First slice has no migrations or external effects; rollback is only its exact re
 
 ## Discoveries
 
+- Observation (2026-09-10 final canary): current nano/PydanticAI completes the
+  scoped read/tool and strict-verdict path, with independent command evidence.
+  The actual fixture tests only the zero-divisor guard; the model's assertion
+  about ordinary division is broader than observed test coverage. Consequence:
+  accept this bounded E2E, retain that coverage limitation and earlier failures,
+  and do not extrapolate to all tasks, live Session or other Provider/Harnesses.
+- Observation: a Python3.14 AST/static pass did not prove the private receiver's
+  prescribed Python3.9 compatibility. The one-line zip-keyword repair and actual
+  Python3.9 selected-function replay closed it without altering product code or
+  execution authority. It was a pre-credential failure, not a failed paid attempt.
 - Observation: the current failed live response put a criterion object into narrative criterion_results; its lowercase verdict and nonempty rationale were not the fault. Independent reduced-shape validation reproduces exactly string_type at criterion_results[0]. Local PydanticAI strict=None does not enable OpenAI strict output automatically for this schema. Consequence: preserve local validation and add a separately reviewed production-OpenAI-only strict wire requirement; provider enforcement and business evidence remain distinct.
 
 - Observation: the existing Bootstrap canary uses a disposable fixture, while Workflow always invokes CoS and command authorization requires a code-change TaskSpec. Consequence: it cannot honestly measure the target's preexisting test failures without a new explicit model-free baseline purpose, exact reviewed command binding and durable no-replay ownership. A read-only mapping identified existing Gateway/Broker/resources seams; no baseline code is implemented. The six evaluation fixture repository identities are synthetic, not real-target proof, and no qualified Node image/dependency environment is available. Do not fabricate an empty patch or call a missing-image diagnostic a completed Node baseline.
@@ -1780,12 +2202,60 @@ First slice has no migrations or external effects; rollback is only its exact re
 
 ## Decision Log
 
+- Decision (2026-09-10 closeout): honor the narrowed user scope after this one
+  passing real-model E2E and independent reconciliation. Update result documents
+  only; retain pre-live archive identity rather than silently claiming the new
+  wording is packaged. Do not resume S1-DB qualification, campaigns or Git delivery.
+  The broad S1–S3 goal is incomplete and must not be marked complete from one canary.
 - Decision: start with pure evaluation contracts, not a broad new orchestrator. Rationale: fixed honest denominators and evidence identity are prerequisites to useful paid measurement; preserve existing runtime/budget authority. Alternatives: ad-hoc test totals would hide missing and repeated attempts. Date:2026-09-09UTC.
 - Decision: no first-version exclusions or automatic KR PASS. Rationale: exclusion and source-authenticity protocols are not yet implemented; strict accounting avoids post-result selection. Date:2026-09-09UTC.
 - Decision: retain unknown costs and separate product verdict from external result. Rationale: reported tokens and a Verifier verdict are not invoices or an independent oracle. Date:2026-09-09UTC.
 - Decision: missing external credentials/environment is a bounded acceptance gap, not permission to skip all safe S1–S3 development. No new licensing/branding/provider-choice questions. Date:2026-09-09UTC.
 
 ## Outcomes
+
+Final bounded closeout (2026-09-10): current546/source61e79cba passes the full
+4093/23 default matrix, six statics, Docker29, installed3, one warm model-free
+physical Session, final pre-live archive1 and now the actual nano/PydanticAI
+CLI E2E1/77.00s. Every gate has its own original evidence and independent readback;
+overlapping counts are not summed. The final live audit a9681755 confirms the
+minimal patch, strict Verifier/CompletionGate, complete eight-request accounting,
+unapplied target and exact resource cleanup. Source and dependencies remain held.
+Final result-document edits follow that audit and are not in the pre-live archives.
+This is the user's requested stopping point, not completion of every S1–S3 KR.
+S1 original-DB terminal writes remain disabled/NOT_GO; external campaigns, Node/
+coldstart, broader Session, new-provider and mixed-Harness live qualification
+remain unfinished. Codex/Claude native adapters remain NOT_ADMITTED. Current
+Session11/read-scope10 and result documentation remain uncommitted/unpushed;
+earlier draft PR7/head2eb44d8 is not newly merged or changed by this closeout.
+
+Pre-live working-state update (2026-09-10 02:53 UTC): root integrated the independently
+accepted Session-baseline11 and read-scope10 slices; main is546/source61e79cba.
+Its new combined matrix passed4093 cases with23 optional skips/4116 exact unique
+identities at02:45:47UTC; independent CQfxc3 readback4788e9f7 confirms all six
+static gates, original parent exits, serial ordering and held public29/source.
+Exact before/after integration guards in private
+readscope-main-integration.zRPObe passed at02:09:27 and02:10:20UTC, preserving
+all536 other inputs, including Session11, and9837 inventoried runtime files.
+README/guide/architecture/security/contracts/ADR describe precise boundaries.
+Read-scope candidate02 remains rejected; successor03 has independent896-case
+offline PASS. Docker optional29 passed212.23s and installed3 passed253.29s;
+independent original readbacks5c428a0e and8402821b confirm their scoped native,
+package and resource boundaries. Both bind the pre-result public29 documents.
+Public-document hold released only after installed seal626d9890; final README
+precision/results refresh and archives remain a separate binding.
+Physical bundle D9T4et failed pre-execution review;
+successor9jlfrb actually ran three passing tests but its private null-only recovery
+oracle failed before show. Independent actual-audit.jZHtiG/b94d9dc8 confirms exact
+cleanup and correct current snapshot digest, seals FAILED_JOURNEY and releases the
+old source hold; it does not substitute for the unsent show. New oracle-only z7zFWN
+on61e79cba with unchanged protocol439301bd now has independent53f97483 actual
+PASS for all six phases, three real tests, two filesystem probes and exact
+container/worktree cleanup; this is one warm model-free baseline observation,
+not coldstart, Node, active cancellation or whole-S2 acceptance. The latest live result remains
+FAIL; S1 original-DB outcome writing remains disabled/NOT_GO. No whole-goal or
+merge acceptance follows from this progress. Older checkpoint records below are
+historical and must not be read as newer main qualification.
 
 Post-result source30b8/README0967fa8c/guide92a static gates passed23:50:47UTC;
 the ordinary existing archive integration test passed1/4.30s at23:50:52UTC,
@@ -1843,9 +2313,10 @@ synthetic review passedb39b329c. Root completely read and SHA-checked the origin
 verdict; failures remain retained rather than relabeled by a later success.
 
 Local baseline implementation commit8fdf7eb now records51 scoped paths; source
-is still30b8. The earlier guidance commitfd958db and this commit are not yet pushed.
-The remote branch was last verified at65e04e5d and main at3fb09711, with PR7 OPEN/
-draft/CLEAN and no status checks. No merge or GitHub Actions invocation is claimed.
+was still30b8 at that checkpoint. Guidancefd958db and baseline8fdf7eb were later
+pushed with documentation2eb44d8; PR7 readback confirmed that exact head, OPEN/
+draft/CLEAN, no status checks or branch Actions, and unchanged main3fb09711.
+No merge or GitHub Actions invocation is claimed.
 
 The accepted baseline45-file candidate has now been integrated at21:51:44UTC,
 after independent runtime and static integration acceptance. The complete main
@@ -1914,8 +2385,8 @@ No merge or Actions run is claimed. Target-bound helper source3fe0cafe has passi
 accepted as reliable intent routing or current real-model success. Model-free
 business baseline implementation passed independent isolated offline acceptance
 and was transplanted into main as recorded above; combined default/static,
-optional and pre-key package gates pass, and local implementation commit8fdf7eb
-is not yet pushed or merged. No Anthropic/Google credentials or requests,real
+optional and pre-key package gates pass. Implementation8fdf7eb was subsequently
+pushed with2eb44d8 but remains unmerged. No Anthropic/Google credentials or requests,real
 24-task campaign,new-Harness six-task live qualification or business baseline/
 cold-start acceptance has occurred. Keep the goal active until remaining objectives
 are genuinely verified; do not replace them with mock outcomes or relabel this

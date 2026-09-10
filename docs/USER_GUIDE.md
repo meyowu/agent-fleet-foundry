@@ -34,7 +34,8 @@
 `baseline` 用来观察项目现有检查命令的结果，不修代码，也不让 Agent 判断成功。
 当前工作版本已整合该独立 CLI，并通过隔离的离线验收；整合后的完整测试、安装包、
 真实 Docker 与跨项目冷启动验收要分别看 README 的最新记录。下面是使用方法，不是
-这些验收已经通过的证明。Session 中还没有 `/baseline` 命令。
+这些验收已经通过的证明。当前工作版本也支持下方的 Session `/baseline` 入口；
+该入口已通过独立离线验收，真实 Docker Session 与整合后的完整验收仍以 README 为准。
 
 1. 先按下文完成项目注册和本地 runner 准备。项目必须是干净、已提交的 Git 仓库；
    Fleet 状态目录与仓库必须互不包含。现有 VerificationProfile 中应已有要运行的
@@ -86,6 +87,29 @@ fleet baseline recover BASELINE_ID --owner-stopped --cleanup-sha256 CLEANUP_SHA2
 ## Session-first 使用（本次版本新增）
 
 以下是当前实现的使用接口，不是测试执行记录。模型 ID、路径和 review code 都必须替换为你实际选择或看到的值。浏览器、安全、Docker 与安装包的精确验收结果见 README 和 living ExecPlan；不能由命令存在推断通过。
+
+### 在同一会话里运行无模型基线
+
+已注册项目并准备好上节的本地 runner、完整仓库审查范围与命令后：
+
+```text
+fleet chat .
+/baseline plan COMMAND_ID
+/confirm <本次显示的-review-code>
+/baseline run
+/baseline show
+```
+
+先查看 plan 中的实际命令、源文件和隔离边界；只有 `ready` 才会提供确认码。
+`/confirm` 仅保存一次授权，不执行命令，必须再输入 `/baseline run` 才运行。
+授权绑定当前项目、会话、元数据版本和原始五分钟审查；切换、过期、重复使用或
+重启都不能悄悄生成替代授权。它不会创建 Agent Run、任务轮次或模型费用。
+
+这项“不调用模型”保证针对正常选择会话之后的基线操作，不表示 Session 启动或
+普通历史查看不需要其既有凭证脱敏步骤。`/cancel`、EOF 或中断会等待基线清理；
+不能与普通任务并发执行。结果不确定时不自动重跑。退出后本地确认码和选择丢失，
+保留结果使用独立 `fleet baseline show`，恢复使用前述精确停止者审查命令；
+Session 没有新增 `/baseline recover`。输出仍是观察报告，不是业务正确性证明。
 
 ### 1. 进入一个会话
 

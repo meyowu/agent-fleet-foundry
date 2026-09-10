@@ -1,5 +1,11 @@
 # Agent Fleet：整个系统的开发 OKR 与路线图
 
+> 本文保留 2026-09-07 的目标设计与当时状态，不是当前功能清单。
+> 2026-09-10 的已实现功能、真实 E2E 结果和未完成项见
+> [README](../README.md#s1s3-development-status--2026-09-10-utc) 与
+> [交付执行计划](../.agent/plans/2026-09-10-verified-foundations-merge.md)。
+> 合并已验证的基础版本不代表这些 OKR 已全部完成。
+
 日期：2026-09-07。代码基线：`3fb09711851b27b5276d7faddd50bc317e2536fb`。状态：**计划已修订，新增功能未开始实施**。
 
 范围更正：上一版把系统路线收窄成了自进化路线。本版覆盖真实模型、Agent/Harness Adapter、Bootstrap、Session、角色、权限、Sandbox、Dashboard、工具集成、Memory 和开源交付。上一版保留为 [评估与进化子路线](LEARNING_AND_EVOLUTION_OKRS.zh-CN.md)，不能再据此推迟其他系统能力。

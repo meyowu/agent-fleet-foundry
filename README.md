@@ -10,22 +10,75 @@ Phase7 adds packaged runner/learning assets, fresh-install/upgrade/scale verific
 
 The Session-first release adds a foreground session entry, exact in-session review, opt-in pre-execution planning approval, immutable per-role model bindings, operational custom role templates and an authenticated local read-only dashboard. Follow the [living release plan](.agent/plans/2026-09-07-session-first-release.md) for current verification; the September5 CI results below do not accept these additions.
 
-## S1–S3 development status — 2026-09-09 UTC
+## S1–S3 development status — 2026-09-10 UTC
 
-Latest full-suite checkpoint: `30b8f4762e92da2c001b189b32a42fddba41cf9ebd8be6b1fee9924b82f874e6`.
-This accepts the implemented local foundations, **not completion of all S1–S3 OKRs**.
+Delivery scope: the owner has requested merging this verified foundation through
+[PR7](https://github.com/meyowu/agent-fleet-codex-kit/pull/7), with unfinished OKRs
+explicitly retained. The prior stop remains in force for new feature work and
+paid calls; only GitHub delivery and local verification resume. See the
+[delivery ExecPlan](.agent/plans/2026-09-10-verified-foundations-merge.md) for actual
+commit/merge readback, rather than treating historical draft status as current.
 
-The integrated working candidate is now `30b8f476` (543 source/dependency inputs).
+Current tested working source is `61e79cba` (546 source/dependency inputs),
+including the eleven-file Session-baseline slice and ten-file read-scope slice.
+The combined local gates have passed and their original evidence was independently
+reconciled; this is **not completion of all S1–S3 OKRs**.
+
+| Current gate | Exact result | Verification boundary |
+| --- | --- | --- |
+| Full default matrix | 4093 passed, 23 skipped; 4116 unique collected identities, zero gaps/duplicates/failures/errors; finished02:45:47UTC | All unit, contract, integration and offline E2E tests; cancellation regression executed alone after other groups.39 warnings retained. |
+| Static checks | Six passed: Ruff format462 files, lint, mypy390 files,115 schemas, offline99-package lock and diff check | Existing pinned environment; no dependency update. |
+| Optional Docker | 29 passed/212.23s; independent readback passed | Ten overlap default helpers;19 are actual optional Docker cases.681 Artifacts,199 terminal leases,66 paths and52 known native IDs checked. |
+| Fresh installation | 3 passed/253.29s; independent readback passed | Three installations, six original archives,95 prepared wheels,332 package/guide files,115 schemas,13 migrations;54 released leases and18 absent paths. |
+| Model-free physical Session | One complete six-phase journey independently passed | Three actual business tests, two read-only filesystem probes, actual `/baseline show` and exact container/worktree cleanup; warm Python baseline observation only. |
+| Final pre-live archives | 1 passed/2.60s; independent archive readback passed | Current source and all 60 final input documents held; wheel/sdist contents, import origins and 9837 runtime files checked. These archives precede this post-live result wording. |
+| Real-model CLI E2E | 1 passed/77.00s; independent original-evidence audit passed | One `openai:gpt-5-nano` / PydanticAI / Docker CoS → Engineer → Verifier canary; no automatic repeat or target patch application. |
+
+Each gate binds its own frozen inputs. The default, Docker and installation
+gates held the source and29 pre-result public documents unchanged.
+The installation result binds the pre-result README/guide; refreshed pre-live
+documentation and archive verification subsequently passed. After the live audit
+released the document hold, this result wording was updated without rebuilding
+those archives. No source or dependency changed; packaging this final wording is
+deferred under the user's instruction to stop after the real-model E2E test.
+Exact commands, original timings, hashes and failure history are in the
+[S1–S3 ExecPlan](.agent/plans/2026-09-09-s1-s3-system-development.md) and
+[Session-baseline plan](.agent/plans/2026-09-09-session-business-baseline.md).
+
+A read-tool schema successor is independently accepted and now integrated:
+896 distinct offline cases and six static gates pass, including the
+unchanged synthetic LangGraph credential-encoding counterexample. Its predecessor's
+499 passes and privacy failure remain retained. The repair qualifies selected-key
+construction, not arbitrary later key registration or universal provider pattern
+enforcement. No actual credential or provider call was used in these checks.
+Earlier private physical-Session scripts remain explicitly failed: the first was
+rejected before setup for fixture/transport defects; the next actual journey
+passed its commands and cleanup but stopped before show because its oracle
+incorrectly required a null recovery digest after ownership. The current snapshot
+digest was correct. An oracle-only successor now passes the full journey above;
+no product validator was relaxed and neither old attempt was replayed.
+
+Latest full-suite checkpoint:
+`61e79cba174cd05a8ba019c53ec815b6c39800fea394041e89e066e4132d4a10`.
+The latest bounded paid model attempt passed at03:37:39UTC and its independent
+audit passed at03:43:42UTC, as detailed below. S1 original-database terminal writes remain disabled/NOT_GO;
+external campaign, other-provider live, coldstart and broader Session/Harness
+acceptance remain incomplete. No automatic paid retry or merge follows from the
+local passes. This development turn is stopped after the requested E2E and
+evidence reconciliation; no subsequent feature work or Git delivery is implied.
+
+The preceding fully tested checkpoint is `30b8f476` (543 source/dependency inputs).
 Its full default matrix passed22:32:07UTC:3966 passed,23 optional skips and3989
 exact unique identities, with no failures/errors/gaps/duplicates or code drift.
-All six static gates passed21:57:47UTC.
+All six static gates passed21:57:47UTC and the post-result refresh at23:50:47UTC.
 It adds the standalone, model-free `fleet baseline` commands described below.
 Independent baseline acceptance passed542 fresh cases plus six earlier exact-byte
 controls (548 unique total); this is not physical Docker, whole-candidate or
 Session acceptance. The main transplant preserved all498 previous inputs outside
 the45 accepted baseline files. Database migrations now reach13 and public schemas
-total115. Current Docker29, fresh-install3 and pre-key archive1 gates and their
-independent readbacks pass. The current live regression below still fails.
+total115. That historical checkpoint's Docker29, fresh-install3 and pre-key
+archive1 gates and independent readbacks passed. That checkpoint's live regression
+failed; those older archives do not qualify current result documentation.
 
 The preceding Verifier guidance candidate `9cd328d8` explains that task scopes
 constrain reads and directs patch inspection to the existing diff tool. Six
@@ -40,8 +93,10 @@ two tool descriptions change; permissions, executable tool logic, schemas and
 budgets remain unchanged. The current30b8 paid regression tested this guidance
 and still failed on an out-of-scope read; prompt guidance is not reliable scope
 selection by itself. Guidance commit `fd958db` and baseline commit `8fdf7eb`
-are local commits at this documentation checkpoint; remote delivery is recorded
-separately in the living plan.
+were pushed with documentation commit `2eb44d8` to draft PR7. Readback confirmed
+its exact head, no branch Actions runs and unchanged main `3fb0971`; it is not
+merged. The newer working-tree Session and read-scope slices have not been
+committed or pushed.
 The diagnostic and configuration-warning corrections are commits `8afffe7`
 and `864ad43`. Those and strict-output commit `a4952dd` are pushed to the development
 branch; draft PR7 remains open and unmerged. The target-bound CoS hash correction
@@ -49,7 +104,30 @@ is commit `584c551`, with a fresh passing whole offline suite and independent
 component/pre-key package acceptance; its latest live regression failed. Exact
 result-document packaging and GitHub readback are recorded in the living plan.
 
-**Latest live regression did not pass (23:35:50 UTC).** On current `30b8f476`,
+**Latest live E2E passed (2026-09-10 03:37:39 UTC).** On current `61e79cba`,
+one bounded `openai:gpt-5-nano` / PydanticAI / Docker CLI attempt completed CoS,
+Engineer and independent Verifier. Both live roles ran `python -m pytest` with
+exit0 against the same minimal two-line guard patch in `src/canary_calc/core.py`.
+The strict VerifierVerdict and structured criterion were accepted; CompletionGate
+is true, status is `ready_for_review`, and proof gaps are empty. The original
+target remains unchanged and the patch is not applied. This is the real CLI
+workflow, not a live interactive-Session or multi-provider campaign qualification.
+
+Eight requests reported32870 input+9093 output=41963 tokens: CoS2/15287,
+Engineer4/17236,Verifier2/9440; four tools,66.682625 active seconds and zero
+unknown/outstanding/reserved requests or tokens. Monetary cost was not reported.
+Original pytest passed1/77.00s; launcher78.662s, normal stop and cleanup complete.
+Independent audit `a9681755` passed at03:43:42UTC:46 physical Artifact bindings,
+118 live+91 separate Fake-bootstrap events,12 released leases,four absent
+worktree paths/four native containers and the empty exact installation scope.
+Source546,all60 input documents and9837 dependency files did not drift.
+Only the zero-divisor behavior was tested; the ordinary nonzero branch was not
+separately tested, despite the model's broader narrative. Docker's documented
+isolation limits remain. Earlier failures below are retained, not relabeled.
+No additional paid attempt,model upgrade,permission relaxation,commit,push or
+merge follows. The one-test stop requested by the user is now honored.
+
+**Previous live regression did not pass (23:35:50 UTC).** On predecessor `30b8f476`,
 one bounded `openai:gpt-5-nano` / PydanticAI / Docker CLI attempt completed CoS
 and Engineer. Engineer and independent Verifier each executed `python-test`
 successfully against the same candidate patch. Verifier then requested
@@ -145,7 +223,8 @@ evidence, not a passing result for this prior attempt.
 | Target-bound CoS hash independent checks | **524 unique passes**:324 focused/40.57s,168 legacy/.69s,26 independent/.31s and6 additional installed SDK/LangGraph controls. Exact path/type/budget/replay/secret boundaries,ordinary scoping and real persisted organization proposals were checked.103 databases,78 Artifact bindings,zero leases and18 original-only Git registries were read back. Retain94 inert running Run records and10 direct-adapter running attempts with settled requests/closed clients; these are not completed product Runs. Component coverage overlaps the default suite and is not live proof. |
 | Prior strict Verifier independent checks | **507 unique passes**:294 related/20.09s,197 provider/86.69s and16 independent controls/2.35s. Both real SDK MockTransport wire formats,unsupported-profile zero dispatch,physical client cleanup,no effect replay and unchanged local validation were checked on092.89 databases and251 Artifact hashes were read back;49 leases released and19 paths absent. Three intentional paused-approval fixtures retain three private worktrees and three nonexecuting Fake leases. Strict Verifier bytes remain unchanged; this prior component coverage is not new live-provider proof. |
 | Diagnostic and warning independent checks | **280 unique diagnostic checks** (253/16.66s plus27 malicious controls/1.21s), and36 warning cases/0.05s. These component counts overlap full default coverage. |
-| Format/lint/types/schema/lock | Current Ruff format457 files and lint passed; mypy387 files passed;115 exact schemas;99-package offline lock check and whitespace check passed. All six commands exited0 at21:57:47UTC on30b8f476 with no code drift. |
+| Format/lint/types/schema/lock | Latest30b8 refresh: Ruff format458 files and lint passed; mypy387 files passed;115 exact schemas;99-package offline lock check and whitespace check passed. All six commands exited0 at23:50:47UTC with no code drift. The earlier21:57:47UTC receipt recorded457 formatting files. Neither is a new938589 combined-source gate. |
+| Post-live-result30b8 archives | **1 passed/4.30s**,7.619s wrapper,finished23:50:52UTC. Independent read-only sealb5b10f70 at23:55:44UTC checks wheel/sdist336 members each,332 runtime/guide resources,115 schemas,13 migrations and exact README0967/guide92a bytes. Original source543 and9837 previously inventoried runtime bytes remained unchanged. This used the held main environment, not a fresh installation or the earlier snapshot-origin run; it predates current Session/doc changes. |
 | Historical named adversarial replay | **737 passed/218.40s** on the earlier checkpoint, no skips; not a new execution of the diagnostic/warning successor. |
 | Current real Docker selection | **29 passed/239.06s**,241.36s wrapper,finished22:37:04UTC on30b8f476:19 actual Docker cases and10 helper cases. Independent physical readback passed22:55:26UTC (seal60497364):45 DBs,681 artifacts,199 terminal leases (190 released/9 recovered),66 absent worktree paths,52 absent known native IDs and19 empty exact installation scopes. Two historical no-handle records remain explicit; current absence does not prove they never executed. Code and pinned daemon/image/endpoint unchanged. This selection does not test the new model-free baseline command. |
 | Current fresh installation journeys | **3 passed/276.18s**,278.518s wrapper,finished22:49:38UTC on30b8f476, using only the95 prepared locked wheels and pinned local Docker. Source and READMEed1323b7/USER_GUIDE92a10891 held throughout. Independent readback98088803 passed23:02:32UTC:three environments/six archives each matched332 runtime/guide resources,115 schemas and13 migrations;54 released leases,18 absent paths,six absent native IDs. This is separate from later result-document archive refreshes. |
@@ -204,8 +283,8 @@ Permanent owner/dispatch claims prevent automatic command replay after a crash.
 Reports distinguish observed command exits from incomplete output or cleanup;
 recovery can clean only the reviewed resources and cannot turn an unknown command
 result into a pass. The CLI composition can migrate its separate state database
-to13; it is not a globally side-effect-free inspector. This feature is not wired
-into the foreground Session and is not six-project/cold-start qualification.
+to13; it is not a globally side-effect-free inspector. The Session entry below
+reuses this controller; neither entry is six-project/cold-start qualification.
 
 The first current-source physical Python fixture completed at22:54:07UTC:
 one public CLI command exited0/10.904s, with three actual Docker unittest checks
@@ -218,6 +297,34 @@ released leases and exact native/worktree absence;102 original fixture files and
 543 source files unchanged. Root accepted this narrow result at23:10UTC. This is one generated,
 registration-only baseline fixture—not public bootstrap, Session, a multi-project
 cohort, a model task or an independent business-correctness verdict.
+
+### Model-free baseline inside a Session
+
+In an already selected, registered project with the same prepared runner and
+reviewed command prerequisites, stay in one foreground session:
+
+```text
+fleet chat .
+/baseline plan COMMAND_ID
+/confirm <the displayed review code>
+/baseline run
+/baseline show
+```
+
+`/confirm` records only the exact once authorization: it does not execute the
+command. `/baseline run` separately consumes it once. Conversation identity,
+repository, metadata revision and local selection generation are checked together
+at authorization and claim. Baseline operations after ordinary Session selection
+perform no additional secret lookup, history read or runtime/model construction;
+normal Session startup/history redaction duties remain unchanged.
+
+`/cancel`, EOF and interrupts retain and drain baseline-owned cleanup, without
+retargeting an ordinary Run. Overlapping work is refused. Uncertain executions do
+not replay. Review codes/focus are process-local and are not restored after restart;
+use the standalone `show`/reviewed `recover` lifecycle for retained state. The
+result remains a baseline observation, not a Run/Turn, accepted patch or verdict.
+Offline acceptance used real Session processes with synthetic Docker transport;
+physical Session qualification and combined-source gates are still pending.
 
 The first S1 evaluation slice is implemented: immutable preregistered manifests,
 outcome records and deterministic reports preserve first-round denominators,

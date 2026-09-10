@@ -118,8 +118,22 @@ history. The report remains `completion_assurance=baseline_observation_only` and
 product-fault diagnoses. Missing results remain unknown. These records do not
 enable the disabled S1 terminal finalizers. CLI composition initializes/migrates
 state but does not construct a SecretStore, RuntimeRegistry or model factory;
-shared bootstrap imports are not a no-SDK-import guarantee. Session baseline
-control and whole-Session credential-free composition are not implemented.
+shared bootstrap imports are not a no-SDK-import guarantee. The Session now exposes
+`/baseline plan COMMAND_ID`, `/confirm CODE`, `/baseline run` and `/baseline show`.
+Confirmation only records available authorization; run consumes its exact ID once.
+Internal frozen BaselineSessionBinding/Review/Focus and a trusted admission callback
+bind project/repository/conversation/revision/local generation. They add no public
+JSON schema or migration. Codes/focus are process-local; standalone recovery stays
+separate. Baseline operations after normal Session selection perform no additional
+secret/history/runtime access. Whole-Session credential-free composition is not
+implemented, and ordinary history redaction remains mandatory.
+
+`BaselineShow.recovery_scope_sha256` is null before an owner claim exists;
+after ownership it identifies the current typed execution/claim/dispatch/lease
+snapshot, including after successful observation and complete cleanup. It is not
+a pending-cleanup flag. It may differ from the report's earlier cleanup-scope
+digest. Presence of this field grants no recovery authority: explicit stopped-owner
+review and fresh identity/snapshot checks remain mandatory.
 
 ## 1. Configuration ownership
 
@@ -998,6 +1012,16 @@ For `fleet doctor --json`, `ok: true` means the diagnostic command completed and
 - Migrations apply to user state, not repository FleetSpec API versions.
 - During `v1alpha1`, incompatible changes are allowed only with explicit migration/documentation in the same change.
 - Snapshot the exact bounded UTF-8 contents and individual hashes of FleetSpec plus every referenced configuration file; never bind only the parsed top-level YAML.
+
+Runtime `repo.read_file.path` definitions may add a bounded scope-prefix hint from
+the immutable task. Supported ASCII paths use a conservative portable pattern;
+unsupported or broad inputs retain the generic schema, and non-ASCII candidates
+still require normal permission validation. This is not a file inventory or an
+authorization enum. PydanticAI's OpenAI paths, Agents SDK and Google preserve the wire pattern;
+Anthropic strict conversion retains it as descriptive guidance only. Local
+Harness enforcement also differs: LangGraph validates the pattern before catalog
+dispatch, while PydanticAI external tools still rely on the authoritative Broker.
+These runtime definitions do not change the115 checked-in public schemas.
 
 ## 10. Prompt files
 

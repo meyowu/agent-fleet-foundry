@@ -96,8 +96,26 @@ the command. Unknown container creation with no native identity remains unknown,
 not a zero-effect inference. Observations are not an independent Agent verdict
 or S1 external oracle. Source is mounted read-only, so commands requiring writes
 to the project tree are not generally supported. Physical Python/Node and
-Session/cold-start qualification remain separate acceptance work; Session has
-no `/baseline` route yet. See [ADR0011](adr/0011-reviewed-model-free-business-baselines.md).
+Session/cold-start qualification remain separate acceptance work.
+See [ADR0011](adr/0011-reviewed-model-free-business-baselines.md).
+
+The foreground Session now shares this controller through a lazy factory retaining
+the existing Redactor. `/baseline plan` stores a process-local typed review;
+`/confirm` calls authorization only; `/baseline run` consumes that exact grant.
+`BaselineSessionAdmission` binds conversation/repository/revision and a pure local
+selection check inside the existing authorization/claim transaction. It uses the
+same SQLite connection, no historical turn reader and no await in SQL. Local
+generation prevents a switch-away-and-back from reviving a stale review. Codes are
+bounded and remain classified after consumption, so they cannot fall through to
+ordinary history review. There is no new migration or fabricated Run/Turn.
+
+Baseline tasks and cancellation drainage have separate ownership from ordinary
+Run execution. A per-attempt RAM notification changes CLI routing only after local
+admission; a rejected entry restores previous cancellation/progress ownership.
+That notification cannot authorize a command: durable admission remains separate.
+Operation-scoped metadata reads after normal selection avoid additional secret,
+history and runtime access while ordinary Session redaction remains intact. Focus
+is not restored after restart; retained recovery stays in the standalone lifecycle.
 
 PydanticAI has explicitly bound OpenAI, Anthropic Messages and Google Developer API
 factories. The additional OpenAI Agents SDK and LangGraph Harnesses each own their
@@ -109,6 +127,18 @@ remain authoritative. Single-use transport tickets prevent another physical send
 under the same reservation. Actual-SDK offline qualification is distinct from
 live-provider qualification; README and the active plan bind acceptance to exact
 snapshots, including corrected configuration/schema admission.
+
+The Gateway catalog derives a bounded, conservative read-path schema hint from
+the immutable task scope, without filesystem discovery or new authority. Supported
+ASCII prefixes narrow ordinary model choices; unsupported/broad scopes retain the
+generic path schema, and a Unicode escape branch defers non-ASCII semantics to the
+existing Broker. Each access returns fresh nested definitions. LangGraph prepares
+and validates one coherent catalog snapshot before credential resolution, then
+regenerates it from raw scope provenance after registering the selected credential.
+No client or model request occurs in either synchronous preparation pass. This
+closes the selected-key encoding case; it does not qualify arbitrary subsequent
+key registrations. Provider wire transforms and local validation differ, so schema
+guidance is not a substitute for Gateway/PermissionBroker enforcement.
 
 Migration0012 adds reserved campaign execution through the existing Workflow. An
 atomic transaction binds the permanent reservation, unique Run, model selections,
