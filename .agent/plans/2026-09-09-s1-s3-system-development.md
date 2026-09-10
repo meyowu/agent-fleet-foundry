@@ -1356,6 +1356,161 @@ First slice has no migrations or external effects; rollback is only its exact re
 
 ## Progress
 
+- [x] (2026-09-10 00:04 UTC) Root read and SHA-checked the complete independent
+  post-result archive/static verdict, sealed23:55:44UTC as
+  b5b10f701fb915bc2d4dc5e578e121b352bfa6cec5820faaa1f04551e8232662.
+  It accepts the six static receipts and one4.30s archive test on held-main30b8,
+  README0967fa8c and guide92a: both actual archives and installed332 files match,
+  with115 schemas/13 migrations,53 empty original application tables and347
+  unchanged fixture entries. Source543 and installed9837 dependency bytes remain
+  unchanged. No verifier test/build/install/model/Docker replay; this is not the
+  separate fresh-install3 gate, snapshot-origin execution, live PASS or whole-goal
+  completion. Root releases only a four-document checkpoint commit with [skip ci]
+  and non-forced development-branch push; keep PR7 draft and do not merge.
+
+- [x] (2026-09-09 23:50 UTC) Post-live documentation checkpoint executed on
+  unchanged30b8/README0967fa8c/guide92a. Six static commands passed at23:50:47UTC
+  (receipt243ed732):whole-dot format458 files,lint,mypy387,115 schema comparison,
+  offline99-package lock,diff. Existing archive test passed1/4.30s with7.619152s
+  wrapper at23:50:52UTC (raw d3a8ad05,JUnit45c9ffdc), no skips/failures. New
+  wheel186425e93376bc29517966df9419c09d35eba70735f15e38f32904f03bf8afe3
+  and sdist196ca9756781ec07be56fecfce5b5b35c90be8aadfd8cd3b8b923e4ca06c269b
+  contain the updated failure report.543 source and9837 main dependency files
+  plus both packaged documents remained exact. This is an ordinary held-main
+  test,not the earlier snapshot-only instrumented test; no fresh dependency
+  installation or new full-matrix run. Independent archive/static readback
+  subsequently passed as recorded above, before Git staging or branch push.
+
+- [x] (2026-09-09 23:49 UTC, before execution) Root released a documentation-
+  only checkpoint check on unchanged543-code30b8, README0967fa8c and guide92a10891.
+  Re-run six static gates and the existing integration distribution test
+  `tests/integration/test_distribution.py::test_wheel_and_sdist_ship_runtime_resources_without_development_fixtures`
+  once with a new private basetemp/JUnit path, key-free/offline tooling, optional
+  live/Docker/install gates disabled. This normal root-checkout run is not an
+  immutable-source-snapshot origin claim; before/after source and the packaged
+  README/guide are checked and held. The existing test builds wheel/sdist,
+  compares every packaged source/resource and README, then installs only that
+  wheel into its private target against existing dependencies and runs its
+  isolated import/schema/migration/version probe. No fresh dependency install,
+  Docker execution, model request, target apply or full-suite rerun is implied.
+  Preserve original outputs and record exact results before Git staging/push.
+
+- [x] (2026-09-09 23:47 UTC) Current30b8 one-attempt canary is terminal FAIL,
+  independently audited94126dc47355d84bc72832a47b7c01fe5da9537a164ddf65bf784fd34eb357b3
+  at23:42:32UTC,raw-accounting supplement116f15d1 at23:43:57UTC. Receiver40556,
+  launcher and pytest all exited1 normally; pytest1failed/86.72s,launcher88.552s
+  (23:34:22.093284 to23:35:50.645940UTC). Real Runf58d9dd8 completed CoS1 request,
+  Engineer3 and Verifier2;21293in+10857out=32150 reported tokens,4 tools,
+  75.752308 active seconds,0unknown/outstanding/reserved. Both actual independent
+  Docker python-test commands exited0 on patchb7cd47eb. Verifier then read
+  README.md outside sole allowed core.py scope:seq90PHASE1_DEFAULT_DENY,
+  intent2c697bee has0dispatch;seq93COMMAND_DENIED. No final live VerifierVerdict,
+  Gatefalse.42 artifact bytes,104live+91separateFakebootstrap events,12released
+  leases,4absentworktrees/containers,1emptyinstallation and original unchanged
+  unapplied target verified;543source/59MD/9837dependencies unchanged. Real
+  pytest tests only the zero guard; extra scope/procedural CoS criteria remain.
+  Amount unknown,not zero. Root read the criterion/identity/accounting/Gate/
+  physical-scope verdict and supplement and rechecked hashes; this accepts the
+  FAIL evidence,not the product result. The spent bundle remains immutable;
+  no further paid request or target apply is released. Source/docs audit hold is
+  now released only for result documentation and separately qualified next work.
+- [x] (2026-09-09 23:43 UTC) Root prepared only the Session clone's own
+  .venv from unchanged99-package lock and existingPython3.14.6 entirely offline:
+  setup0,96 installed including editable clone; isolated origin probe points to
+  clone/src. Before/after main543source+59MD+9837dependency bytes unchanged.
+  Receipt46590c77. Existing real-process E2E strips PYTHONPATH, so the main
+  interpreter would test old code; the separate environment avoids that mistake.
+  No tests or feature acceptance are inferred from installation.
+
+- [x] (2026-09-09 23:32 UTC, pre-key only) The first read-only final-document
+  inventory stopped on a preexisting machine-path reference in the historical
+  `2026-09-04-phase-3-docker-sandbox.md` plan, not a credential match or source
+  drift. Preserve that unchanged committed document; require exact HEAD-byte
+  equality for this sole legacy exception and reject new machine-path matches
+  elsewhere. No freeze/release/once marker/credential/request was created by
+  the stopped inventory. Credential-pattern rejection remains unconditional.
+
+- [x] (2026-09-09 23:31 UTC, before credential or dispatch) Root fully read
+  and SHA-checked the fresh successor review b39b329c/result61c4c19b:
+  97 selected-function synthetic controls passed on exacta5bb3edd/9d320bb3/
+  2eec626f bytes. Both predecessor failures now reject; whole preflight/main,
+  real PTY and physical drainage remain statically reviewed, not exercised by
+  that audit. Root accepts this bounded receiver review and the current11
+  concrete prerequisite receipts. Root now authorizes exactly one separately
+  released current30b8 public nano canary under the frozen limits above, only
+  after sealing every current root/docs/.agent Markdown path/hash and checking
+  the exact two accepted archives. The private release is valid at most300s.
+  No Markdown or main-source edits are permitted while the attempt is active;
+  result updates follow original termination and independent reconciliation.
+  README70af/guide92a retain their pre-key packaged checkpoint wording; the
+  newer independent receipts are recorded here, not silently retrofitted into
+  an already tested archive. One marker permanently spends this receiver even
+  on failed input/timeout; no automatic replay, target apply or model upgrade.
+
+- [x] (2026-09-09 23:28 UTC) Root released the separately planned Session
+  baseline slice to one Writer in an isolated local8BF1tw clone from8fdf7eb.
+  Writer verified clean HEAD and543-file30b8 equality and clone-only Fleet
+  imports with bytecode disabled; main and its dependency environment remain
+  read-only. Ownership is eight production paths plus three new tests specified
+  in `2026-09-09-session-business-baseline.md`. No main integration, physical
+  execution, new dependency or provider request is authorized by that release.
+
+- [x] (2026-09-09 23:24 UTC) Root reconciled the current543-file30b8
+  prerequisite chain: default3966+23/staticda654c0c, Docker29/60497364,
+  installed3/98088803 and archive1/84a0d527 all independently accepted. The
+  archive readback at23:06:01UTC bound332 runtime/guide resources,115 schemas,
+  13 migrations,159 snapshot-only import origins and9837 unchanged dependency
+  files; both final archive hashes match the held README70af/guide92a subset.
+  The first physical generated Python baseline has separately accepted original
+  evidence cd66a97d; it is not Session/cold-start/cohort acceptance. Root fully
+  read/hash-checked successor receivera5bb3edd/prerequisites9d320bb3/contract
+  2eec626f and dispatched fresh independent synthetic review. No receiver,
+  credential or paid request has executed on this candidate; final complete
+  Markdown freeze and explicit one-attempt release remain pending.
+
+- [x] (2026-09-09 21:33:47 UTC) Saved the independently accepted guidance
+  slice as local commitfd958db4378173384e87519168bd3322aca1280c, five exact paths
+  (four code/test plus its plan), [skip ci]. Staged whitespace and credential/
+  machine-path pattern checks passed. It is not pushed yet; origin/PR remains
+  the previously verified65e04e5, and main3fb0971 is unchanged. Full final gates
+  and result-document delivery are still separate.
+- [ ] (2026-09-09 21:32 UTC) Isolated business-baseline Writer handed off
+  IMPLEMENTED45-file candidate49de00cc/patch30915d. Worker150 new+372 legacy
+  cases passed with no failures/skips, complete static checks passed and108
+  legacy schemas/migrations1–12/Run contracts/disabled finalizers match864ad43.
+  Six independent distinguishing probes pass; fresh whole standalone recovery/
+  execution/claim evidence audit is underway before integration. Its16 retained
+  private directories include one expected unknown-create registered worktree,
+  not a cleanup success. Root actual old584 installed package schema12 refusal
+  of private populated schema13 passed21:27:19, preserving all rows/file hashes;
+  no transient-WAL or whole-reader compatibility claim. Main source is untouched
+  by this baseline. Read-only patch applicability onfd958db passed; no target
+  source file conflicts with later main changes. Root ADR0011 records its accepted
+  design, not execution acceptance. No physical baseline, Node image, Session
+  baseline integration or new paid attempt is claimed.
+
+- [x] (2026-09-09 21:07:25 UTC) Final-result archive readback independently
+  accepted, seal427b501ba0402e6730586437e95af3feb298ba8e555741a0e1e49a6406530266.
+  Both archives and installed resources match316 immutable584 runtime/guide files
+  and held README04844 overlay. Installed SQLite has migrations1–12 and zero
+  runs/artifacts/leases, fixture unchanged. No later guidance bytes, fresh
+  dependency installation or model success are claimed by this archive result.
+- [x] (2026-09-09 21:05–21:07 UTC) Exact source584c551 and result-doc65e04e5
+  pushed with [skip ci]. GitHub readback PR7 head65e04e5d03b1a6a35a37399566e372baee20bb2c,
+  base/main3fb09711851b27b5276d7faddd50bc317e2536fb, OPEN/draft/CLEAN; branch Actions[].
+  Updated PR body read back byte-identically. Thirteen scoped commits pushed;
+  no merge, readiness change, Actions consumption or protection change.
+- [x] (2026-09-09 21:31:51 UTC) Separate Verifier guidance slice adds prompt and
+  two existing tool description strings only, under its living ExecPlan. Six
+  focused offline cases pass19.51s after retained test-fixture corrections;
+  root broad387/81.77s and all six static gates passed. Independent406 unique
+  cases passed (387/68.32s +19/2.08s),98 artifact bindings,30 released leases,
+  ten absent worktree paths, five original-only Git registries and zero-denied-
+  intent dispatch; Fake successes remain unverified. Exact9cd code and9826
+  dependencies unchanged, seal6dbf308a in private verifier-guidance-audit.GO2UDe.
+  Full combined default/package gates and remote delivery remain pending.
+  No permission, executable runtime, schema, budget or live retry change.
+
 - [x] (2026-09-09 21:03:49 UTC) Fresh final-result archive check on unchanged
   3fe/commit584c551 passed1/2.51s (wrapper4.668s), no input drift. README
   04844f58e4e5bebbfdb6a84d61c762d910bcb4547732c254118ef36b6c1414c6;
@@ -1632,12 +1787,104 @@ First slice has no migrations or external effects; rollback is only its exact re
 
 ## Outcomes
 
-The latest locally tested3fe0cafe checkpoint has3811 passed/23 explicit optional
+Post-result source30b8/README0967fa8c/guide92a static gates passed23:50:47UTC;
+the ordinary existing archive integration test passed1/4.30s at23:50:52UTC,
+raw d3a8ad05 and wheel186425e9/sdist196ca975. These checks preserve the latest
+live failure in delivered documentation rather than claim new model success.
+Independent post-result archive/static readback and Git delivery remain pending.
+
+Current30b8 live regression FAILED at23:35:50UTC; independent receipt94126dc4
+and raw-accounting supplement116f15d1 confirm both real command passes but no
+final VerifierVerdict after task-out-of-scope README.md denial. Six requests,
+32150 known tokens,zero unknown/outstanding/reserved; exact cleanup and unchanged
+unapplied target pass. This is not an API-key or strict-output-validation failure,
+and prompt-only read guidance has not established reliable scope choice. Keep
+the failed pre-cleanup bundle and one-use marker; no automatic paid retry.
+Pre-key59-document freezecf7b962a/digest10c21139,releasefd646c20 and receiver
+result67f344de retain the exact tested inputs. Documentation updates after this
+independent closure do not rewrite those historical hashes or results.
+
+Read-only follow-up located a possible task-bound read-schema enum seam in
+GatewayRuntimeToolCatalog, but allowed_paths are case-folded exact-or-descendant
+prefixes,not known regular files. A safe finite enum needs trusted frozen file
+metadata and cross-Harness diagnostic tests; suffix/wildcard guesses or enum
+membership as authorization are not acceptable. This is NOT_IMPLEMENTED and
+does not authorize schema,permission,retry or model changes. Session baseline
+work is separately in progress in the scoped8BF1tw clone,not yet integrated or
+accepted. Current main has no subsequent production edits.
+
+Historical pre-dispatch record follows; its one-attempt authority is now spent:
+
+The new private successor receivera5bb3edd has passed complete root reading and
+fresh bounded independent reviewb39b329c (97 synthetic controls). Root has accepted
+the11 current independent/raw prerequisite receipts and explicitly released one
+eligible attempt, conditional on the final complete Markdown freeze and short-lived
+private execution release. No key or request exists at this pre-dispatch entry.
+It binds30b8f476, current matrix/static, Docker/install and archive evidence; no
+historical pass replaces these current gates. Only
+one existing PydanticAI/openai:gpt-5-nano canary is eligible, with unchanged
+12-agent/24-request/32-tool/65536-token/600-active-second limits,900-second launcher
+wall cap and at most950-second outer termination/reporting envelope. The latter
+is cleanup grace, not additional model budget. Unknown detached descendants
+remain UNKNOWN/no-retry. No strict-validation relaxation, model upgrade, additional
+Harness qualification, target patch application or key in files/argv/sandboxes.
+
+The first prepared private receiver717aeb4b has not executed or received a key.
+Fresh review reproduced prequeued-input acceptance and an incomplete complete-line
+deadline. The original three-file bundle is retained unchanged with no release or
+attempt. Only a new private successor may correct those boundaries and add narrow
+known optional/archive receipt semantics; it requires complete root read and fresh
+independent review. This is not a new product/model failure or permission to retry
+a spent paid attempt. Main543-code30b8 and packaged documentation stay frozen.
+The exact717 independent verdict is FAILbbc27ba2:44 synthetic controls passed,
+2 failed; no full receiver/TTY/model invocation. The new private successor
+a5bb3edd is frozen and completely root-read/hash-checked; fresh independent
+synthetic review passedb39b329c. Root completely read and SHA-checked the original
+verdict; failures remain retained rather than relabeled by a later success.
+
+Local baseline implementation commit8fdf7eb now records51 scoped paths; source
+is still30b8. The earlier guidance commitfd958db and this commit are not yet pushed.
+The remote branch was last verified at65e04e5d and main at3fb09711, with PR7 OPEN/
+draft/CLEAN and no status checks. No merge or GitHub Actions invocation is claimed.
+
+The accepted baseline45-file candidate has now been integrated at21:51:44UTC,
+after independent runtime and static integration acceptance. The complete main
+source/dependency inventory is543 files, SHA256
+`30b8f4762e92da2c001b189b32a42fddba41cf9ebd8be6b1fee9924b82f874e6`.
+All498 prior inputs outside the45 targets remain exact. The new unified default
+matrix passed22:32:07UTC under private `agent-fleet-baseline-main-gates.JOTgxT`:
+3966 passes,23 explicit optional skips,3989 freshly collected/executed unique
+identities and zero failures/errors/gaps/duplicates/code drift. Raw result543c1bef,
+collectionda9301ee; independent terminal/static readback passed22:36:17UTC,
+sealda654c0c. The39 compatibility/deprecation warnings remain reported. Integration groups
+247/1752.17s,245/1142.93s,245/947.15s; other3228+23/1148.29s; serial1/9.20s.
+All six combined static gates passed
+21:57:47UTC: format457,lint,mypy387,115 schemas,offline99-package lock,diff0 and
+zero code drift (receipt d510a5ab). The new ordinary Docker29 gate passed at
+22:37:04UTC:29 passed/239.06s,241.36s wrapper,exit0,unchanged code and pinned
+daemon/image/endpoint. Current fresh installation gate also passed22:49:38UTC:
+3 passed/276.18s,278.518s wrapper,result0434e528,source and frozen docs unchanged.
+Independent optional readbacks now pass: Docker60497364 at22:55:26UTC (199terminal
+leases/681artifacts/66absentpaths), installed98088803 at23:02:32UTC (332resources/
+115schemas/13migrations,54released/18absentpaths). Frozen-document archive root
+execution passed1/2.85s at22:57:22UTC (result10f13408); independent readback
+84a0d527 passed23:06:01UTC with exact archived resources/import origins and
+unchanged runtime,source and held packaged documents. First physical Python
+baseline root CLI passed0/10.904s at22:54:07UTC
+(3unittest assertions/2EROFS30 refusals,unchanged source,normal cleanup); independent
+readbackcd66a97d/resultf0200038 completed23:06:20UTC and root accepted the narrow
+physical scope at23:10UTC. It is not a Session/cold-start/cohort/model claim.
+Baseline isolation acceptance was542 fresh independent identities
+plus six earlier exact-candidate controls,548 unique total, not548 fresh reruns.
+Physical baseline, Session/cold-start, final archives and main acceptance remain
+separate. No new paid call is authorized by this integration.
+
+The historical locally tested3fe0cafe checkpoint has3811 passed/23 explicit optional
 skips across3834 freshly executed identities,zero failures/errors/gaps/drift.
 Format433,lint,mypy365,schema108,offline99-lock and whitespace checks pass. Its
 target-bound hash component independently passed524 unique checks. Whole-matrix
 independent readback and pre-key archives passed before the contracted canary;
-final result-document archives passed1/2.51s and independent readback is pending. None of this
+final result-document archives passed1/2.51s and independent readback passed21:07:25. None of this
 is completion of all S1–S3 OKRs or a new live success. Historical092 acceptance
 remains3743 passed/23 skips; its strict-wire component507,diagnostic280 and warning36
 overlap full coverage. Historical c0c36e24 used34 fresh CLI plus3691 carried
@@ -1661,13 +1908,14 @@ The20:31 pre-key archives passed but predate these final result-document edits;
 fresh result archives subsequently passed21:03:49UTC as recorded above. No automatic
 paid retry is authorized.
 
-All11 prior scoped commits through a4952dd,including8afffe7/864ad43,were pushed with
-draftPR7 open at that SHA. New source commit584c551 and the result-document update
-are prepared for the next exact branch push/readback; main remains unchanged.
+All13 scoped commits through65e04e5,including584c551,were pushed with draftPR7
+read back at that exact SHA; base/main3fb0971 remains unchanged and branch Actions[].
 No merge or Actions run is claimed. Target-bound helper source3fe0cafe has passing full local tests,not
 accepted as reliable intent routing or current real-model success. Model-free
-business baseline implementation is separately contracted and isolated in a local
-clone,not merged or accepted. No Anthropic/Google credentials or requests,real
+business baseline implementation passed independent isolated offline acceptance
+and was transplanted into main as recorded above; combined default/static,
+optional and pre-key package gates pass, and local implementation commit8fdf7eb
+is not yet pushed or merged. No Anthropic/Google credentials or requests,real
 24-task campaign,new-Harness six-task live qualification or business baseline/
 cold-start acceptance has occurred. Keep the goal active until remaining objectives
 are genuinely verified; do not replace them with mock outcomes or relabel this
