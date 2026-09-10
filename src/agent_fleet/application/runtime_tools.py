@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
 from pydantic import Field
 
 from agent_fleet.application.gateway import ToolGateway
@@ -159,6 +161,61 @@ _APPROVAL_PROBE = RuntimeToolDefinition(
 )
 
 
+def _capture_read_scopes(paths: list[str]) -> tuple[str, ...] | None:
+    """Capture only a bounded, canonical subset suitable for a portable hint."""
+    if not paths or len(paths) > 32 or sum(len(path) for path in paths) > 4096:
+        return None
+    for path in paths:
+        if (
+            not path
+            or not path.isascii()
+            or any(ord(character) < 32 or ord(character) == 127 for character in path)
+            or any(character in path for character in "\\*?[]")
+        ):
+            return None
+        parsed = PurePosixPath(path)
+        if (
+            path == "."
+            or parsed.is_absolute()
+            or str(parsed) != path
+            or ".." in parsed.parts
+            or len(parsed.parts) > 64
+        ):
+            return None
+    return tuple(paths)
+
+
+def _read_scope_pattern(scopes: tuple[str, ...] | None, redactor: Redactor) -> str | None:
+    # Scan raw values before regex encoding can conceal a registered secret.
+    # Recheck on every advertisement, including after late secret registration.
+    if scopes is None or redactor.contains_secret_data(scopes):
+        return None
+    alternatives: list[str] = []
+    prefix, suffix = r"(?:^(?:", r")(?:/|$)|[^\x00-\x7F])"
+    size = len(prefix) + len(suffix)
+    for scope in scopes:
+        fragments: list[str] = []
+        for character in scope:
+            if "a" <= character.lower() <= "z":
+                fragment = f"[{character.lower()}{character.upper()}]"
+            elif character in ".^$+{}()|":
+                fragment = "\\" + character
+            else:
+                fragment = character
+            size += len(fragment)
+            if size > 8192:
+                return None
+            fragments.append(fragment)
+        if alternatives:
+            size += 1
+            if size > 8192:
+                return None
+        alternatives.append("".join(fragments))
+    # Non-ASCII input deliberately escapes this hint: Unicode casefold aliases
+    # (including Kelvin sign and long s) must reach the existing path predicate.
+    return prefix + "|".join(alternatives) + suffix
+
+
 class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
     """Translate narrow model calls into identity-bound `ScriptedAction` values.
 
@@ -186,6 +243,7 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         self._redactor = redactor
         self._run = run
         self._task = task
+        self._read_scopes = _capture_read_scopes(task.allowed_paths)
         self._agent = agent
         self._workspace = workspace
         self._sandbox_handle = sandbox_handle
@@ -213,7 +271,7 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         return tuple(item for item in definitions if actions[item.name] in self._allowed_tools)
 
     def _kind_definitions(self) -> tuple[RuntimeToolDefinition, ...]:
-        read_tools = [_LIST_FILES, _READ_FILE, _SEARCH_TEXT, _GET_DIFF]
+        read_tools = [_LIST_FILES, self._read_file_definition(), _SEARCH_TEXT, _GET_DIFF]
         if self._agent.effective_kind in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}:
             return tuple(read_tools)
         run_verification = self._run_verification_definition()
@@ -232,6 +290,17 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         if self._agent.effective_kind == AgentRole.VERIFIER:
             return (*read_tools, *verification_tools)
         return ()
+
+    def _read_file_definition(self) -> RuntimeToolDefinition:
+        definition = _READ_FILE.model_copy(deep=True)
+        pattern = _read_scope_pattern(self._read_scopes, self._redactor)
+        if pattern is not None:
+            properties = definition.parameters_json_schema["properties"]
+            assert isinstance(properties, dict)
+            path = properties["path"]
+            assert isinstance(path, dict)
+            path["pattern"] = pattern
+        return definition
 
     @property
     def records(self) -> tuple[RuntimeToolExecutionRecord, ...]:

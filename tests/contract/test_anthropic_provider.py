@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import socket
 from collections.abc import Callable
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 
 import httpx2
 import pytest
+from action_tool_fixtures import make_action_tools
 from pydantic_ai.models import override_allow_model_requests
 from test_pydantic_ai_runtime import RecordingCatalog, StaticSecretStore
 from test_runtime_budgets import _ledger
@@ -158,6 +160,48 @@ async def test_actual_sdk_exact_model_key_and_typed_role_output(
     assert _KEY not in received.content.decode()
     assert "ambient-must-not-be-used" not in str(received.headers)
     assert "ambient-must-not-be-used" not in received.content.decode()
+
+
+async def test_actual_sdk_projects_read_pattern_into_description_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = make_action_tools()
+    seen: list[dict[str, Any]] = []
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        body = json.loads(received.content)
+        seen.append(body)
+        read = next(tool for tool in body["tools"] if tool["name"] == "repo_read_file")
+        schema = read["input_schema"]
+        path = schema["properties"]["path"]
+        original = next(d for d in tools.catalog.definitions if d.name == "repo_read_file")
+        properties = original.parameters_json_schema["properties"]
+        assert isinstance(properties, dict) and isinstance(properties["path"], dict)
+        pattern = properties["path"]["pattern"]
+        assert isinstance(pattern, str)
+        assert read["strict"] is True
+        # Pinned Anthropic strict transformation moves pattern to description.
+        # Preserve this existing provider limitation; no regex enforcement claim.
+        assert "pattern" not in path and f"pattern: {pattern}" in path["description"]
+        assert re.search(pattern, "SRC/CANARY_CALC/CORE.PY")
+        assert re.search(pattern, "README.md") is None
+        assert re.search(pattern, "\u212a/\u017f")
+        assert schema["additionalProperties"] is False and set(schema["required"]) == {
+            "path",
+            "reason",
+        }
+        assert "minLength" not in path and "maxLength" not in path
+        assert "minLength: 1" in path["description"] and "maxLength: 4096" in path["description"]
+        return output_response(received, [output_block(body, AgentRole.ENGINEER, "engineer")])
+
+    clients = configure_transport(monkeypatch, respond)
+    runtime = PydanticAIRuntimeAdapter(StaticSecretStore(_KEY), Redactor([_KEY]))
+    with override_allow_model_requests(True):
+        await runtime.invoke(
+            tools.invocation, RuntimeInvocationServices(configuration=_CONFIG, tools=tools.catalog)
+        )
+    assert len(seen) == 1 and tools.gateway.calls == [] and tools.catalog.records == ()
+    assert all(client.is_closed for client in clients)
 
 
 async def test_actual_sdk_local_tool_loop_retains_headers_and_results(

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
+from itertools import product
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
 from pydantic import JsonValue
 
+import agent_fleet.application.runtime_tools as runtime_tools
 from agent_fleet.application.gateway import ToolGateway
 from agent_fleet.application.runtime_tools import GatewayRuntimeToolCatalog
 from agent_fleet.domain.errors import ErrorCode, FleetError
@@ -23,6 +28,7 @@ from agent_fleet.domain.models import (
     Workspace,
     WorkspaceKind,
 )
+from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.security import Redactor
 
 
@@ -43,6 +49,7 @@ def _catalog(
     redactor: Redactor | None = None,
     custom_role: str | None = None,
     allowed_tools: tuple[str, ...] | None = None,
+    allowed_paths: list[str] | None = None,
 ) -> tuple[GatewayRuntimeToolCatalog, RecordingGateway]:
     now = datetime.now(UTC)
     run = Run(
@@ -102,6 +109,9 @@ def _catalog(
         workspace_host_path=workspace.path,
     )
     gateway = RecordingGateway()
+    if allowed_paths is not None:
+        # Exercise defensive fallback even for legacy/unsupported mutable scopes.
+        task.allowed_paths[:] = allowed_paths
     return (
         GatewayRuntimeToolCatalog(
             gateway=cast(ToolGateway, gateway),
@@ -116,6 +126,191 @@ def _catalog(
         ),
         gateway,
     )
+
+
+def _read_schema(catalog: GatewayRuntimeToolCatalog) -> dict[str, Any]:
+    return next(
+        definition.parameters_json_schema
+        for definition in catalog.definitions
+        if definition.name == "repo_read_file"
+    )
+
+
+@pytest.mark.parametrize("role", list(AgentRole)[1:])
+def test_read_scope_hint_preserves_metadata_and_exact_component_semantics(role: AgentRole) -> None:
+    catalog, gateway = _catalog(role, allowed_paths=["src/core.py", "tests"])
+    schema = _read_schema(catalog)
+    validator = Draft202012Validator(schema)
+    for path in ("src/core.py", "SRC/CORE.PY", "src/core.py/child", "tests", "tests/unit/a.py"):
+        validator.validate({"path": path, "reason": "Inspect."})
+    for path in ("src", "src/other.py", "src/core.pyc", "tests2", "README.md", ".fleet"):
+        errors = list(validator.iter_errors({"path": path, "reason": "Inspect."}))
+        assert len(errors) == 1 and errors[0].validator == "pattern"
+    pattern = schema["properties"]["path"].pop("pattern")
+    assert pattern.startswith("(?:^(?:") and pattern.endswith(r"|[^\x00-\x7F])")
+    assert schema == runtime_tools._READ_FILE.parameters_json_schema
+    definition = next(item for item in catalog.definitions if item.name == "repo_read_file")
+    assert definition.description == runtime_tools._READ_FILE.description
+    assert definition.side_effect is False
+    assert gateway.calls == [] and catalog.records == ()
+
+
+def test_read_scope_hint_escapes_regex_literals_without_file_type_inference() -> None:
+    scope = "src/a.^$+{x}(y)|-!#,=.py"
+    catalog, _ = _catalog(AgentRole.ENGINEER, allowed_paths=[scope])
+    pattern = _read_schema(catalog)["properties"]["path"]["pattern"]
+    for path in (scope, scope.upper(), scope + "/directory/child"):
+        assert re.search(pattern, path)
+    for path in ("src/aX^$+{x}(y)|-!#,=.py", "src/a.py", "y", scope + "extra"):
+        assert re.search(pattern, path) is None
+
+
+@pytest.mark.parametrize(
+    "scopes",
+    [
+        [],
+        [""],
+        ["."],
+        ["/"],
+        ["/src"],
+        ["src/"],
+        ["./src"],
+        ["src//child"],
+        ["src/../child"],
+        ["src/./child"],
+        ["src\\child"],
+        ["src/*"],
+        ["src/?"],
+        ["src/[a]"],
+        ["src/child]"],
+        ["src/\x00"],
+        ["src/\n"],
+        ["src/\x7f"],
+        ["src/é"],
+        ["src/\u212a"],
+        ["src/\u017f"],
+        ["src/\ud800"],
+        ["0" * 4097],
+        [str(index) for index in range(33)],
+        ["/".join(["0"] * 65)],
+        ["src/core.py", "unicode/é"],
+        ["src", "tests/*"],
+        ["src", "."],
+    ],
+)
+def test_unsupported_scope_sets_fall_back_wholly(scopes: list[str]) -> None:
+    catalog, gateway = _catalog(AgentRole.ENGINEER, allowed_paths=scopes)
+    assert _read_schema(catalog) == runtime_tools._READ_FILE.parameters_json_schema
+    assert gateway.calls == []
+
+
+def test_read_scope_hint_exact_input_count_depth_and_rendered_bounds() -> None:
+    for scopes in (
+        [str(index) for index in range(32)],
+        ["0" * 4096],
+        ["0" * 2048, "1" * 2048],
+        ["/".join(["0"] * 64)],
+    ):
+        catalog, _ = _catalog(AgentRole.ENGINEER, allowed_paths=scopes)
+        pattern = _read_schema(catalog)["properties"]["path"]["pattern"]
+        assert len(pattern) <= 8192
+        assert all(re.search(pattern, scope) for scope in scopes)
+    over_input, _ = _catalog(AgentRole.ENGINEER, allowed_paths=["0" * 2048, "1" * 2049])
+    assert _read_schema(over_input) == runtime_tools._READ_FILE.parameters_json_schema
+    minimal, _ = _catalog(AgentRole.ENGINEER, allowed_paths=["0"])
+    overhead = len(_read_schema(minimal)["properties"]["path"]["pattern"]) - 1
+    letters, digits = divmod(8192 - overhead, 4)
+    exact = "a" * letters + "0" * digits
+    bounded, _ = _catalog(AgentRole.ENGINEER, allowed_paths=[exact])
+    assert len(_read_schema(bounded)["properties"]["path"]["pattern"]) == 8192
+    oversized, _ = _catalog(AgentRole.ENGINEER, allowed_paths=[exact + "0"])
+    assert _read_schema(oversized) == runtime_tools._READ_FILE.parameters_json_schema
+
+
+def test_read_scope_hint_has_no_false_negatives_for_bounded_path_predicate_examples() -> None:
+    components = ("a", "A", "k", "s", "1", ".hidden", "a+b", "a.b", "{x}", "(y)", "x|y")
+    scopes = ["a", "k/s", "a+b", "{x}/(y)"]
+    catalog, _ = _catalog(AgentRole.ENGINEER, allowed_paths=scopes)
+    pattern = _read_schema(catalog)["properties"]["path"]["pattern"]
+    admitted = 0
+    for depth in (1, 2, 3):
+        for parts in product(components, repeat=depth):
+            path = "/".join(parts)
+            if path_is_within(path, scopes):
+                assert re.search(pattern, path), path
+                admitted += 1
+    assert admitted > 300
+    for character in (*map(chr, range(128, 384)), "\u212a", "\u017f", "ß", "中", "😀", "\ud800"):
+        for path in (character, "outside/" + character, "outside/" + character + "/tail"):
+            assert re.search(pattern, path)
+    for path in ("\u212a/\u017f", "k/\u017f", "\u212a/s"):
+        assert path_is_within(path, scopes) and re.search(pattern, path)
+
+
+def test_read_scope_hint_is_frozen_fresh_and_isolated_without_io(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("Advertising tools must not access the filesystem or gateway")
+
+    with monkeypatch.context() as guard:
+        for name in ("open", "read_text", "read_bytes", "stat", "resolve", "iterdir"):
+            guard.setattr(Path, name, forbidden)
+        guard.setattr(RecordingGateway, "execute", forbidden)
+        original, gateway = _catalog(AgentRole.ENGINEER, allowed_paths=["src/core.py"])
+        other, _ = _catalog(AgentRole.ENGINEER, allowed_paths=["tests"])
+        first = next(d for d in original.definitions if d.name == "repo_read_file")
+        fresh = next(d for d in original.definitions if d.name == "repo_read_file")
+        assert first is not fresh
+        assert first.parameters_json_schema is not fresh.parameters_json_schema
+        original._task.allowed_paths[:] = ["elsewhere"]
+        first.parameters_json_schema["properties"] = {}
+        first.parameters_json_schema["required"] = []
+        assert _read_schema(original) == fresh.parameters_json_schema
+        assert _read_schema(other) != _read_schema(original)
+        assert (
+            runtime_tools._READ_FILE.parameters_json_schema
+            == runtime_tools._PathArguments.model_json_schema()
+        )
+        assert gateway.calls == [] and original.records == ()
+
+
+@pytest.mark.parametrize("late", [False, True])
+def test_read_scope_hint_checks_raw_registered_secret_before_regex_encoding(late: bool) -> None:
+    sentinel = "SyntheticScopeSecret"
+    redactor = Redactor([] if late else [sentinel])
+    catalog, gateway = _catalog(
+        AgentRole.ENGINEER, allowed_paths=["src/" + sentinel + ".py"], redactor=redactor
+    )
+    if late:
+        assert "pattern" in _read_schema(catalog)["properties"]["path"]
+        redactor.register_secret(sentinel)
+    schema = _read_schema(catalog)
+    assert schema == runtime_tools._READ_FILE.parameters_json_schema
+    assert sentinel not in str(schema) and "[sS][yY]" not in str(schema)
+    assert gateway.calls == [] and catalog.records == ()
+
+
+def test_read_scope_hint_does_not_change_executable_argument_validation() -> None:
+    catalog, gateway = _catalog(AgentRole.VERIFIER, allowed_paths=["src/core.py"])
+    for path in ("README.md", ".fleet", "src/core.py/../other", "\u212a/\u017f"):
+        catalog.validate(
+            RuntimeToolCall(
+                call_id="read",
+                name="repo_read_file",
+                arguments={"path": path, "reason": "Broker retains authority."},
+            )
+        )
+    for path in ("", "a" * 4097):
+        with pytest.raises(ValueError):
+            catalog.validate(
+                RuntimeToolCall(
+                    call_id="invalid",
+                    name="repo_read_file",
+                    arguments={"path": path, "reason": "Original local length bounds."},
+                )
+            )
+    assert gateway.calls == [] and catalog.records == ()
 
 
 def test_tool_definitions_are_role_specific_and_identity_free() -> None:

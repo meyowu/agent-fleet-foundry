@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import traceback
 from importlib import resources
 from pathlib import Path
@@ -133,6 +134,15 @@ async def test_actual_sdk_advertises_all_builtin_action_schemas_as_strict(
                     assert target[key] == value
         assert definition.model_dump_json() == originals[definition.name]
     if kind == "gateway":
+        read = wire["repo_read_file"]["parameters"]
+        path = read["properties"]["path"]
+        assert re.search(path["pattern"], "SRC/CANARY_CALC/CORE.PY")
+        assert re.search(path["pattern"], "src/canary_calc/core.py/descendant")
+        assert re.search(path["pattern"], "README.md") is None
+        assert re.search(path["pattern"], "\u212a/\u017f")
+        assert "enum" not in path
+        assert set(read["required"]) == {"path", "reason"}
+        assert "minLength=1" in path["description"] and "maxLength=4096" in path["description"]
         assert wire["run_verification"]["parameters"]["properties"]["command_id"]["enum"] == [
             "python-test"
         ]

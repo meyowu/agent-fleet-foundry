@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import socket
 import warnings
 from pathlib import Path
@@ -88,6 +89,60 @@ async def test_real_sdk_role_output(
     body: dict[str, Any] = json.loads(sent[0].content)
     assert body["generationConfig"]["responseModalities"] == ["TEXT"]
     assert KEY.encode() not in sent[0].content
+
+
+async def test_actual_sdk_preserves_read_pattern_in_json_schema_declaration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = make_action_tools()
+    seen: list[dict[str, Any]] = []
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        body = json.loads(received.content)
+        seen.append(body)
+        read = next(
+            declaration
+            for group in body["tools"]
+            for declaration in group["functionDeclarations"]
+            if declaration["name"] == "repo_read_file"
+        )
+        assert "strict" not in read and "parameters" not in read
+        schema = read["parameters_json_schema"]
+        path = schema["properties"]["path"]
+        original = next(d for d in tools.catalog.definitions if d.name == "repo_read_file")
+        properties = original.parameters_json_schema["properties"]
+        assert isinstance(properties, dict) and isinstance(properties["path"], dict)
+        assert path["pattern"] == properties["path"]["pattern"]
+        assert re.search(path["pattern"], "SRC/CANARY_CALC/CORE.PY")
+        assert re.search(path["pattern"], "README.md") is None
+        assert re.search(path["pattern"], "\u212a/\u017f")
+        assert schema["additionalProperties"] is False and set(schema["required"]) == {
+            "path",
+            "reason",
+        }
+        assert path["minLength"] == 1 and path["maxLength"] == 4096
+        return httpx2.Response(
+            200,
+            json=response_body(
+                [output_call(received, expected_output(AgentRole.ENGINEER, "engineer"))]
+            ),
+        )
+
+    sync, clients = install_transport(monkeypatch, respond)
+    with override_allow_model_requests(True):
+        async with open_google_model(
+            MODEL,
+            KEY,
+            Redactor([KEY]),
+            timeout_seconds=2,
+            terminal_outputs=terminals(AgentRole.ENGINEER),
+        ) as model:
+            await PydanticAIRuntimeAdapter.for_test_model(model).invoke(
+                tools.invocation,
+                RuntimeInvocationServices(configuration=CONFIG, tools=tools.catalog),
+            )
+    assert len(seen) == 1 and tools.gateway.calls == [] and tools.catalog.records == ()
+    assert all(client.is_closed for client in [*sync, *clients])
 
 
 @pytest.mark.parametrize("signature", [False, True])

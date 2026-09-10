@@ -168,22 +168,12 @@ class LangGraphRuntimeAdapter:
     ) -> AgentInvocationResult:
         mapped: FleetError | None = None
         try:
-            kind = require_runtime_invocation(
-                request,
-                selected_runtime=services.configuration.runtime_name,
-                adapter_runtime=_RUNTIME,
-                execution_kind=services.execution_kind,
-                supported_kinds=frozenset(AgentRole),
-                capabilities=self.capabilities,
-                has_tools=bool(services.tools.definitions),
-            )
-            model = self._model(services.configuration)
-            require_langgraph_policy()
-            reject_unsafe_openai_environment()
-            invocation = _Invocation(request, services, kind, model, self._redactor)
+            self._prepare_invocation(request, services)
             credential = self._resolve(services.configuration)
-            # Recheck serialized context after registering the selected credential.
-            invocation.check_context()
+            # A catalog can encode raw scope strings into a pattern. Regenerate
+            # from that trusted provenance after registering the selected key;
+            # scanning a retained encoded schema cannot detect the raw secret.
+            invocation = self._prepare_invocation(request, services)
             async with asyncio.timeout(services.configuration.timeout_seconds):
                 return await self._wait_owned(invocation, credential)
         except Exception as error:
@@ -193,6 +183,26 @@ class LangGraphRuntimeAdapter:
         if mapped is None:
             raise asyncio.CancelledError() from None
         raise detach_error(mapped) from None
+
+    def _prepare_invocation(
+        self, request: AgentInvocation, services: RuntimeInvocationServices
+    ) -> _Invocation:
+        # One snapshot binds admission, validators and wire schemas in each pass.
+        # Both passes are synchronous and create no client, graph or request.
+        definitions = services.tools.definitions
+        kind = require_runtime_invocation(
+            request,
+            selected_runtime=services.configuration.runtime_name,
+            adapter_runtime=_RUNTIME,
+            execution_kind=services.execution_kind,
+            supported_kinds=frozenset(AgentRole),
+            capabilities=self.capabilities,
+            has_tools=bool(definitions),
+        )
+        model = self._model(services.configuration)
+        require_langgraph_policy()
+        reject_unsafe_openai_environment()
+        return _Invocation(request, services, kind, model, self._redactor, definitions)
 
     async def _wait_owned(self, invocation: _Invocation, credential: str) -> AgentInvocationResult:
         task = asyncio.create_task(invocation.run(credential), context=Context())
@@ -221,6 +231,7 @@ class _Invocation:
         kind: AgentRole,
         model: str,
         redactor: Redactor,
+        definitions: tuple[RuntimeToolDefinition, ...],
     ) -> None:
         self.request, self.services, self.kind, self.model, self.redactor = (
             request,
@@ -246,7 +257,7 @@ class _Invocation:
             self.terminals["submit_fleet_patch"] = FleetPatch
         definitions = tuple(
             RuntimeToolDefinition.model_validate_json(item.model_dump_json())
-            for item in services.tools.definitions
+            for item in definitions
         )
         self.tool_names = frozenset(item.name for item in definitions)
         for item in definitions:

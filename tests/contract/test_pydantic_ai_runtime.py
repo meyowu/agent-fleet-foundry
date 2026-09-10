@@ -4,14 +4,23 @@ import asyncio
 import base64
 import logging
 import os
+import re
 import socket
 from http.cookiejar import CookieJar
 from importlib import resources
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 import pytest
+from action_tool_fixtures import (
+    ActionTools,
+    make_action_tools,
+    sdk_adapter,
+    tool_response,
+    wire_tools,
+)
+from action_tool_fixtures import configuration as action_configuration
 from openai import AsyncOpenAI as SDKAsyncOpenAI
 from openai import OpenAIError
 from pydantic_ai import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -23,6 +32,8 @@ from pydantic_ai.usage import RequestUsage
 
 import agent_fleet.adapters.runtime.pydantic_ai as runtime_module
 from agent_fleet.adapters.runtime.pydantic_ai import PydanticAIRuntimeAdapter
+from agent_fleet.application.gateway import ToolGateway
+from agent_fleet.application.runtime_tools import GatewayRuntimeToolCatalog
 from agent_fleet.domain.errors import ApprovalRequiredError, ErrorCode, FleetError
 from agent_fleet.domain.models import (
     AgentInvocation,
@@ -56,6 +67,34 @@ from agent_fleet.ports.secret_store import (
 RUN_ID = "run_00000000000000000000000000000001"
 TASK_ID = "task_00000000000000000000000000000001"
 AGENT_ID = "agent_00000000000000000000000000000001"
+SCOPE_KEY = "SyntheticLateScopeCollisionAbCd"
+
+
+def selected_key_scope_tools(mode: str) -> tuple[ActionTools, Redactor]:
+    """Synthetic raw scope exists only in the catalog unless explicitly requested."""
+    tools = make_action_tools()
+    tools.task.allowed_paths[:] = [
+        "src/ordinary.py" if mode == "late_no_collision" else f"src/{SCOPE_KEY}.py"
+    ]
+    shared = Redactor([SCOPE_KEY] if mode == "pre_registered" else [])
+    tools.catalog = GatewayRuntimeToolCatalog(
+        gateway=cast(ToolGateway, tools.gateway),
+        redactor=shared,
+        run=tools.run,
+        task=tools.task,
+        agent=tools.agent,
+        workspace=tools.catalog._workspace,
+        sandbox_handle=tools.catalog._sandbox_handle,
+        max_calls=12,
+    )
+    tools.invocation = tools.invocation.model_copy(
+        update={
+            "input": {"task": tools.task.model_dump(mode="json")}
+            if mode == "late_raw_context"
+            else {}
+        }
+    )
+    return tools, shared
 
 
 @pytest.fixture
@@ -107,6 +146,82 @@ class RecordingCatalog:
             name=call.name,
             content={"accepted": True},
         )
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-chat"])
+@pytest.mark.parametrize("path", ["src/canary_calc/core.py", "README.md"])
+async def test_actual_sdk_forwards_read_pattern_but_defers_path_authority_to_catalog(
+    monkeypatch: pytest.MonkeyPatch, provider: str, path: str
+) -> None:
+    tools = make_action_tools()
+    sent: list[httpx2.Request] = []
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        sent.append(received)
+        wire = wire_tools(received)["repo_read_file"]
+        assert wire["strict"] is True
+        pattern = wire["parameters"]["properties"]["path"]["pattern"]
+        assert bool(re.search(pattern, path)) is (path != "README.md")
+        if len(sent) == 1:
+            return tool_response(received, [("repo_read_file", {"path": path, "reason": "Probe."})])
+        assert len(sent) == 2 and len(tools.gateway.calls) == 1
+        return tool_response(
+            received,
+            [("submit_implementation_report", _implementation_report().model_dump(mode="json"))],
+            index=2,
+        )
+
+    runtime, clients = sdk_adapter(monkeypatch, respond)
+    with override_allow_model_requests(True):
+        result = await runtime.invoke(
+            tools.invocation,
+            RuntimeInvocationServices(
+                configuration=action_configuration(provider), tools=tools.catalog
+            ),
+        )
+    # Pinned ExternalToolset uses any_schema locally. This recording gateway
+    # proves routing only; the integration workflow checks actual persisted DENY.
+    assert len(sent) == 2 and len(tools.gateway.calls) == len(tools.catalog.records) == 1
+    assert tools.gateway.calls[0]["scripted"].resource.identifier == path
+    assert result.usage is not None and result.usage.tool_calls == 1
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-chat"])
+@pytest.mark.parametrize("mode", ["pre_registered", "late_collision", "late_no_collision"])
+async def test_actual_sdk_selected_key_scope_collision_is_checked_before_schema_encoding(
+    monkeypatch: pytest.MonkeyPatch, provider: str, mode: str
+) -> None:
+    tools, shared = selected_key_scope_tools(mode)
+    store = StaticSecretStore(SCOPE_KEY)
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        read = wire_tools(received)["repo_read_file"]
+        pattern = read["parameters"]["properties"]["path"].get("pattern")
+        assert read["strict"] is True and shared.contains_secret(SCOPE_KEY)
+        assert SCOPE_KEY.encode() not in received.content
+        assert bool(pattern) is (mode == "late_no_collision")
+        assert not pattern or re.search(pattern, f"src/{SCOPE_KEY}.py") is None
+        return tool_response(
+            received,
+            [("submit_implementation_report", _implementation_report().model_dump(mode="json"))],
+        )
+
+    _, clients = sdk_adapter(monkeypatch, respond)
+    runtime = PydanticAIRuntimeAdapter(store, shared)
+    with override_allow_model_requests(True):
+        await runtime.invoke(
+            tools.invocation,
+            RuntimeInvocationServices(
+                configuration=action_configuration(provider), tools=tools.catalog
+            ),
+        )
+    assert store.resolve_calls == sends == len(clients) == 1
+    assert all(client.is_closed for client in clients)
+    assert tools.gateway.calls == [] and tools.catalog.records == ()
 
 
 class StaticSecretStore:

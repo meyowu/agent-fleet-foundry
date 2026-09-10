@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import cast
@@ -39,8 +40,15 @@ from agent_fleet.domain.security import sha256_bytes
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "read_probe",
-    [None, "src/canary_calc/core.py", ".fleet", ".git", "tests/test_core.py"],
-    ids=["original", "scoped-file", "fleet-directory", "git-directory", "out-of-scope-file"],
+    [None, "src/canary_calc/core.py", ".fleet", ".git", "tests/test_core.py", "README.md"],
+    ids=[
+        "original",
+        "scoped-file",
+        "fleet-directory",
+        "git-directory",
+        "out-of-scope-file",
+        "readme",
+    ],
 )
 async def test_offline_pydantic_ai_roles_cross_gateway_and_preserve_fake_proof_gap(
     tmp_path: Path,
@@ -159,6 +167,20 @@ async def test_offline_pydantic_ai_roles_cross_gateway_and_preserve_fake_proof_g
             info.instructions or ""
         )
         descriptions = {tool.name: tool.description or "" for tool in info.function_tools}
+        read_schema = next(
+            tool.parameters_json_schema
+            for tool in info.function_tools
+            if tool.name == "repo_read_file"
+        )
+        read_path = read_schema["properties"]["path"]
+        assert read_path["minLength"] == 1 and read_path["maxLength"] == 4096
+        assert set(read_schema["required"]) == {"path", "reason"}
+        assert re.search(read_path["pattern"], "src/canary_calc/core.py")
+        assert re.search(read_path["pattern"], "README.md") is None
+        if read_probe is not None:
+            assert bool(re.search(read_path["pattern"], read_probe)) is (
+                read_probe == "src/canary_calc/core.py"
+            )
         assert (
             "TaskSpec.allowed_paths and forbidden_paths constrain reads too"
             in descriptions["repo_read_file"]

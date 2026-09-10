@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+import sqlite3
 from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, cast
@@ -24,7 +26,12 @@ from langgraph_fixtures import (
     output,
     payload,
 )
-from test_pydantic_ai_runtime import RecordingCatalog, StaticSecretStore
+from test_pydantic_ai_runtime import (
+    SCOPE_KEY,
+    RecordingCatalog,
+    StaticSecretStore,
+    selected_key_scope_tools,
+)
 from test_runtime_budgets import _ledger
 from test_runtime_conformance import expected_output, request
 
@@ -36,6 +43,7 @@ from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import (
     AgentRole,
     FleetPatch,
+    RuntimeCapability,
     RuntimeCredentialCheck,
     RuntimeToolDefinition,
 )
@@ -990,6 +998,236 @@ async def test_incompatible_tool_schema_fails_before_secret_access(
         )
     assert secrets.resolve_calls == 0 and catalog.calls == []
     assert clients == []
+
+
+@pytest.mark.parametrize(
+    "mode", ["pre_registered", "late_raw_context", "late_no_collision", "late_collision"]
+)
+async def test_selected_key_never_survives_in_actual_wire_as_encoded_scope(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    tools, shared = selected_key_scope_tools(mode)
+    store = StaticSecretStore(SCOPE_KEY)
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        body = json.loads(received.content)
+        read = next(tool for tool in body["tools"] if tool["name"] == "repo_read_file")
+        pattern = read["parameters"]["properties"]["path"].get("pattern")
+        assert read["strict"] is True and shared.contains_secret(SCOPE_KEY)
+        assert SCOPE_KEY.encode() not in received.content
+        assert bool(pattern) is (mode == "late_no_collision")
+        assert not pattern or re.search(pattern, f"src/{SCOPE_KEY}.py") is None
+        return output(received, [final_call(body, AgentRole.ENGINEER, "engineer")])
+
+    clients = configure_transport(monkeypatch, respond)
+    runtime = LangGraphRuntimeAdapter(store, shared)
+    services = RuntimeInvocationServices(configuration=CONFIG, tools=tools.catalog)
+    if mode == "late_raw_context":
+        with pytest.raises(FleetError) as observed:
+            await runtime.invoke(tools.invocation, services)
+        assert observed.value.code is ErrorCode.COMMAND_DENIED
+        assert observed.value.__cause__ is observed.value.__context__ is None
+        assert SCOPE_KEY not in str(observed.value)
+        assert clients == [] and sends == 0
+    else:
+        await runtime.invoke(tools.invocation, services)
+        assert sends == len(clients) == 1
+    assert store.resolve_calls == 1
+    assert all(client.is_closed for client in clients)
+    assert tools.gateway.calls == [] and tools.catalog.records == ()
+
+
+@pytest.mark.parametrize("phase", ["pre-key", "post-key"])
+@pytest.mark.parametrize(
+    "fault", ["schema", "regex", "duplicate", "terminal", "capability", "context"]
+)
+async def test_each_preparation_pass_rejects_invalid_catalog_or_context_before_client(
+    monkeypatch: pytest.MonkeyPatch, phase: str, fault: str
+) -> None:
+    shared = Redactor([SCOPE_KEY] if phase == "pre-key" and fault == "context" else [])
+    tools = make_action_tools()
+    read = next(d for d in tools.catalog.definitions if d.name == "repo_read_file")
+    invalid = read.model_copy(deep=True)
+    if fault == "schema":
+        invalid.parameters_json_schema["additionalProperties"] = True
+    elif fault == "regex":
+        properties = invalid.parameters_json_schema["properties"]
+        assert isinstance(properties, dict) and isinstance(properties["path"], dict)
+        properties["path"]["pattern"] = "["
+    elif fault == "terminal":
+        invalid = invalid.model_copy(update={"name": "submit_implementation_report"})
+
+    def invalid_now() -> bool:
+        return phase == "pre-key" or shared.contains_secret(SCOPE_KEY)
+
+    class ChangingCatalog(RecordingCatalog):
+        @property
+        def definitions(self) -> tuple[RuntimeToolDefinition, ...]:
+            if not invalid_now():
+                return (read,)
+            return (invalid, invalid) if fault == "duplicate" else (invalid,)
+
+    catalog = ChangingCatalog((read,))
+    if fault == "capability":
+        original = LangGraphRuntimeAdapter(None, shared).capabilities
+        monkeypatch.setattr(
+            LangGraphRuntimeAdapter,
+            "capabilities",
+            property(
+                lambda runtime: (
+                    frozenset({RuntimeCapability.STRUCTURED_OUTPUT}) if invalid_now() else original
+                )
+            ),
+        )
+    invocation = request("engineer")
+    if fault == "context":
+        invocation.input["private"] = SCOPE_KEY
+    store = StaticSecretStore(SCOPE_KEY)
+    clients = configure_transport(
+        monkeypatch, lambda _: pytest.fail("No send from invalid preparation")
+    )
+    with pytest.raises(FleetError) as observed:
+        await LangGraphRuntimeAdapter(store, shared).invoke(
+            invocation, RuntimeInvocationServices(configuration=CONFIG, tools=catalog)
+        )
+    assert store.resolve_calls == (0 if phase == "pre-key" else 1)
+    assert clients == [] and catalog.calls == [] and catalog.records == ()
+    assert observed.value.__cause__ is observed.value.__context__ is None
+    assert SCOPE_KEY not in str(observed.value)
+    if fault == "context":
+        assert observed.value.code is ErrorCode.COMMAND_DENIED
+    elif fault in {"duplicate", "terminal", "capability"}:
+        assert observed.value.code is ErrorCode.RUNTIME_CAPABILITY_MISSING
+
+
+@pytest.mark.parametrize("path", ["old", "new"])
+async def test_final_local_validator_matches_the_post_registration_wire_snapshot(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    shared = Redactor()
+    reads = 0
+    original = RuntimeToolDefinition(
+        name="repo_read_file",
+        description="Bounded read.",
+        parameters_json_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string", "pattern": "^old$"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    )
+
+    class ChangingCatalog(RecordingCatalog):
+        @property
+        def definitions(self) -> tuple[RuntimeToolDefinition, ...]:
+            nonlocal reads
+            reads += 1
+            current = original.model_copy(deep=True)
+            properties = current.parameters_json_schema["properties"]
+            assert isinstance(properties, dict) and isinstance(properties["path"], dict)
+            if shared.contains_secret(SCOPE_KEY):
+                properties["path"]["pattern"] = "^new$"
+            return (current,)
+
+    catalog = ChangingCatalog((original,))
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        body = json.loads(received.content)
+        read = next(tool for tool in body["tools"] if tool["name"] == "repo_read_file")
+        assert read["parameters"]["properties"]["path"]["pattern"] == "^new$"
+        if sends == 1:
+            return output(received, [call("repo_read_file", {"path": path}, "read-once")])
+        assert sends == 2 and len(catalog.calls) == 1
+        return output(received, [final_call(body, AgentRole.ENGINEER, "engineer")])
+
+    clients = configure_transport(monkeypatch, respond)
+    store = StaticSecretStore(SCOPE_KEY)
+    runtime = LangGraphRuntimeAdapter(store, shared)
+    services = RuntimeInvocationServices(configuration=CONFIG, tools=catalog)
+    if path == "old":
+        with pytest.raises(FleetError) as observed:
+            await runtime.invoke(request("engineer"), services)
+        assert observed.value.details["runtime_diagnostic"]["category"] == "tool_arguments"
+        assert sends == 1 and catalog.calls == []
+    else:
+        await runtime.invoke(request("engineer"), services)
+        assert sends == 2 and len(catalog.calls) == 1
+    assert reads == 2 and store.resolve_calls == len(clients) == 1
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize("path", ["src/canary_calc/core.py", "README.md"])
+async def test_actual_graph_read_pattern_refuses_outside_scope_before_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    tools = make_action_tools(role=AgentRole.VERIFIER)
+    budget = persist_action_tools(tmp_path, tools)
+    accounting = budget.begin_attempt(tools.invocation)
+    sends = 0
+    validations = 0
+    validate = tools.catalog.validate
+
+    def observe_validate(call: Any) -> None:
+        nonlocal validations
+        validations += 1
+        validate(call)
+
+    monkeypatch.setattr(tools.catalog, "validate", observe_validate)
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        body = json.loads(received.content)
+        read = next(tool for tool in body["tools"] if tool["name"] == "repo_read_file")
+        original = next(d for d in tools.catalog.definitions if d.name == "repo_read_file")
+        assert read["strict"] is True
+        assert read["parameters"] == action_wire_schema(original.parameters_json_schema, Redactor())
+        wire_path = read["parameters"]["properties"]["path"]
+        assert "minLength" not in wire_path and "maxLength" not in wire_path
+        assert (
+            "minLength=1" in wire_path["description"]
+            and "maxLength=4096" in wire_path["description"]
+        )
+        pattern = read["parameters"]["properties"]["path"]["pattern"]
+        assert bool(re.search(pattern, path)) is (path != "README.md")
+        if sends == 1:
+            return output(
+                received, [call("repo_read_file", {"path": path, "reason": "Probe."}, "read-once")]
+            )
+        assert sends == 2 and len(tools.gateway.calls) == 1
+        return output(received, [final_call(body, AgentRole.VERIFIER, "verifier")])
+
+    clients = configure_transport(monkeypatch, respond)
+    services = RuntimeInvocationServices(
+        configuration=CONFIG, tools=tools.catalog, accounting=accounting
+    )
+    if path == "README.md":
+        with pytest.raises(FleetError) as observed:
+            await adapter().invoke(tools.invocation, services)
+        assert observed.value.code is ErrorCode.RUNTIME_OUTPUT_INVALID
+        assert observed.value.details["runtime_diagnostic"]["category"] == "tool_arguments"
+        accounting.finish(RuntimeAttemptStatus.FAILED, error_code=observed.value.code)
+        assert sends == 1 and validations == 0
+        assert tools.gateway.calls == [] and tools.catalog.records == ()
+        assert budget.snapshot(tools.run.run_id).tool_calls == 0
+        # This is an earlier schema refusal, not a Broker denial or intent.
+        with sqlite3.connect(budget.database_path) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM tool_intents").fetchone()[0] == 0
+            assert (
+                connection.execute("SELECT COUNT(*) FROM tool_dispatch_claims").fetchone()[0] == 0
+            )
+    else:
+        result = await adapter().invoke(tools.invocation, services)
+        accounting.finish(RuntimeAttemptStatus.COMPLETED)
+        assert result.usage is not None and result.usage.tool_calls == 1
+        assert sends == 2 and validations > 0 and len(tools.gateway.calls) == 1
+    assert all(client.is_closed for client in clients)
 
 
 def test_original_action_schema_is_not_mutated() -> None:

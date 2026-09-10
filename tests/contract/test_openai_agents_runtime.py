@@ -6,6 +6,7 @@ import asyncio
 import atexit
 import json
 import logging
+import re
 import threading
 import warnings
 from collections.abc import Callable
@@ -24,7 +25,12 @@ from agents.tracing import processors as trace_processors
 from agents.tracing import setup as trace_setup
 from agents.tracing.provider import DefaultTraceProvider
 from openai.types.responses import ResponseFunctionToolCall
-from test_pydantic_ai_runtime import RecordingCatalog, StaticSecretStore
+from test_pydantic_ai_runtime import (
+    SCOPE_KEY,
+    RecordingCatalog,
+    StaticSecretStore,
+    selected_key_scope_tools,
+)
 from test_runtime_budgets import _ledger
 from test_runtime_conformance import expected_output, request
 
@@ -962,6 +968,14 @@ async def test_real_sdk_strict_actions_preserve_all_shipped_schemas(
         for definition in catalog.definitions:
             assert wire[definition.name]["strict"] is True
             assert wire[definition.name]["parameters"] == definition.parameters_json_schema
+        if kind == "gateway":
+            schema = wire["repo_read_file"]["parameters"]
+            path = schema["properties"]["path"]
+            assert path["minLength"] == 1 and path["maxLength"] == 4096
+            assert set(schema["required"]) == {"path", "reason"}
+            assert re.search(path["pattern"], "SRC/CANARY_CALC/CORE.PY")
+            assert re.search(path["pattern"], "README.md") is None
+            assert re.search(path["pattern"], "\u212a/\u017f")
         return output(received, [final_call(body, AgentRole.ENGINEER, "engineer")])
 
     clients = configure_transport(monkeypatch, respond)
@@ -971,6 +985,68 @@ async def test_real_sdk_strict_actions_preserve_all_shipped_schemas(
     assert result.usage is not None and result.usage.tool_calls == 0
     assert {tool.name: tool.model_dump_json() for tool in catalog.definitions} == originals
     assert sends == 1 and catalog.records == () and all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize("path", ["src/canary_calc/core.py", "README.md"])
+async def test_actual_sdk_read_hint_does_not_replace_catalog_path_authority(
+    monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    tools = make_action_tools()
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        body = json.loads(received.content)
+        read = next(tool for tool in body["tools"] if tool["name"] == "repo_read_file")
+        assert read["strict"] is True
+        pattern = read["parameters"]["properties"]["path"]["pattern"]
+        assert bool(re.search(pattern, path)) is (path != "README.md")
+        if sends == 1:
+            return output(
+                received, [call("repo_read_file", {"path": path, "reason": "Probe."}, "read-once")]
+            )
+        assert sends == 2 and len(tools.gateway.calls) == 1
+        return output(received, [final_call(body, AgentRole.ENGINEER, "engineer")])
+
+    clients = configure_transport(monkeypatch, respond)
+    result = await adapter().invoke(
+        tools.invocation, RuntimeInvocationServices(configuration=_CONFIG, tools=tools.catalog)
+    )
+    # Actual SDK strict wire is guidance here; catalog/Gateway still authorize.
+    assert sends == 2 and len(tools.gateway.calls) == len(tools.catalog.records) == 1
+    assert tools.gateway.calls[0]["scripted"].resource.identifier == path
+    assert result.usage is not None and result.usage.tool_calls == 1
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize("mode", ["pre_registered", "late_collision", "late_no_collision"])
+async def test_actual_sdk_selected_key_scope_collision_regenerates_safe_schema(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    tools, shared = selected_key_scope_tools(mode)
+    store = StaticSecretStore(SCOPE_KEY)
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        body = json.loads(received.content)
+        read = next(tool for tool in body["tools"] if tool["name"] == "repo_read_file")
+        pattern = read["parameters"]["properties"]["path"].get("pattern")
+        assert read["strict"] is True and shared.contains_secret(SCOPE_KEY)
+        assert SCOPE_KEY.encode() not in received.content
+        assert bool(pattern) is (mode == "late_no_collision")
+        assert not pattern or re.search(pattern, f"src/{SCOPE_KEY}.py") is None
+        return output(received, [final_call(body, AgentRole.ENGINEER, "engineer")])
+
+    clients = configure_transport(monkeypatch, respond)
+    await OpenAIAgentsRuntimeAdapter(store, shared).invoke(
+        tools.invocation, RuntimeInvocationServices(configuration=_CONFIG, tools=tools.catalog)
+    )
+    assert store.resolve_calls == sends == len(clients) == 1
+    assert all(client.is_closed for client in clients)
+    assert tools.gateway.calls == [] and tools.catalog.records == ()
 
 
 async def test_incompatible_strict_action_schema_never_reserves_or_dispatches(
