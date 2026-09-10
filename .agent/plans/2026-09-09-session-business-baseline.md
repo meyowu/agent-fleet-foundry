@@ -12,7 +12,7 @@ An already selected foreground Session can inspect one configured project comman
 review its exact source and isolation scope, explicitly authorize it once, then
 run and inspect the durable baseline without entering a model conversation.
 
-Intended interaction, not yet implemented:
+Implemented in the independently accepted isolated candidate; not yet integrated:
 
 ```text
 fleet chat .
@@ -255,6 +255,333 @@ run again. Local focus is intentionally not restored as authority after restart.
 
 ## Progress
 
+- [x] (2026-09-10 final parent closeout) Combined61e79cba now also has final
+  pre-live archive1/2.60s plus independent0203fb88 and one actual nano/PydanticAI
+  CLI E2E1/77.00s plus independent a9681755. These are separate from this plan's
+  warm model-free Session journey and do not count as live interactive Session,
+  Node or coldstart qualification. The source and9837 dependency files were
+  unchanged through the real-model run/audit. Result documents now record the
+  completed bounded test and remaining limitations; user requests stop, with no
+  further development, paid call, commit, push or merge in this turn.
+- [x] (2026-09-10 02:27:33 UTC actual audit) The new model-free physical
+  Session journey is independently PASS: sG3d6c/VERDICT.md
+  SHA53f97483d39a70a7ac7a0ef15f14ed35f6f014620aa96f9e2b8a36250f3ac62a;
+  JSONd580f7e4, deliverye7e35650. Root fully read/hash-checked. Six original
+  phases include actualshow, nine fixedSQLite snapshots/currentstate match,
+  confirm-only/noordinaryRun/model effects hold, all canonical owner/report/three
+  releasedlease/receipt bindings pass. Fresh exact native c8586d6f/worktree absence,
+  original-onlyGit registry and14unchangedtargetfiles pass; six boundedread-only
+  commands exit0. Source546/61e/runtime9837/predecessors unchanged. One warm
+  pinnedDocker Python baseline_observation_only path only: not physicalcancel,
+  Node,coldstart,liveS1businessorwholegoal. Earlier9jlfrb remainsFAILED_JOURNEY.
+
+- [x] (2026-09-10 02:24 UTC, original execution only) New z7zFWN prepare
+  wrapper84321 and execute wrapper19035 both ended0. Original Session PID15828
+  ended0 after25.982928124954924s, six complete phases including actual show,
+  full EOF/drain,73233 bytes,zero signals/transport failures/truncation. Run/show
+  raw phase hashes both b79243906b46df51994adfa174bdc9790ee171ad936ab783903684e9c410ad83.
+  Three real unittest cases pass and both source-write probes report EROFS30;
+  runner physical audit records exact container/worktree absence and unchanged
+  b74cc720 target. Execution-result45e49129, process5909f517 and originalterminal
+  e5ecc174 are retained; independent actual resource/DB/source readback is pending
+  in sG3d6c, so this entry does not yet award independent physical acceptance.
+  This new attempt is spent and never replayed. Older9jlfrb remains FAIL.
+
+- [x] (2026-09-10 02:20 UTC seal) Oracle-only z7zFWN passes fresh independent
+  qualification32ad0710: all67 cases2.47s (2.945743s wrapper0), eight direct
+  oracle groups and two static checks0. Full51 original cases retained plus16
+  additions; only match_database function changed, protocol439301bd unchanged.
+  Source546/61e and9837 runtime checks hold; new attempt absent. Root fully read
+  and hash-checked finaldelta/contract/HANDOFF/bundle32fb5e51 and verdict, now
+  releases prepare-only in root-prepare-release.json. This is not physical PASS;
+  actual execution requires separate prepare readback and release. No pytest
+  overlap: independent parent was terminal before root's full matrix began.
+
+- [ ] (2026-09-10 01:55 UTC) The one actual9jlfrb journey is FAIL and spent:
+  root parent84055 exited3; actual Session PID75428 exited0 after16.078463666s,
+  complete untruncated66905-byte drain, no signal/transport failure. Selection,
+  plan, preconfirm refusal and confirmation-only checkpoint completed; run
+  returned observed/command exit0/cleanup_complete=true. The private
+  match_database oracle then raised unexpected_recovery_scope, so actual Session
+  show and its final physical audit were NOT reached. Root raw terminala39b9a1f,
+  execution resultc76bdfcd, process91d87f58 and run DBaf441c3a are retained.
+  SQLiteBaselineStore.show:1456-1473 returns the resource snapshot digest whenever
+  owner_claim_id exists, even after successful cleanup; the null-only private
+  assertion contradicts that existing contract. Fresh independent actual-result
+  audit confirms this diagnosis and is reconciling exact physical resources.
+  No product defect/fix, retry or full physical PASS is inferred. No paid request.
+
+### Post-run oracle correction and stage reordering — before successor edits
+
+Preserve the complete failed9jlfrb attempt, predecessor scripts and all receipts;
+never replay its Session or baseline. Root will integrate the separately accepted
+ten-file read-scope candidate after the independent failed-journey audit releases
+the old938589 source hold. This explicitly reorders private qualification work,
+not acceptance: combined61e79cba must still pass all full/default/static/optional
+and physical gates before a new paid test or completion claim. The new physical
+bundle will bind combined546/61e79cba and the exact prospective map whose live
+bytes root verifies at integration. The old actual attempt stays FAIL, not PASS.
+
+One private Writer may copy the frozen9jlfrb core files into a NEW sibling and
+change only source/manifest/path bindings plus match_database's recovery-scope
+oracle and its direct tests. Keep protocol439301bd byte-identical. Reconstruct
+BaselineResourceSnapshot from the exact already-captured execution, owner claim,
+dispatch and canonical lease payloads; before any owner require null, afterward
+require equality with that typed full snapshot's digest. Do not merely accept any
+nonnull hash, hide the field, call show to supply its own expected answer, or
+change production/store/permissions/cleanup/command predicates. Test the actual
+retained run response against retained DB bytes; null-with-owner, forged/stale
+scope, altered execution/lease/claim, and unexpected rows must fail. Update the
+older synthetic retained-record fixture to reconstruct the documented digest,
+without editing the original evidence. All original51 controls must remain;
+retained actual input hashes, every revised source/test snapshot and failure
+receipt stay separate. Exact current source checking waits until root integrates.
+
+Fresh independent review and all private synthetic/static controls remain
+mandatory before a new prepare/execute release. That next attempt is one new
+model-free fixture/Session, never an extension or replay of the spent attempt.
+Root may run combined full offline gates while the independent private bundle is
+reviewed, but limits all pytest parents to three globally and does not edit frozen
+main code or public documents during the matrix. No new paid budget or provider
+key is part of this correction.
+
+- [x] (2026-09-10 01:53 UTC) Root's one physical fixture preparation exited0
+  on original parent28211. New target HEAD51ea2207 has14 committed files and
+  unchanged fixture manifestb74cc720. Setup is registration-only, not bootstrap:
+  one Project, two existing policy events and13 migrations; all Conversation,
+  baseline, Run/Task/artifact/tool/model/evaluation rows are zero. Explicit Git
+  argv and original-only registry target only new9jlfrb; old helper default is
+  recorded unusable. Prepare resultb89fb1c6, setupcd19d0c5 and original terminal
+  d9dbb99c are retained. Source546/938589 and9837 runtime hashes match. Root read
+  these records and now separately releases exactly one model-free public Session
+  execution and one pinned-Docker baseline under the frozen contract; no replay,
+  provider key/request, patch application or new image/dependency authority.
+- [x] (2026-09-10 01:52 UTC) Independent successor pre-execution qualification
+  is PASS: private OuKNWZ verdictab57433c/JSONcfd1e930/deliverybd5366a0,
+  root completely read/hash-checked. Fresh51 pass2.48s pytest/2.954274459s
+  child-wrapper interval; seven original semantic groups pass; Ruff/format0.
+  A verifier-only wrong argv index made its initial outer wrapper exit1 after
+  the successful pytest child. Original script/traceback remain retained; only
+  a new private replay's index lookup changed, no suite/candidate rerun. Source
+  546/938589, runtime9837 and all predecessor/revision bytes remain unchanged.
+  Root now releases exactly one prepare-only stage in new9jlfrb, not the public
+  Session or Docker execution. Physical acceptance and broader OS startup/storage
+  guarantees are not inferred from these controls.
+- [ ] (2026-09-10, successor freeze before physical stages) Private9jlfrb
+  bundle71d16ec6 is frozen; root read all runner/protocol/test/contract deltas
+  and complete HANDOFF84bc81f5, then checked hashes. Runner5949c861,
+  protocol439301bd and contract585bb287 preserve source546/938589 and runtime9837.
+  Writer final51 synthetic cases pass3.58s pytest/3.964583083s wrapper,exit0;
+  Ruff check/format both0. Its revision001 and003 static failures, revision002's
+  50 passes and final004 each retain source snapshots and raw receipts under
+  manifestd047fcb5. No old fixture/default was modified. Fresh independent
+  replay is released on these exact bytes; physical prepare/execute are not.
+
+- [x] (2026-09-10 01:29:45 UTC seal) Independent physical-bundle review is
+  terminal FAIL: VERDICT.md1ba1479c, VERDICT.json3c8c77d1 and delivery0988ade2,
+  all root read/hash-checked. Independent35 pass/0.89s but three pure/virtual
+  counterexample commands exit1. Main546/938589 and9837 runtime inputs remain
+  unchanged; physical attempt is absent. Root released only the new private
+  successor preparation below, not either physical stage. All old bytes retained.
+
+- [ ] (2026-09-10 01:29 UTC, before successor edits) The frozen physical
+  bundle D9T4et/b20a7b9b is rejected before setup. Independent unchanged35 tests
+  pass, but additional pure/virtual controls reproduce four blockers: the reused
+  fixed_git keyword default still targets the old standalone fixture; complete
+  JSON with pending UTF8 bytes is accepted; output first observed after the
+  deadline is accepted; an operator-triggered SIGINT is omitted from the receipt.
+  A fifth control shows exited-leader/no-EOF closes the pending output pipe;
+  that case already fails normal acceptance, but drainage ownership is unproven.
+  Root read the complete scripts, contract, manifest, tests and all three
+  independent facts files. No setup, Git mutation, Session or Docker was run.
+
+### Private physical-bundle successor contract — 2026-09-10 01:29 UTC
+
+After the independent FAIL seal, one private Writer may create a new sibling
+bundle only; the original bundle and old standalone fixture/evidence are immutable.
+No production code, test oracle, main source, provider setting or dependency may
+change. Preserve the accepted546/938589 source and existing9837-runtime binding,
+original three-test fixture hashes, exact daemon/image, staged one-attempt design
+and all prior typed DB/resource checks. This is preparation/synthetic testing only;
+root must release physical prepare and execution separately after fresh review.
+
+Repair only the demonstrated private harness faults. Replace the reused old
+prepare entrypoint with an explicit local fixture setup using the same public
+configuration/registration operations and exact commands. Every Git command must
+pass cwd=the new TARGET explicitly; audit all reused helper defaults and reject
+old-target output paths before any setup. Do not patch helper function defaults,
+product methods, provider APIs or transport implementations. Synthetic recording
+controls must exercise the actual setup command construction without running Git,
+prove all three mutation commands and both registry reads use the new target,
+and prove no path under the old fixture is writable through this bundle.
+
+Do not complete a response while the incremental decoder has pending bytes.
+Retain strict duplicate-key/extra-document rejection and bounds; cover incomplete
+2/3/4-byte UTF8 suffixes, split continuations and genuine split Unicode positives.
+Check elapsed time after each read and before publishing completion, with late
+output recorded as timeout rather than success. Persist all requested SIGINTs
+across finish/retained observation, including operator interruption and signal-
+request failure, and ensure interrupted shutdown cannot satisfy the normal
+no-signal success predicate. Keep the original five-minute review expiry.
+
+If the leader has exited without pipe EOF, keep the pending drain owned and
+record that separately from a live process. Publish a failed receipt before
+retained observation; late drain/exit must never upgrade failure to PASS. No kill,
+global sweep, deletion or replay. Initialize ownership fields before spawning;
+if setup fails after spawning, retain the exact child/pipe for the same failure
+shutdown path. Bound and explicitly report any receipt/transport failure rather
+than losing an original child behind a constructor exception. Add narrow virtual
+and real-synthetic-child regression controls; no physical cancellation claim.
+
+Freeze successor scripts/tests/contract/manifest only after its own full private
+synthetic cohort plus Ruff check/format pass. Preserve failures in separately
+identified receipts. A fresh Verifier must replay the original counterexamples
+and all successor controls without modifying the candidate. Root then completely
+reads the final delta and checks all hashes before any physical stage release.
+
+- [x] (2026-09-10 00:49:37 UTC) Root integrated exactly11 accepted paths with
+  apply_patch after full production diff read and exact preimage checks. Main546
+  now equals the entire independent938589 source closure;535 other prior inputs,
+ 9837 previously inventoried runtime files and both then-held packaged documents
+ remained unchanged. Private UJKV7V before4b9fa625/after8bf314cd receipts bothPASS.
+ Initial read-only helper mistook site-relative dependency keys for absolute paths
+ and exited1 before any edit; corrected lookup used the recorded site root. No
+ source/test oracle changed. Result/user/architecture/security/schema documentation
+ is being updated separately; complete main gates still remain pending.
+
+### Physical Session qualification contract — 2026-09-10 00:55 UTC
+
+Root authorizes preparation of one private, model-free physical Session smoke
+bundle, not immediate execution. Bind execution to an exact accepted source freeze
+and existing pinned daemon/image; if source changes before dispatch, stop and
+rebind/review before a new attempt. Use one new generated clean Git target and
+private Fleet state with the original three-test invoice/read-only/scratch fixture
+from the accepted standalone smoke. Register through the existing fixture-only
+Project/config/Safe whole-repository path (not public bootstrap). No image pull,
+build, dependency install, new model/key, global trust or Docker changes.
+
+Use one unmodified isolated public `python -I -B -u -m agent_fleet.cli.app chat
+TARGET` child with a cleared, explicit environment and no provider credentials.
+Wait for normal selection, then drive complete output-delimited responses:
+`/baseline plan python-baseline-smoke`; a preconfirmation `/baseline run` must
+refuse without any table/schema fingerprint change; `/confirm ACTUAL_CODE` must
+produce exactly one available authorization with zero owners/dispatch/resources;
+only then `/baseline run` may execute once, followed by `/baseline show` and EOF.
+Codes come from fully parsed original output, not guessed strings/substrings.
+Preserve complete bounded output, original exits, deadlines and all checkpoints.
+
+At selection and each phase, retain bounded typed SQLite backups, full noninternal
+table/schema fingerprints and canonical payload hashes. After normal selection,
+conversation metadata and unrelated tables stay unchanged, with zero Run/Task/
+Agent/Turn/artifact/tool/model/attempt rows. Baseline rows remain separate. The
+Session's report must match persisted exact identities, status, hashes and one
+consumed authorization/owner/dispatch/observation/report. Controller PID must be
+the actual Session process. Require all three genuine unittest outcomes, both
+EROFS30 source-write refusals, inspected nonroot/readonly mounts/bounded scratch,
+approved/materialized/post-run source equality and unchanged original target.
+Verify three released leases, exact recorded native-container absence, exact
+worktree absence and original-only Git registry. Retain fixture/state/evidence.
+
+The root-read original standalone helper may be imported as a hash-bound private
+dependency for its explicit fixture setup, read-only platform/source/DB snapshot
+and resource auditing functions. Never invoke its old main/check_code/run/review
+entrypoints unchanged or fabricate a CLI envelope; clearly distinguish any
+standalone corroborating show from the mandatory actual Session show. No product
+method, provider, Docker or secret/runtime seam may be replaced with a fake.
+Provide a staged prepare/execute interface and an exclusive once marker before
+starting a Session execution attempt. Root must read and independently qualify
+the immutable bundle before releasing execution. Review/input timeout60s and
+bounded execution timeout360s do not extend the original five-minute review;
+on uncertainty retain ownership and evidence, request normal child shutdown/drain,
+never replay, sweep or infer Docker cleanup from a killed process. This one
+successful path does not qualify active physical cancellation, Node, cold starts,
+S1 business oracle or live-model acceptance.
+
+- [x] (2026-09-10 00:49 UTC) Root read complete successor HANDOFF and fresh
+  independent VERDICT, checked their hashes, and accepts the narrow offline slice.
+  Candidate546/93858963,patch85ffc734 stays frozen in the isolated clone. Writer
+ 604 unique current cases pass:50 new,404 existing Session,150 standalone; no
+ failures/errors/skips, two existing standalone warnings. Independent62 pass:
+ 50 new (201.22s pytest/203.563s wrapper),7 private adversarial (30.47s/32.075s),
+ 5 unchanged security (3.94s/6.264s); six fresh static gates all0. Verifier reconciled
+ Writer404/150 separately, not as independent replays. Seal3f7b3917 at00:40:27UTC,
+ VERDICTc834ddbd in private v9c8fy. Source/9837 runtime files remained unchanged.
+ Readback verifies49 private DBs; two intentional uncertainty fixtures retain two
+ Git workspaces and six nonreleased logical leases. No resources were deleted or
+ recovered. Worker separately retains three workspaces/84 logical fixture leases.
+ Main integration, combined quality/package gates and physical Session acceptance
+ remain pending; synthetic Docker is not native container or whole-S2 proof.
+
+- [x] (2026-09-10 00:33 UTC) Worker successor closure is terminal:50 new,
+  404 legacy Session and150 standalone baseline tests pass,604 distinct retained
+  identities,all original exits0 and no source drift. Root read the original
+  remaining results/logs and checked hashes: legacy404 passed864.56s/867.009s
+  wrapper,receipt26104796541390d13c5d0346f194279f1f0b5891e1f2b953c33187cfcc38eb5b;
+  baseline150 passed376.98s/380.826s wrapper,2 existing JUnit warnings,
+  receipt970449887ce654fe73734823b5417653d5ba2fa8c89495c14729dd4f19e69652.
+  Independent seven-control result a26b503f also root-read at its governing
+  command/identity/result fields and hash-checked:7 passed,32.075s wrapper,
+  no source/dependency drift. Full independent new50 now runs alone with all
+  Writer test parents stopped,original timeouts unchanged. No main integration
+  or whole-suite/package/live acceptance is inferred from this component closure.
+
+- [x] (2026-09-10 00:30 UTC) Worker reports successor standalone150 terminal0,
+ 380.826s wrapper and no source drift; legacy404 remains running. Independent
+ verifier reports seven fresh private non-cancellation controls passed,32.075s
+ wrapper, with unchanged candidate/dependency identities. They check same-
+ connection admission, callback-time expiry rollback, UI notification inability
+ to bypass durable metadata checks, actual lazy factory under secret/runtime/
+ history sentinels and prior-focus retention after rejected plan/run. These
+ reports are pending root receipt readback and final independent verdict; full
+ new50 independent replay and main integration are not yet complete.
+
+- [x] (2026-09-10 00:23 UTC) Root read the successor new-test result and original
+  log and checked receipt hashes:50 passed/267.43s,270.26s wrapper,exit0,0failure/
+  error/skip/source drift,receipt7911d1e934c590c5ce65dcd1004ecf691e653ae69d8e9df8d12783ce37b61396.
+  All six successor static commands exited0,receiptc27c7ac4a0944ab9c67522b9b4d2ea838cf5c0b5b088adf3b6c2bf773bb1112a;
+  mypy covers src/tests389 files,not the additional root script scope. These are
+  Worker-executed original receipts,not fresh independent replay or main gates.
+  Legacy404/standalone150 and independent acceptance remain pending; all eleven
+  successor files stay frozen and main30b8 is unchanged.
+
+- [ ] (2026-09-10 00:17 UTC) Writer froze successor938589639808c80d8b3168e06ebef07a269f513f12efdbad957316bc919e8fb8
+  (546 source inputs,11 owned files,patch85ffc734). Targeted corrective29 cases
+  passed20.84s and mypy389 passed before this freeze; these do not replace the
+  fresh new50/legacy404/static cohorts now running. Successor standalone150
+  follows in a freed slot. Independent verifier starts read-only review now and
+  waits for a global pytest slot before fresh behavioral controls. Preserve
+  predecessor33ff's40pass/2fail new tests,404pass Session,150pass standalone,
+  test-only mypy failure and independent production cancellation finding.
+
+- [x] (2026-09-10 00:10 UTC, before successor edits) Root freezes the narrow
+  routing correction within existing ownership: optional trusted RAM-only
+  per-attempt on_admitted notification in baseline plan/run, after all local
+  busy/selection/focus/authorization rejection checks and immediately adjacent
+  to child-task registration without await. The CLI notification only marks its
+  captured attempt; show changes presentation mode only after service success.
+  Restore precise previous mode after a rejected async attempt terminates, but
+  retain captured baseline ownership after an admitted failure for cleanup/cancel.
+  Keep same-transaction metadata/generation validation and existing atomic claims;
+  the callback is neither durable admission nor authority. Add rejected show,
+  plan and run followed by ordinary /cancel regressions, plus admitted-failure
+  retention. No shared stale foreground flag as the admission oracle, no new
+  persistent schema or permission, and no changes outside the original11 files.
+- [x] (2026-09-10 00:10 UTC) Predecessor33ff's standalone baseline compatibility
+  cohort is terminal150 passed/276.84s (280.454s wrapper),2 warnings,exit0 and
+  no code drift. Legacy Session/model-profile cohort is still running. This
+  acceptance is not carried as fresh successor execution after production repair.
+
+- [ ] (2026-09-10 00:05 UTC) Independent production read-through found a
+  cancellation-routing defect in first frozen chat.py: baseline_focus and
+  progress suppression are set before service admission, then retained after
+  a denied plan/show. In a waiting ordinary Run, later /cancel can incorrectly
+  call baseline_cancel(None) rather than cancel that Run. Source-level finding
+  only so far; no dynamic reproduction or candidate acceptance is claimed.
+  Writer must preserve active frozen test receipts, then repair admission/focus
+  rollback and add an exact negative regression in the owned successor files.
+  All prior no-overlap, cancellation-drain and standalone compatibility criteria
+  remain in force; this does not authorize a new capability or main mutation.
+
 - [ ] (2026-09-10 00:02 UTC) Writer's first frozen11-file candidate33ff32ae
   produced40 passes and2 failures in228.28s (232.071s wrapper). Both failures
   are the new cross-process fixture passing Path where get_project_by_root
@@ -299,9 +626,10 @@ run again. Local focus is intentionally not restored as authority after restart.
   not singular `conversation.py`. Root verified the actual file/class and corrected
   only that production ownership path. All other seven production and three test
   paths remain unchanged; no new alternate module or scope expansion is allowed.
-- [ ] Scoped implementation and immutable handoff.
-- [ ] Focused/static/full compatibility checks with exact persisted evidence.
-- [ ] Fresh independent verdict, root integration and combined-main acceptance.
+- [x] Scoped implementation and immutable successor handoff938589.
+- [x] Focused/static/legacy compatibility checks with exact persisted evidence.
+- [x] Fresh independent offline verdict and exact root integration.
+- [ ] Combined-main quality/package gates and physical Session qualification.
 
 ## Discoveries
 
@@ -330,10 +658,26 @@ run again. Local focus is intentionally not restored as authority after restart.
 
 ## Outcomes
 
-The isolated-clone implementation and tests now exist, but the first frozen
-candidate failed two new fixture controls and mypy. A test-only successor and
-complete legacy/independent acceptance remain pending. No main integration,
-physical Docker execution, model call, commit or whole-goal acceptance is claimed
-for this Session slice. The root-checkout package and live receipts are separate.
+The successor938589 is independently accepted for the narrow offline Session slice
+after correcting the predecessor's fixture and production routing defects. Root
+integrated its exact11 paths at00:49:37UTC. Worker604 and independent62 case counts
+overlap; they are not a combined full-suite count. All predecessor failures remain
+retained. Physical9jlfrb execution is now recorded but the complete journey is
+FAIL: three actual tests and exact resource cleanup independently pass, while the
+private null-only recovery oracle stopped before show. AuditjZHtiG/VERDICT.md
+SHA b94d9dc82791ea90b99bc9125b3a73e5bc44d9d795781e675fcb4f829c1deb51
+sealed that distinction and released source hold. No product fix is indicated.
+Root integrated read-scope10 at02:10:20UTC, yielding546/61e79cba with Session11
+unchanged. New oracle-only z7zFWN binds this combined source and now has independent
+physical PASS53f97483 for its one complete model-free journey, including actual
+show and exact cleanup. The predecessor remains failed. Combined main default
+matrix passed4093 with23 skips/4116 unique at02:45:47UTC; all six statics pass,
+independently reconciled by CQfxc3/4788e9f7. Optional Docker29 and installed3 now
+pass, independently sealed5c428a0e and8402821b; final pre-live archives now
+pass1/2.60s with independent0203fb88. The separate parent real nano/PydanticAI
+CLI E2E passes1/77.00s with independent a9681755; it is not live interactive
+Session acceptance. Post-live result wording is not rebuilt into those archives.
+Node/coldstart/cancellation scope remains separate. No additional model call,
+commit or whole-goal acceptance is claimed for this Session slice; work stops.
 The standalone first Python smoke and current qualification work are recorded in
 the preceding baseline and parent S1–S3 plans, not counted as this slice's evidence.

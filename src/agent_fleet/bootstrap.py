@@ -513,6 +513,7 @@ def build_container(
         model_profiles=model_profiles,
         readiness=ReadinessService(repository, profiler, config, active_redactor),
         recovery=SessionRecoveryService(recovery, conversation_store, clock),
+        baseline_factory=lambda: build_baseline_container(root, redactor=active_redactor).service,
     )
     return ApplicationContainer(
         state_root=root,

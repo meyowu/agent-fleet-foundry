@@ -32,6 +32,8 @@ from agent_fleet.domain.models import (
 from agent_fleet.domain.security import canonical_json_hash
 from agent_fleet.domain.session_review import (
     ApprovalReview,
+    BaselineSessionBinding,
+    BaselineSessionReview,
     ModelSelectionReview,
     OrganizationReview,
     PatchReview,
@@ -49,8 +51,15 @@ _MAX_ISSUED_CODES = 4096
 
 @dataclass(frozen=True)
 class _Ticket:
-    selection: SessionSelection
-    expected: PatchReview | OrganizationReview | ApprovalReview | PlanReview | ModelSelectionReview
+    selection: SessionSelection | BaselineSessionBinding
+    expected: (
+        PatchReview
+        | OrganizationReview
+        | ApprovalReview
+        | PlanReview
+        | ModelSelectionReview
+        | BaselineSessionReview
+    )
     issued_at: datetime
     expires_at: datetime
 
@@ -85,6 +94,7 @@ class SessionReviewService:
         self.code_factory = code_factory
         self._tickets: dict[str, _Ticket] = {}
         self._issued_codes: set[str] = set()
+        self._baseline_codes: set[str] = set()
         self._lock = Lock()
 
     def _run(self, selection: SessionSelection) -> Run:
@@ -280,12 +290,13 @@ class SessionReviewService:
 
     def _issue(
         self,
-        selection: SessionSelection,
+        selection: SessionSelection | BaselineSessionBinding,
         expected: PatchReview
         | OrganizationReview
         | ApprovalReview
         | PlanReview
-        | ModelSelectionReview,
+        | ModelSelectionReview
+        | BaselineSessionReview,
     ) -> View:
         now = self.clock.now()
         with self._lock:
@@ -309,6 +320,11 @@ class SessionReviewService:
             ):
                 raise _invalid("A unique bounded review code could not be created.")
             expires_at = now + _REVIEW_LIFETIME
+            if isinstance(expected, BaselineSessionReview):
+                expires_at = min(expires_at, expected.expires_at)
+                if expires_at <= now:
+                    raise _invalid("The original baseline review has expired.")
+                self._baseline_codes.add(code)
             self._tickets[code] = _Ticket(selection, expected, now, expires_at)
             self._issued_codes.add(code)
         return {
@@ -319,6 +335,38 @@ class SessionReviewService:
                 f"Review this exact change, then enter /confirm {code}; /dismiss cancels it."
             ),
         }
+
+    def confirmation_family(self, code: str) -> Literal["baseline", "ordinary", "unknown"]:
+        """Classify consumed codes too, so they never fall through into history."""
+        with self._lock:
+            if code in self._baseline_codes:
+                return "baseline"
+            return "ordinary" if code in self._issued_codes else "unknown"
+
+    def prepare_baseline(self, expected: BaselineSessionReview) -> View:
+        return self._issue(expected.binding, expected)
+
+    def confirm_baseline(
+        self,
+        code: str,
+        *,
+        authorize: Callable[[BaselineSessionReview, Callable[[], None]], View],
+        validate_selection: Callable[[BaselineSessionBinding], None],
+    ) -> View:
+        with self._lock:
+            ticket = self._tickets.pop(code, None)
+        if ticket is None or not isinstance(ticket.expected, BaselineSessionReview):
+            raise _invalid("The exact baseline review is unknown, consumed or dismissed.")
+        expected = ticket.expected
+
+        def validate() -> None:
+            now = self.clock.now()
+            if not ticket.issued_at <= now < ticket.expires_at:
+                raise _invalid("The original baseline review has expired.")
+            validate_selection(expected.binding)
+
+        validate()
+        return authorize(expected, validate)
 
     def confirm(
         self,
@@ -342,6 +390,9 @@ class SessionReviewService:
                 "Review code is unknown, expired, consumed or belongs to another selection."
             )
         expected = ticket.expected
+
+        if isinstance(expected, BaselineSessionReview):
+            raise _invalid("Baseline reviews require the separate baseline controller.")
 
         if isinstance(expected, ModelSelectionReview):
             if select_model is None or current_model_selection is None:
@@ -464,7 +515,7 @@ class SessionReviewService:
             **self._issue(selection, expected),
         }
 
-    def dismiss(self, selection: SessionSelection) -> View:
+    def dismiss(self, selection: SessionSelection | BaselineSessionBinding) -> View:
         with self._lock:
             codes = [
                 code

@@ -11,6 +11,7 @@ import stat
 import sys
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Protocol, TextIO, cast
 
@@ -41,6 +42,8 @@ _HELP = (
     "/deny [request-id] [--reason <text>]  /help  /exit\n"
     "/recover  /recover --confirm-owner-stopped <recovery-code>\n"
     "/plan [approve]  /diff  /apply  /confirm <review-code>  /dismiss\n"
+    "/baseline plan <command-id>  /baseline run  /baseline show\n"
+    "Baseline confirmation only authorizes once; /baseline run explicitly executes.\n"
     "/models  /models use <alias> --default|--role <role>  /roles  /readiness\n"
     "/tasks [before-sequence]  /tasks select <sequence>  /tasks current\n"
     "History inspection never retargets /cancel or progress. "
@@ -133,6 +136,36 @@ class ConversationClient(Protocol):
     def progress(
         self, conversation_id: str, *, cursor: str | None = None, limit: int = 50
     ) -> View: ...
+
+
+class BaselineConversationClient(Protocol):
+    async def baseline_plan(
+        self,
+        conversation_id: str,
+        command_id: str,
+        *,
+        on_admitted: Callable[[], None] | None = None,
+    ) -> View: ...
+    async def baseline_run(
+        self,
+        conversation_id: str,
+        *,
+        on_admitted: Callable[[], None] | None = None,
+    ) -> View: ...
+    def baseline_show(self, conversation_id: str) -> View: ...
+    async def baseline_cancel(self, conversation_id: str) -> View: ...
+
+
+@dataclass
+class _BaselineEntry:
+    """Per-attempt UI routing only; this cannot authorize command execution."""
+
+    previous_focus: bool
+    previous_progress: bool
+    admitted: bool = False
+
+    def accept(self) -> None:
+        self.admitted = True
 
 
 class Presenter(Protocol):
@@ -416,6 +449,11 @@ async def run_session(
     line_task = asyncio.create_task(reader.read_line())
     interrupt_task = asyncio.create_task(interrupted.wait())
     execution: asyncio.Task[View] | None = None
+    execution_is_baseline = False
+    baseline_entry: _BaselineEntry | None = None
+    baseline_focus = False
+    baseline_result: View = {"kind": "baseline", "conversation_id": conversation_id}
+    baseline = cast(BaselineConversationClient, service)
     cursor: str | None = None
     displayed_requests: set[str] = set()
     progress_enabled = True
@@ -425,7 +463,14 @@ async def run_session(
         emit(_display_text(value, redactor))
 
     def result(view: View) -> None:
-        display(_view_text(view))
+        nonlocal baseline_result, baseline_focus, progress_enabled
+        if view.get("kind") == "baseline":
+            baseline_focus = True
+            progress_enabled = False
+            baseline_result = view
+            data(view)
+        else:
+            display(_view_text(view))
 
     def data(view: View) -> None:
         cleaned, _ = redactor.redact_data(view)
@@ -442,7 +487,12 @@ async def run_session(
 
     async def stop() -> View:
         nonlocal execution
-        cleanup = asyncio.create_task(service.cancel(conversation_id))
+        is_baseline = execution_is_baseline if execution is not None else baseline_focus
+        cleanup = asyncio.create_task(
+            baseline.baseline_cancel(conversation_id)
+            if is_baseline
+            else service.cancel(conversation_id)
+        )
         view = await _await_retained(cleanup)
         if execution is not None:
             with suppress(asyncio.CancelledError, FleetError):
@@ -463,11 +513,18 @@ async def run_session(
             if execution is not None and execution in done:
                 try:
                     result(execution.result())
-                except FleetError as error:
-                    show_error(error)
-                except asyncio.CancelledError:
-                    pass
+                except (FleetError, asyncio.CancelledError) as error:
+                    if execution_is_baseline and baseline_entry is not None:
+                        baseline_focus = (
+                            True if baseline_entry.admitted else baseline_entry.previous_focus
+                        )
+                        progress_enabled = (
+                            False if baseline_entry.admitted else baseline_entry.previous_progress
+                        )
+                    if isinstance(error, FleetError):
+                        show_error(error)
                 execution = None
+                baseline_entry = None
             if interrupt_task in done:
                 if execution is not None:
                     result(await stop())
@@ -503,6 +560,33 @@ async def run_session(
                             data(service.roles(conversation_id))
                         elif command == "/readiness" and not arguments:
                             display(_readiness_text(service.readiness(conversation_id), redactor))
+                        elif command == "/baseline":
+                            if arguments == ["show"]:
+                                shown = baseline.baseline_show(conversation_id)
+                                result(shown)
+                            elif arguments == ["run"] or (
+                                len(arguments) == 2
+                                and arguments[0] == "plan"
+                                and not arguments[1].startswith("--")
+                            ):
+                                if execution is not None:
+                                    raise _busy_error()
+                                baseline_entry = _BaselineEntry(baseline_focus, progress_enabled)
+                                progress_enabled = False
+                                execution_is_baseline = True
+                                execution = asyncio.create_task(
+                                    baseline.baseline_run(
+                                        conversation_id, on_admitted=baseline_entry.accept
+                                    )
+                                    if arguments == ["run"]
+                                    else baseline.baseline_plan(
+                                        conversation_id,
+                                        arguments[1],
+                                        on_admitted=baseline_entry.accept,
+                                    )
+                                )
+                            else:
+                                raise _command_error()
                         elif command == "/models":
                             profile, role, default = _models(arguments)
                             data(
@@ -519,6 +603,7 @@ async def run_session(
                                 current=current,
                             )
                             if selected_sequence is not None or current:
+                                baseline_focus = False
                                 cursor = None
                                 displayed_requests.clear()
                                 progress_enabled = True
@@ -544,11 +629,14 @@ async def run_session(
                             )
                             if execution is not None and changes_target:
                                 raise _busy_error()
-                            review_data(
-                                service.review(
-                                    conversation_id, action=command[1:], arguments=tuple(arguments)
-                                )
+                            reviewed = service.review(
+                                conversation_id, action=command[1:], arguments=tuple(arguments)
                             )
+                            if reviewed.get("kind") == "baseline":
+                                baseline_focus = True
+                                progress_enabled = False
+                                baseline_result = reviewed
+                            review_data(reviewed)
                         elif command == "/permissions" and len(arguments) <= 1:
                             data(
                                 service.permissions(
@@ -578,6 +666,8 @@ async def run_session(
                                     conversation_id, allow_unsafe_local=options.allow_unsafe_local
                                 )
                             )
+                            execution_is_baseline = False
+                            baseline_focus = False
                             progress_enabled = True
                         elif command == "/approve":
                             request_id, choice = _approval(arguments)
@@ -605,6 +695,8 @@ async def run_session(
                                 conversation_id, message=line, submission_id=None, options=options
                             )
                         )
+                        execution_is_baseline = False
+                        baseline_focus = False
                         progress_enabled = True
                 except FleetError as error:
                     show_error(error)
@@ -648,7 +740,7 @@ async def run_session(
             line_task.cancel()
             interrupt_task.cancel()
             await asyncio.gather(line_task, interrupt_task, return_exceptions=True)
-    return service.status(conversation_id)
+    return baseline_result if baseline_focus else service.status(conversation_id)
 
 
 def _models(arguments: list[str]) -> tuple[str | None, str | None, bool]:

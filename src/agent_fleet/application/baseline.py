@@ -22,6 +22,7 @@ from agent_fleet.application.sandboxes import (
     requirements_for_configuration,
 )
 from agent_fleet.domain.baseline import (
+    BaselineAuthorization,
     BaselineCanonicalSnapshot,
     BaselineObservationRef,
     BaselineReport,
@@ -56,7 +57,7 @@ from agent_fleet.domain.models import (
 )
 from agent_fleet.domain.security import Redactor, canonical_json_hash, path_is_within
 from agent_fleet.domain.trust import UserTrustPolicy
-from agent_fleet.ports.baseline import BaselineStore
+from agent_fleet.ports.baseline import BaselineSessionAdmission, BaselineStore
 from agent_fleet.ports.baseline_resources import BaselineAdmissionGuard, BaselineRepositoryPort
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
@@ -377,6 +378,36 @@ class BaselineService:
         self.store.revoke(review_id)
         return self.store.show(review_id)
 
+    def authorize(
+        self,
+        review_id: str,
+        *,
+        review_sha256: str,
+        session: BaselineSessionAdmission | None = None,
+    ) -> BaselineAuthorization:
+        view = self.store.show(review_id)
+        if view.review.digest != review_sha256:
+            raise baseline_error(ErrorCode.APPROVAL_INVALID)
+        with self.admission.guard(view.review):
+            return self.store.authorize(review_id, review_sha256, session=session)
+
+    async def run_authorized(
+        self,
+        review_id: str,
+        *,
+        review_sha256: str,
+        authorization_id: str,
+        session: BaselineSessionAdmission | None = None,
+    ) -> BaselineShow:
+        view = self.store.show(review_id)
+        if (
+            not authorization_id
+            or view.review.digest != review_sha256
+            or view.execution.owner_claim_id is not None
+        ):
+            raise baseline_error(ErrorCode.APPROVAL_INVALID)
+        return await self._run(view, authorization_id=authorization_id, session=session)
+
     async def run(
         self, review_id: str, *, allow_once: bool, review_sha256: str | None
     ) -> BaselineShow:
@@ -387,6 +418,16 @@ class BaselineService:
             raise baseline_error(ErrorCode.APPROVAL_INVALID)
         if view.execution.owner_claim_id is not None:
             return view  # A retained spent attempt is never a new dispatch.
+        return await self._run(view)
+
+    async def _run(
+        self,
+        view: BaselineShow,
+        *,
+        authorization_id: str | None = None,
+        session: BaselineSessionAdmission | None = None,
+    ) -> BaselineShow:
+        review_id, review_sha256 = view.review.review_id, view.review.digest
         if view.review.status != "ready":
             raise baseline_error(ErrorCode.SANDBOX_UNAVAILABLE)
         claim: BaselineOwnerClaim | None = None
@@ -395,12 +436,16 @@ class BaselineService:
         try:
             async with asyncio.timeout(view.review.max_attempt_seconds):
                 with self.admission.guard(view.review):
-                    authorization = self.store.authorize(review_id, review_sha256)
+                    if authorization_id is None:
+                        authorization_id = self.store.authorize(
+                            review_id, review_sha256
+                        ).authorization_id
                     claim = self.store.claim_baseline(
                         review_id,
                         review_sha256,
-                        authorization.authorization_id,
+                        authorization_id,
                         view.execution.revision,
+                        session=session,
                     )
                     workspace, _ = self.resources.create_baseline_workspace(claim)
                     if view.review.sandbox_policy is None:

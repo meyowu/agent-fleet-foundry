@@ -50,6 +50,25 @@ child cleanup prevents parent removal. Recovery appends facts/reports rather tha
 rewriting history. Cooperating organization/trust locks and SQLite CAS do not
 protect against arbitrary same-user host writes or unseen filesystem ABA.
 
+## Session integration amendment — 2026-09-10
+
+Keep the same distinct baseline principal inside a foreground Session. Separate
+confirmation-only authorization from explicit execution; do not bind confirmation
+to a command side effect. The controller supplies immutable conversation metadata
+and a trusted pure local generation validator to the existing SQL transaction.
+Reuse the existing shared Redactor through a lazy baseline factory. No additional
+history/credential/runtime reads occur during baseline operations after ordinary
+selection; normal Session history redaction remains intact.
+
+Review/focus is bounded, process-local and invalidated on selection changes, so
+restart cannot revive authority. Baseline task/cancellation ownership is separate
+from Run ownership. A per-attempt UI admission notification cannot grant execution
+permission; rejected entry restores prior routing, admitted work retains cleanup.
+This adds no migration or public schema. Alternatives of global credential-free
+Session reconstruction, synthetic Run identities, or implicit execution on confirm
+are rejected as larger changes or incorrect authority semantics. Physical Session
+and combined-source acceptance remain separate evidence gates.
+
 ## Alternatives
 
 - Treat static readiness as a baseline: rejected; it does not execute tests.

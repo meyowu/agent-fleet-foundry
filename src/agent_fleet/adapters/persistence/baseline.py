@@ -6,12 +6,14 @@ import os
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import timedelta
 from functools import wraps
 from typing import Literal
 
 from pydantic import TypeAdapter, ValidationError
 
+from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
 from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION, SqliteStateStore
 from agent_fleet.domain.baseline import (
     MAX_OBSERVATION_BYTES,
@@ -54,6 +56,12 @@ from agent_fleet.domain.baseline_resources import (
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import SandboxCleanupResult
 from agent_fleet.domain.security import sha256_bytes
+from agent_fleet.domain.session_review import BaselineSessionBinding
+from agent_fleet.ports.baseline import BaselineSessionAdmission
+
+_SESSION_VALIDATION: ContextVar[list[bool] | None] = ContextVar(
+    "baseline_session_validation", default=None
+)
 
 _TABLES = frozenset(
     {
@@ -124,6 +132,10 @@ class SqliteBaselineStore:
 
     @contextmanager
     def _transaction(self, *, write: bool) -> Iterator[sqlite3.Connection]:
+        validating = _SESSION_VALIDATION.get()
+        if validating is not None:
+            validating[0] = True
+            raise unavailable()
         connection = sqlite3.connect(
             f"{self.state.database_path.absolute().as_uri()}?mode=rw", uri=True
         )
@@ -378,8 +390,52 @@ class SqliteBaselineStore:
         with self._transaction(write=False) as connection:
             return self._review(connection, review_id)
 
+    def _session_admission(
+        self,
+        connection: sqlite3.Connection,
+        review: BaselineReview,
+        session: BaselineSessionAdmission | None,
+    ) -> None:
+        if session is None:
+            return
+        binding = BaselineSessionBinding.model_validate_json(session.binding.model_dump_json())
+        conversations = SqliteConversationStore(
+            self.state.database_path,
+            self.state.clock,
+            self.state.ids,
+            self.state.redactor,
+            self.state,
+        )
+        # This reader validates the metadata receipt and aggregate membership;
+        # it reads no turn payload, Run, summary, artifact or credential.
+        conversation = conversations._conversation(
+            connection, binding.project_id, binding.conversation_id
+        )
+        if (
+            binding.project_id != review.project_id
+            or binding.repository_identity != review.repository_identity_sha256
+            or conversation.repository_identity != binding.repository_identity
+            or conversation.revision != binding.conversation_revision
+            or conversation.active_turn_id is not None
+        ):
+            raise unavailable()
+        attempted = [False]
+        token = _SESSION_VALIDATION.set(attempted)
+        try:
+            session.validate_selection()
+            if attempted[0] or not review.created_at <= self.state.clock.now() < review.expires_at:
+                raise unavailable()
+        finally:
+            _SESSION_VALIDATION.reset(token)
+
     @_boundary
-    def authorize(self, review_id: str, review_sha256: str) -> BaselineAuthorization:
+    def authorize(
+        self,
+        review_id: str,
+        review_sha256: str,
+        *,
+        session: BaselineSessionAdmission | None = None,
+    ) -> BaselineAuthorization:
         with self._transaction(write=True) as connection:
             review = self._review(connection, review_id)
             execution = self._execution(connection, review.baseline_id)
@@ -391,6 +447,7 @@ class SqliteBaselineStore:
                 or execution.status != "planned"
             ):
                 raise unavailable()
+            self._session_admission(connection, review, session)
             rows = self._rows(
                 connection, "baseline_authorizations", "baseline_id", review.baseline_id
             )
@@ -447,7 +504,13 @@ class SqliteBaselineStore:
 
     @_boundary
     def claim_baseline(
-        self, review_id: str, review_sha256: str, authorization_id: str, expected_revision: int
+        self,
+        review_id: str,
+        review_sha256: str,
+        authorization_id: str,
+        expected_revision: int,
+        *,
+        session: BaselineSessionAdmission | None = None,
     ) -> BaselineOwnerClaim:
         with self._transaction(write=True) as connection:
             review = self._review(connection, review_id)
@@ -473,6 +536,7 @@ class SqliteBaselineStore:
                 or not authorization.created_at <= now < authorization.expires_at
             ):
                 raise unavailable()
+            self._session_admission(connection, review, session)
             claim = BaselineOwnerClaim(
                 owner=BaselineResourceOwner(
                     baseline_id=review.baseline_id,

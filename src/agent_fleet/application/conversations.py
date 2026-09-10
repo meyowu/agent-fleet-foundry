@@ -15,6 +15,7 @@ from pydantic import Field, JsonValue, ValidationError
 
 from agent_fleet.application.approvals import ApprovalService
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.baseline import BaselineService
 from agent_fleet.application.bootstrap import BootstrapService
 from agent_fleet.application.conversation_results import bounded_summary
 from agent_fleet.application.inspection import InspectionService
@@ -25,6 +26,7 @@ from agent_fleet.application.resources import CancellationService
 from agent_fleet.application.session_recovery import SessionRecoveryService, recovery_review_error
 from agent_fleet.application.session_review import SessionReviewService
 from agent_fleet.application.workflow import WorkflowEngine
+from agent_fleet.domain.baseline_resources import BaselineShow
 from agent_fleet.domain.conversation import (
     Conversation,
     ConversationContext,
@@ -50,8 +52,15 @@ from agent_fleet.domain.models import (
 )
 from agent_fleet.domain.role_templates import ResolvedRoleTemplate
 from agent_fleet.domain.security import Redactor, canonical_json_hash, sha256_bytes
-from agent_fleet.domain.session_review import ModelSelectionReview, SessionSelection
+from agent_fleet.domain.session_review import (
+    BaselineSessionBinding,
+    BaselineSessionFocus,
+    BaselineSessionReview,
+    ModelSelectionReview,
+    SessionSelection,
+)
 from agent_fleet.domain.trust import TrustMode
+from agent_fleet.ports.baseline import BaselineSessionAdmission
 from agent_fleet.ports.conversation import ConversationStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
@@ -113,6 +122,7 @@ class ConversationService:
         model_profiles: ModelProfileService | None = None,
         readiness: ReadinessService | None = None,
         recovery: SessionRecoveryService | None = None,
+        baseline_factory: Callable[[], BaselineService] | None = None,
     ) -> None:
         self.store = store
         self.state = state
@@ -139,6 +149,12 @@ class ConversationService:
         self._selection_generation: dict[str, int] = {}
         self._task_choices: dict[str, dict[int, str]] = {}
         self._cancellation_targets: dict[str, str | None] = {}
+        self._baseline_factory = baseline_factory
+        self._baseline_service: BaselineService | None = None
+        self._baseline_focus: BaselineSessionFocus | None = None
+        self._baseline_foreground: str | None = None
+        self._baseline_tasks: dict[str, asyncio.Task[BaselineShow]] = {}
+        self._baseline_cancellations: dict[str, asyncio.Task[None]] = {}
 
     def select(
         self,
@@ -147,6 +163,7 @@ class ConversationService:
         conversation_id: str | None = None,
         create_new: bool = False,
     ) -> ConversationView:
+        self._require_baseline_idle()
         if conversation_id is not None and create_new:
             raise _invalid("Choose an existing conversation or create a new one, not both.")
         info = self.repository.inspect(project_path)
@@ -180,6 +197,9 @@ class ConversationService:
         return self.status(conversation.conversation_id)
 
     def _change_inspection(self, conversation_id: str, turn_id: str | None) -> None:
+        self._require_baseline_idle()
+        self._baseline_focus = None
+        self._baseline_foreground = None
         self.reviews.invalidate_selection()
         self._selection_generation[conversation_id] = (
             self._selection_generation.get(conversation_id, 0) + 1
@@ -218,6 +238,7 @@ class ConversationService:
         )
 
     def _require_current(self, conversation_id: str) -> None:
+        self._require_baseline_idle()
         if self.session_recovery is not None and self.session_recovery.active(conversation_id):
             raise _busy()
         conversation = self._conversation(conversation_id)
@@ -448,6 +469,238 @@ class ConversationService:
             "notice": "Model selection saved for future tasks only; no provider was contacted.",
         }
 
+    def _require_baseline_idle(self) -> None:
+        if self._baseline_tasks or self._baseline_cancellations:
+            raise _busy()
+
+    def _baseline_controller(self) -> BaselineService:
+        if self._baseline_service is None:
+            if self._baseline_factory is None:
+                raise _invalid("The model-free baseline controller is unavailable.")
+            self._baseline_service = self._baseline_factory()
+        return self._baseline_service
+
+    def _baseline_metadata(self, conversation_id: str) -> tuple[Project, BaselineSessionBinding]:
+        project_id = self._selected.get(conversation_id)
+        if project_id is None:
+            raise _invalid("Select the registered conversation before baseline review.")
+        project = self.state.get_project(project_id)
+        conversation = self.store.get(project_id, conversation_id)
+        if (
+            conversation.repository_identity != project.identity_hash
+            or conversation.active_turn_id is not None
+        ):
+            raise _busy()
+        return project, BaselineSessionBinding(
+            project_id=project_id,
+            repository_identity=project.identity_hash,
+            conversation_id=conversation_id,
+            conversation_revision=conversation.revision,
+            selection_generation=self._selection_generation.get(conversation_id, 0),
+        )
+
+    def _baseline_local(self, binding: BaselineSessionBinding) -> None:
+        """Pure RAM check; persistence invokes this inside its existing transaction."""
+        if (
+            self._selected.get(binding.conversation_id) != binding.project_id
+            or self._selection_generation.get(binding.conversation_id, 0)
+            != binding.selection_generation
+        ):
+            raise _invalid("The reviewed baseline Session selection changed.")
+
+    def _baseline_mutation_ready(self, conversation_id: str) -> None:
+        self._require_baseline_idle()
+        if (
+            self._executions
+            or self._cancellations
+            or (self.session_recovery is not None and self.session_recovery.active(conversation_id))
+        ):
+            raise _busy()
+
+    def _baseline_view(self, view: BaselineShow, conversation_id: str) -> ConversationView:
+        result: ConversationView = {
+            "kind": "baseline",
+            "conversation_id": conversation_id,
+            "baseline": view.model_dump(mode="json", by_alias=True),
+            "notice": "Baseline observation only; no Run, ConversationTurn, patch or verdict.",
+        }
+        self._reject_secret(result)
+        return result
+
+    async def _await_baseline(
+        self,
+        conversation_id: str,
+        execution: asyncio.Task[BaselineShow],
+    ) -> BaselineShow:
+        self._baseline_tasks[conversation_id] = execution
+        try:
+            return await asyncio.shield(execution)
+        except asyncio.CancelledError:
+            # Cancel once; repeated cancellation of the caller joins drainage.
+            execution.cancel()
+            await _await_stopped(execution)
+            raise
+        finally:
+            if execution.done() and self._baseline_tasks.get(conversation_id) is execution:
+                self._baseline_tasks.pop(conversation_id, None)
+
+    async def baseline_plan(
+        self,
+        conversation_id: str,
+        command_id: str,
+        *,
+        on_admitted: Callable[[], None] | None = None,
+    ) -> ConversationView:
+        self._baseline_mutation_ready(conversation_id)
+        project, binding = self._baseline_metadata(conversation_id)
+        self._baseline_focus = None
+        self._baseline_foreground = conversation_id
+        self.reviews.invalidate_selection()
+        controller = self._baseline_controller()
+        # Trusted UI notification only, not permission or a durable owner claim.
+        # No await separates this exact attempt's notification and task registration.
+        if on_admitted is not None:
+            on_admitted()
+        view = await self._await_baseline(
+            conversation_id,
+            asyncio.create_task(controller.plan(Path(project.canonical_root), command_id)),
+        )
+        self._baseline_local(binding)
+        if self._baseline_metadata(conversation_id)[1] != binding:
+            raise _invalid("Session metadata changed while preparing the baseline.")
+        expected = BaselineSessionReview(
+            binding=binding,
+            baseline_id=view.review.baseline_id,
+            review_id=view.review.review_id,
+            review_sha256=view.review.digest,
+            expires_at=view.review.expires_at,
+        )
+        self._baseline_focus = BaselineSessionFocus(review=expected)
+        result = self._baseline_view(view, conversation_id)
+        if view.review.status == "ready":
+            result.update(self.reviews.prepare_baseline(expected))
+        return result
+
+    def _baseline_expected(self, conversation_id: str) -> BaselineSessionFocus:
+        focus = self._baseline_focus
+        if focus is None or focus.review.binding.conversation_id != conversation_id:
+            raise _invalid("No locally reviewed baseline is selected; use /baseline plan.")
+        self._baseline_local(focus.review.binding)
+        return focus
+
+    def baseline_show(self, conversation_id: str) -> ConversationView:
+        focus = self._baseline_expected(conversation_id)
+        return self._baseline_view(
+            self._baseline_controller().show(focus.review.baseline_id), conversation_id
+        )
+
+    def _confirm_baseline(self, conversation_id: str, code: str) -> ConversationView:
+        self._baseline_mutation_ready(conversation_id)
+
+        def validate(binding: BaselineSessionBinding) -> None:
+            focus = self._baseline_expected(conversation_id)
+            if focus.review.binding != binding or focus.authorization_id is not None:
+                raise _invalid("This exact baseline review is no longer selected.")
+
+        def authorize(
+            expected: BaselineSessionReview, check: Callable[[], None]
+        ) -> ConversationView:
+            focus = self._baseline_expected(conversation_id)
+            if focus.review != expected:
+                raise _invalid("This baseline review was replaced.")
+            authorization = self._baseline_controller().authorize(
+                expected.review_id,
+                review_sha256=expected.review_sha256,
+                session=BaselineSessionAdmission(expected.binding, check),
+            )
+            self._baseline_focus = BaselineSessionFocus(
+                review=expected, authorization_id=authorization.authorization_id
+            )
+            return {
+                "kind": "baseline",
+                "conversation_id": conversation_id,
+                "baseline_id": expected.baseline_id,
+                "authorized_once": True,
+                "notice": "Authorized only; enter /baseline run to execute once. No command ran.",
+            }
+
+        return self.reviews.confirm_baseline(code, authorize=authorize, validate_selection=validate)
+
+    async def baseline_run(
+        self,
+        conversation_id: str,
+        *,
+        on_admitted: Callable[[], None] | None = None,
+    ) -> ConversationView:
+        self._baseline_mutation_ready(conversation_id)
+        focus = self._baseline_expected(conversation_id)
+        if focus.authorization_id is None:
+            raise _invalid("Explicitly confirm the current baseline review before running.")
+        expected = focus.review
+        if self._baseline_metadata(conversation_id)[1] != expected.binding:
+            raise _invalid("The exact reviewed baseline Session metadata changed.")
+
+        def check() -> None:
+            if self._baseline_expected(conversation_id) != focus:
+                raise _invalid("The original baseline execution selection changed.")
+
+        controller = self._baseline_controller()
+        if on_admitted is not None:
+            on_admitted()
+        view = await self._await_baseline(
+            conversation_id,
+            asyncio.create_task(
+                controller.run_authorized(
+                    expected.review_id,
+                    review_sha256=expected.review_sha256,
+                    authorization_id=focus.authorization_id,
+                    session=BaselineSessionAdmission(expected.binding, check),
+                )
+            ),
+        )
+        return self._baseline_view(view, conversation_id)
+
+    async def baseline_cancel(self, conversation_id: str) -> ConversationView:
+        # Snapshot the task and identity before scheduling; never call Run cancel.
+        focus = self._baseline_focus
+        target = (
+            focus.review.baseline_id
+            if focus is not None and focus.review.binding.conversation_id == conversation_id
+            else None
+        )
+        execution = self._baseline_tasks.get(conversation_id)
+        cleanup = self._baseline_cancellations.get(conversation_id)
+        if cleanup is None:
+
+            async def drain() -> None:
+                if execution is not None:
+                    if not execution.done():
+                        execution.cancel()
+                    await _await_stopped(execution)
+
+            cleanup = asyncio.create_task(drain())
+            self._baseline_cancellations[conversation_id] = cleanup
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            while not cleanup.done():
+                try:
+                    await asyncio.wait({cleanup})
+                except asyncio.CancelledError as error:
+                    cancellation = cancellation or error
+            cleanup.result()
+        finally:
+            if self._baseline_cancellations.get(conversation_id) is cleanup:
+                self._baseline_cancellations.pop(conversation_id, None)
+        if cancellation is not None:
+            raise cancellation
+        result: ConversationView = (
+            self._baseline_view(self._baseline_controller().show(target), conversation_id)
+            if target is not None
+            else {"kind": "baseline", "conversation_id": conversation_id}
+        )
+        result["cancelled_baseline_id"] = target
+        return result
+
     def _conversation(self, conversation_id: str) -> Conversation:
         project_id = self._selected.get(conversation_id)
         if project_id is None:
@@ -671,6 +924,9 @@ class ConversationService:
         submission_id: str | None,
         options: ChatExecutionOptions,
     ) -> ConversationView:
+        self._require_baseline_idle()
+        self._baseline_focus = None
+        self._baseline_foreground = None
         conversation = self._conversation(conversation_id)
         encoded: bytes | None = None
         if isinstance(message, str):
@@ -832,6 +1088,7 @@ class ConversationService:
                 self._executions.pop(conversation_id, None)
 
     async def cancel(self, conversation_id: str) -> ConversationView:
+        self._require_baseline_idle()
         if self.session_recovery is not None and self.session_recovery.active(conversation_id):
             raise _busy()
         conversation = self._conversation(conversation_id)
@@ -936,6 +1193,25 @@ class ConversationService:
         self, conversation_id: str, *, action: str, arguments: tuple[str, ...] = ()
     ) -> dict[str, JsonValue]:
         """Human control entry only; no model text is parsed as a review command."""
+        if action == "confirm" and len(arguments) == 1:
+            family = self.reviews.confirmation_family(arguments[0])
+            if family == "baseline":
+                return self._confirm_baseline(conversation_id, arguments[0])
+            if family == "unknown":
+                raise FleetError(
+                    ErrorCode.APPROVAL_INVALID,
+                    "The review code is unknown; prepare a new exact review.",
+                    "Review codes are process-local and never restored as authority.",
+                )
+        if action == "dismiss" and not arguments and self._baseline_foreground == conversation_id:
+            self._baseline_mutation_ready(conversation_id)
+            if self._baseline_focus is None:
+                return {"kind": "baseline", "conversation_id": conversation_id, "dismissed": False}
+            focus = self._baseline_expected(conversation_id)
+            result = self.reviews.dismiss(focus.review.binding)
+            self._baseline_focus = None
+            return {"kind": "baseline", **result}
+        self._require_baseline_idle()
         if (
             action == "apply"
             or (action == "plan" and arguments == ("approve",))
@@ -1155,7 +1431,7 @@ class ConversationService:
             )
 
 
-async def _await_stopped(execution: asyncio.Task[Run]) -> None:
+async def _await_stopped[T](execution: asyncio.Task[T]) -> None:
     while not execution.done():
         try:
             await asyncio.wait({execution})
