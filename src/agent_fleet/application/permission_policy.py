@@ -9,6 +9,8 @@ from typing import cast
 from pydantic import JsonValue
 
 from agent_fleet.application.permissions import BaselinePermissionBroker, _task_command
+from agent_fleet.domain.baseline import freeze_command, reconstruct_command
+from agent_fleet.domain.baseline_resources import BaselineCommandScope
 from agent_fleet.domain.config import FleetSpec
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
@@ -17,6 +19,7 @@ from agent_fleet.domain.models import (
     ApprovalChoice,
     ApprovalStatus,
     CapabilityGrant,
+    CommandSpec,
     FleetEvent,
     PermissionDecision,
     PermissionOutcome,
@@ -41,6 +44,7 @@ from agent_fleet.domain.trust import (
     is_protected_action,
     rule_matches,
 )
+from agent_fleet.ports.baseline import BaselineStore
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
 from agent_fleet.ports.id_generator import IdGenerator
@@ -74,6 +78,8 @@ class PermissionPolicyService:
         clock: Clock,
         ids: IdGenerator,
         redactor: Redactor,
+        *,
+        baseline: BaselineStore | None = None,
     ) -> None:
         self.state = state
         self.trust = trust
@@ -82,6 +88,58 @@ class PermissionPolicyService:
         self.clock = clock
         self.ids = ids
         self.redactor = redactor
+        self._baseline_store = baseline
+
+    def baseline_context(
+        self, scope: BaselineCommandScope
+    ) -> tuple[UserTrustPolicy, ProjectTrustSettings]:
+        scope = BaselineCommandScope.from_canonical(scope.canonical_bytes())
+        review = scope.review
+        project = self.state.get_project(review.project_id)
+        if (
+            canonical_json_hash(project.model_dump(mode="json")) != review.project_sha256
+            or project.identity_hash != review.repository_identity_sha256
+        ):
+            raise _policy_error("Baseline project identity changed after review.")
+        policy = UserTrustPolicy.model_validate_json(self.trust.load().model_dump_json())
+        if (
+            canonical_json_hash(policy.model_dump(mode="json")) != review.trust_policy_sha256
+            or policy.revision != review.trust_revision
+        ):
+            raise _policy_error("Baseline user policy changed after review.")
+        spec, snapshot = self.config.load_snapshot(
+            Path(project.canonical_root) / ".fleet/fleet.yaml"
+        )
+        command_id = reconstruct_command(review.command).command_id
+        commands = self.config.verification_profile(spec, snapshot).commands
+        if (
+            self.config.snapshot_hash(snapshot) != review.configuration_sha256
+            or command_id not in commands
+        ):
+            raise _policy_error("Baseline command configuration changed after review.")
+        raw = commands[command_id]
+        expected = freeze_command(
+            CommandSpec(
+                command_id=command_id,
+                executable=raw.executable,
+                argv=tuple(raw.argv),
+                logical_cwd=raw.cwd,
+                timeout_seconds=min(raw.timeout_seconds, 180),
+            )
+            .model_dump_json()
+            .encode()
+        )
+        if expected != review.command or self.redactor.contains_secret_data(
+            scope.model_dump(mode="json", by_alias=True)
+        ):
+            raise _policy_error("Baseline canonical command scope is invalid.")
+        if scope.claim is not None and (
+            self._baseline_store is None
+            or self._baseline_store.review(review.review_id) != review
+            or self._baseline_store.owner_claim(review.baseline_id) != scope.claim
+        ):
+            raise _policy_error("Baseline consent has no exact permanent controller claim.")
+        return policy, self.settings(project, policy)
 
     def project_at(self, path: Path) -> Project:
         info = self.repository.inspect(path)
@@ -609,6 +667,57 @@ class PolicyPermissionBroker:
     def __init__(self, policy: PermissionPolicyService) -> None:
         self.policy = policy
         self.baseline = BaselinePermissionBroker()
+
+    def evaluate_baseline(
+        self, scope: BaselineCommandScope, sandbox: SandboxCapabilities
+    ) -> PermissionDecision:
+        policy, settings = self.policy.baseline_context(scope)
+        if (
+            sandbox.provider != "docker"
+            or not sandbox.isolation_enforced
+            or not sandbox.executes_code
+            or not sandbox.supports_resource_limits
+            or not sandbox.supports_recovery
+            or "." not in settings.allowed_paths
+        ):
+            return _deny(
+                "BASELINE_HARD_CEILING",
+                "The exact whole-tree isolated baseline scope is unavailable.",
+            )
+        now = self.policy.clock.now()
+        denied = []
+        for rule in policy.rules:
+            if (
+                rule.effect == "deny"
+                and rule.created_at <= now
+                and rule.scope.project_id == scope.review.project_id
+                and rule.scope.repository_identity == scope.review.repository_identity_sha256
+                and rule.scope.action == "command.run"
+                and self.policy.rule_is_active(rule)
+            ):
+                denied.append(rule.rule_id)
+        if denied:
+            return PermissionDecision(
+                outcome=PermissionOutcome.DENY,
+                decision_code="BASELINE_USER_DENY",
+                explanation="A potentially overlapping user command deny is active.",
+                protected=True,
+                matched_rule_ids=denied[:128],
+            )
+        if not scope.approved or scope.claim is None:
+            return PermissionDecision(
+                outcome=PermissionOutcome.REQUIRE_APPROVAL,
+                decision_code="BASELINE_ALLOW_ONCE_REQUIRED",
+                explanation="This exact baseline needs explicit one-use user consent.",
+                available_choices=[ApprovalChoice.ALLOW_ONCE, ApprovalChoice.DENY],
+            )
+        return PermissionDecision(
+            outcome=PermissionOutcome.ALLOW,
+            decision_code="BASELINE_EXACT_CONSUMED_AUTHORIZATION",
+            explanation=(
+                "The trusted controller holds the exact consumed one-use baseline authorization."
+            ),
+        )
 
     def evaluate(
         self, intent: ToolIntent, task: TaskSpec, sandbox: SandboxCapabilities

@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "CommittedSource": {
+      "additionalProperties": false,
+      "properties": {
+        "commit_sha": {
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "title": "Commit Sha",
+          "type": "string"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/SourceEntry"
+          },
+          "maxItems": 4096,
+          "title": "Entries",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "commit_sha",
+        "entries"
+      ],
+      "title": "CommittedSource",
+      "type": "object"
+    },
+    "EvaluationCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "sha256"
+      ],
+      "title": "EvaluationCommand",
+      "type": "object"
+    },
+    "SourceEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "100644",
+            "100755"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "mode",
+        "sha256"
+      ],
+      "title": "SourceEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "commands": {
+      "items": {
+        "$ref": "#/$defs/EvaluationCommand"
+      },
+      "maxItems": 32,
+      "title": "Commands",
+      "type": "array"
+    },
+    "configuration_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Configuration Sha256",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/CommittedSource"
+    }
+  },
+  "required": [
+    "source",
+    "configuration_sha256",
+    "commands"
+  ],
+  "title": "EvaluationAdmission",
+  "type": "object"
+}

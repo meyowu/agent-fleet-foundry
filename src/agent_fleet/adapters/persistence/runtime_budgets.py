@@ -220,6 +220,8 @@ class SqliteRuntimeBudgetStore:
         ):
             raise _invalid()
         parent_id = event.payload.get("parent_run_id")
+        if parent_id != run.parent_run_id:
+            raise _invalid()
         if parent_id is None:
             if owner_id != run_id:
                 raise _invalid()
@@ -227,7 +229,59 @@ class SqliteRuntimeBudgetStore:
             connection, parent_id, visited=visited | {run_id}
         ) != (owner_id, limits):
             raise _invalid()
+        if parent_id is not None:
+            self._graph_parent(connection, run, parent_id)
         return owner_id, limits
+
+    def _graph_parent(self, connection: sqlite3.Connection, run: Run, parent_id: str) -> None:
+        from agent_fleet.adapters.persistence.graphs import _Manifest, _run_hash
+        from agent_fleet.domain.graph import GraphChildBinding
+
+        row = connection.execute(
+            "SELECT * FROM fleet_graph_nodes WHERE child_run_id=?", (run.run_id,)
+        ).fetchone()
+        graph = connection.execute(
+            "SELECT immutable_manifest_json FROM fleet_graphs WHERE parent_run_id=?", (parent_id,)
+        ).fetchone()
+        if row is None or graph is None:
+            raise _invalid()
+        binding = self._decode(GraphChildBinding, row["binding_json"])
+        raw = graph[0]
+        if len(raw.encode()) > 1_048_576:
+            raise _invalid()
+        self._clean(raw)
+        manifest = _Manifest.model_validate_json(raw)
+        if (
+            binding.parent_run_id != parent_id
+            or binding.child_run_id != run.run_id
+            or binding.project_id != run.project_id
+            or binding.run_binding_sha256 != _run_hash(run)
+            or binding.node_id != run.parent_node_id
+            or binding.plan_sha256 != run.parent_plan_sha256
+            or binding.iteration != run.parent_iteration
+            or binding.child_task_id != run.task_id
+            or row["parent_run_id"] != parent_id
+            or row["node_id"] != binding.node_id
+            or row["iteration"] != binding.iteration
+            or not any(node.binding == binding for node in manifest.snapshot.nodes)
+        ):
+            raise _invalid()
+        events = connection.execute(
+            "SELECT data_json FROM run_events WHERE run_id=? "
+            "AND event_type='graph.initialized' LIMIT 2",
+            (parent_id,),
+        ).fetchall()
+        if len(events) != 1:
+            raise _invalid()
+        self._clean(events[0][0])
+        event = FleetEvent.model_validate_json(events[0][0])
+        if (
+            event.run_id != parent_id
+            or event.project_id != run.project_id
+            or event.payload
+            != {"manifest_sha256": canonical_json_hash(manifest.model_dump(mode="json"))}
+        ):
+            raise _invalid()
 
     @_safe_boundary
     def initialize_run(
@@ -238,40 +292,69 @@ class SqliteRuntimeBudgetStore:
         self._clean(payload)
         limits = RunBudgetLimits.model_validate(payload)
         with self._transaction() as connection:
-            run = self._run(connection, run_id)
-            parent = self._owner(connection, parent_run_id) if parent_run_id is not None else None
-            if parent_run_id is not None and (parent is None or parent_run_id == run_id):
-                raise _invalid()
-            owner_id = parent[0] if parent is not None else run_id
-            if parent is not None and parent[1] != limits:
-                raise _invalid()
-            existing = self._owner(connection, run_id)
-            if existing is not None:
-                if existing != (owner_id, limits):
-                    raise _invalid()
-                return self._snapshot(connection, run_id)
-            if run.status is not RunStatus.CREATED or run.stage is not None:
-                # No zero backfill after any model/workflow execution could have occurred.
-                raise _invalid()
-            if parent is None:
-                connection.execute(
-                    "INSERT INTO runtime_budget_owners VALUES (?, ?, ?)",
-                    (owner_id, limits.model_dump_json(), self.clock.now().isoformat()),
-                )
-            elif self._run(connection, owner_id).project_id != run.project_id:
-                raise _invalid()
-            connection.execute("INSERT INTO runtime_budget_runs VALUES (?, ?)", (run_id, owner_id))
-            self._event(
-                connection,
-                run,
-                "runtime.budget_initialized",
-                {
-                    "owner_run_id": owner_id,
-                    "parent_run_id": parent_run_id,
-                    "limits": limits.model_dump(mode="json"),
-                },
+            return self._initialize_run_in_transaction(
+                connection, run_id, limits, parent_run_id=parent_run_id
             )
+
+    def _initialize_run_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        limits: RunBudgetLimits,
+        *,
+        parent_run_id: str | None = None,
+    ) -> RunBudgetSnapshot:
+        limits = RunBudgetLimits.model_validate_json(limits.model_dump_json())
+        run = self._run(connection, run_id)
+        if run.parent_run_id != parent_run_id:
+            raise _invalid()
+        if parent_run_id is not None:
+            self._graph_parent(connection, run, parent_run_id)
+        parent = self._owner(connection, parent_run_id) if parent_run_id is not None else None
+        if parent_run_id is not None and (parent is None or parent_run_id == run_id):
+            raise _invalid()
+        owner_id = parent[0] if parent is not None else run_id
+        if parent is not None and parent[1] != limits:
+            raise _invalid()
+        existing = self._owner(connection, run_id)
+        if existing is not None:
+            if existing != (owner_id, limits):
+                raise _invalid()
             return self._snapshot(connection, run_id)
+        if run.status is not RunStatus.CREATED or run.stage is not None:
+            raise _invalid()
+        if parent is None:
+            connection.execute(
+                "INSERT INTO runtime_budget_owners VALUES (?, ?, ?)",
+                (owner_id, limits.model_dump_json(), self.clock.now().isoformat()),
+            )
+        elif self._run(connection, owner_id).project_id != run.project_id:
+            raise _invalid()
+        connection.execute("INSERT INTO runtime_budget_runs VALUES (?, ?)", (run_id, owner_id))
+        self._event(
+            connection,
+            run,
+            "runtime.budget_initialized",
+            {
+                "owner_run_id": owner_id,
+                "parent_run_id": parent_run_id,
+                "limits": limits.model_dump(mode="json"),
+            },
+        )
+        return self._snapshot(connection, run_id)
+
+    def _campaign_admission(self, connection: sqlite3.Connection, run_id: str) -> None:
+        from agent_fleet.adapters.persistence.evaluation_execution import (
+            SqliteEvaluationExecutionStore,
+        )
+
+        state = SqliteStateStore(self.database_path, self.clock, self.ids, self.redactor)
+        store = SqliteEvaluationExecutionStore(state)
+        record = store._for_run(connection, run_id)
+        if record is not None:
+            if record.status != "active":
+                raise _invalid()
+            store._admit_campaign(connection, record.binding.submission.campaign_id, self)
 
     def _attempt(self, connection: sqlite3.Connection, attempt_id: str) -> RuntimeAttempt:
         row = connection.execute(
@@ -354,6 +437,7 @@ class SqliteRuntimeBudgetStore:
             owner = self._owner(connection, run.run_id)
             if owner is None:
                 raise _invalid()
+            self._campaign_admission(connection, run.run_id)
             agent = self._agent(connection, request.agent_instance_id)
             if (
                 run.status is not RunStatus.RUNNING
@@ -599,6 +683,7 @@ class SqliteRuntimeAccounting:
             raise _invalid()
         with self.store._transaction() as connection:
             attempt = self.store._active(connection, self.attempt_id)
+            self.store._campaign_admission(connection, attempt.run_id)
             previous = connection.execute(
                 "SELECT data_json FROM runtime_model_requests WHERE attempt_id = ? "
                 "AND request_sequence = ?",
@@ -743,6 +828,7 @@ class SqliteRuntimeAccounting:
         digest = canonical_json_hash(list(call_ids))
         with self.store._transaction() as connection:
             attempt = self.store._active(connection, self.attempt_id)
+            self.store._campaign_admission(connection, attempt.run_id)
             prior = connection.execute(
                 "SELECT calls_sha256, tool_calls FROM runtime_tool_batches "
                 "WHERE attempt_id = ? AND batch_sequence = ?",

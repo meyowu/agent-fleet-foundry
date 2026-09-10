@@ -14,11 +14,25 @@ from io import FileIO
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from agent_fleet.adapters.sandbox.baseline_docker import (
+    BaselineDockerTransport,
+    BaselinePreparedView,
+    BaselineRequestView,
+)
 from agent_fleet.adapters.sandbox.process import (
     ProcessInvocationError,
     ProcessResult,
     ProcessRunner,
     ProcessTerminationError,
+)
+from agent_fleet.domain.baseline_resources import (
+    BaselineExecRequest,
+    BaselineExecResult,
+    BaselineExecutionHandle,
+    BaselineExecutionRecoveryRequest,
+    BaselineSandboxHandle,
+    BaselineSandboxInspection,
+    BaselineSandboxSpec,
 )
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
@@ -102,6 +116,43 @@ class DockerSandboxProvider:
         self._prepared: dict[str, _PreparedSandbox] = {}
         self._docker_host: str | None = None
         self._docker_daemon_identity: str | None = None
+        self._baseline_transport = BaselineDockerTransport(self)
+
+    async def create_baseline(
+        self, spec: BaselineSandboxSpec, *, sandbox_id: str
+    ) -> BaselineSandboxHandle:
+        return await self._baseline_transport.create(spec, sandbox_id=sandbox_id)
+
+    async def inspect_baseline(self, handle: BaselineSandboxHandle) -> BaselineSandboxInspection:
+        return await self._baseline_transport.inspect(handle)
+
+    async def exec_baseline(
+        self,
+        handle: BaselineSandboxHandle,
+        request: BaselineExecRequest,
+        *,
+        on_creation_dispatched: Callable[[], None],
+        on_resource_created: Callable[[BaselineExecutionHandle], None],
+    ) -> BaselineExecResult:
+        return await self._baseline_transport.execute(
+            handle,
+            request,
+            on_creation_dispatched=on_creation_dispatched,
+            on_resource_created=on_resource_created,
+        )
+
+    async def cleanup_baseline_execution(
+        self, handle: BaselineExecutionHandle
+    ) -> SandboxCleanupResult:
+        return await self._baseline_transport.cleanup_execution(handle)
+
+    async def reconcile_baseline_execution(
+        self, sandbox: BaselineSandboxHandle, request: BaselineExecutionRecoveryRequest
+    ) -> SandboxCleanupResult:
+        return await self._baseline_transport.reconcile(sandbox, request)
+
+    async def terminate_baseline(self, handle: BaselineSandboxHandle) -> SandboxCleanupResult:
+        return await self._baseline_transport.terminate(handle)
 
     @property
     def installation_id(self) -> str:
@@ -1264,10 +1315,12 @@ class DockerSandboxProvider:
     def _container_create_argv(
         self,
         executable: str,
-        prepared: _PreparedSandbox,
-        request: ExecRequest,
+        prepared: _PreparedSandbox | BaselinePreparedView,
+        request: ExecRequest | BaselineRequestView,
         name: str,
         labels: dict[str, str],
+        *,
+        owner_kind: Literal["run", "baseline"] = "run",
     ) -> tuple[str, ...]:
         configuration = prepared.spec.configuration
         logical_cwd = request.cwd.removeprefix("./")
@@ -1309,7 +1362,10 @@ class DockerSandboxProvider:
             "1",
             "--init",
             "--mount",
-            (f"type=bind,src={prepared.workspace},dst=/workspace,bind-propagation=rprivate"),
+            (
+                f"type=bind,src={prepared.workspace},dst=/workspace,"
+                f"{'readonly,' if owner_kind == 'baseline' else ''}bind-propagation=rprivate"
+            ),
             "--mount",
             (
                 f"type=bind,src={self.git_shadow_path},dst=/workspace/.git,"
@@ -1381,9 +1437,10 @@ class DockerSandboxProvider:
         inspected: dict[str, Any],
         *,
         created_id: str,
-        prepared: _PreparedSandbox,
-        request: ExecRequest,
+        prepared: _PreparedSandbox | BaselinePreparedView,
+        request: ExecRequest | BaselineRequestView,
         labels: dict[str, str],
+        owner_kind: Literal["run", "baseline"] = "run",
     ) -> dict[str, Any]:
         raw_configuration = inspected.get("Config")
         raw_host = inspected.get("HostConfig")
@@ -1404,7 +1461,7 @@ class DockerSandboxProvider:
         if not isinstance(restart, dict) or not isinstance(effective_labels, dict):
             raise _malformed_container_inspection()
         expected_binds = {
-            (str(prepared.workspace), "/workspace", True, "rprivate"),
+            (str(prepared.workspace), "/workspace", owner_kind == "run", "rprivate"),
             (str(self.git_shadow_path), "/workspace/.git", False, "rprivate"),
         }
         actual_binds: set[tuple[str, str, bool, str]] = set()
@@ -1500,7 +1557,10 @@ class DockerSandboxProvider:
             effective_command = None
         expected = {
             "id": created_id,
-            "name": f"/agent-fleet-{request.execution_id}",
+            "name": (
+                f"/agent-fleet-{'baseline-' if owner_kind == 'baseline' else ''}"
+                f"{request.execution_id}"
+            ),
             "backing_image": prepared.image_identity,
             "user": f"{self.uid}:{self.gid}",
             "image": prepared.image_identity,
@@ -1659,6 +1719,8 @@ class DockerSandboxProvider:
             "scalar_shapes": strict_scalar_shapes,
         }
         mismatches = sorted(key for key in expected if actual[key] != expected[key])
+        if owner_kind == "baseline" and effective_labels != labels:
+            mismatches.append("exact_baseline_labels")
         if mismatches:
             raise FleetError(
                 ErrorCode.SANDBOX_INSPECTION_FAILED,
@@ -1704,9 +1766,19 @@ class DockerSandboxProvider:
             labels["agent-fleet.project"] = handle.project_id
         return labels
 
-    async def _kill_exact(self, executable: str, identity: str, labels: dict[str, str]) -> None:
+    async def _kill_exact(
+        self,
+        executable: str,
+        identity: str,
+        labels: dict[str, str],
+        *,
+        owner_kind: Literal["run", "baseline"] = "run",
+    ) -> None:
         await self._require_labels_daemon(executable, labels)
-        await self._assert_exact_labels(executable, identity, labels)
+        if owner_kind == "run":
+            await self._assert_exact_labels(executable, identity, labels)
+        else:
+            await self._assert_exact_labels(executable, identity, labels, owner_kind=owner_kind)
         await self._require_labels_daemon(executable, labels)
         result = await self._call(
             (executable, "container", "kill", identity),
@@ -1744,9 +1816,13 @@ class DockerSandboxProvider:
         labels: dict[str, str],
         *,
         force: bool = False,
+        owner_kind: Literal["run", "baseline"] = "run",
     ) -> None:
         await self._require_labels_daemon(executable, labels)
-        await self._assert_exact_labels(executable, identity, labels)
+        if owner_kind == "run":
+            await self._assert_exact_labels(executable, identity, labels)
+        else:
+            await self._assert_exact_labels(executable, identity, labels, owner_kind=owner_kind)
         await self._require_labels_daemon(executable, labels)
         argv = [executable, "container", "rm"]
         if force:
@@ -1769,7 +1845,12 @@ class DockerSandboxProvider:
             )
 
     async def _assert_exact_labels(
-        self, executable: str, identity: str, labels: dict[str, str]
+        self,
+        executable: str,
+        identity: str,
+        labels: dict[str, str],
+        *,
+        owner_kind: Literal["run", "baseline"] = "run",
     ) -> None:
         inspected = await self._inspect_container(executable, identity)
         if inspected.get("Id") != identity:
@@ -1791,6 +1872,17 @@ class DockerSandboxProvider:
                 ErrorCode.SANDBOX_CLEANUP_FAILED,
                 "Docker resource labels are malformed during cleanup.",
                 "Inspect the resource manually; Fleet did not delete it.",
+            )
+        if owner_kind == "baseline" and (
+            actual != labels
+            or labels.get("agent-fleet.owner-kind") != "baseline"
+            or inspected.get("Name")
+            != f"/agent-fleet-baseline-{labels.get('agent-fleet.execution')}"
+        ):
+            raise FleetError(
+                ErrorCode.SANDBOX_CLEANUP_FAILED,
+                "The exact baseline native name or full label set changed.",
+                "Preserve this resource for explicit recovery; no deletion was attempted.",
             )
         if any(actual.get(key) != value for key, value in labels.items()):
             raise FleetError(

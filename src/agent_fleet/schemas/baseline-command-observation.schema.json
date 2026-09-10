@@ -1,0 +1,240 @@
+{
+  "$defs": {
+    "BaselineCanonicalSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "canonical_json": {
+          "title": "Canonical Json",
+          "type": "string"
+        },
+        "schema_tag": {
+          "enum": [
+            "command-v1",
+            "sandbox-spec-v1",
+            "sandbox-policy-v1",
+            "sandbox-inspection-v1",
+            "capabilities-v1",
+            "configuration-v1",
+            "requirements-v1",
+            "source-manifest-v1",
+            "native-handle-v1",
+            "cleanup-v1"
+          ],
+          "title": "Schema Tag",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_tag",
+        "canonical_json",
+        "sha256"
+      ],
+      "title": "BaselineCanonicalSnapshot",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "approved_source_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Approved Source Sha256",
+      "type": "string"
+    },
+    "authorization_id": {
+      "pattern": "^bauth_[0-9a-f]{32}$",
+      "title": "Authorization Id",
+      "type": "string"
+    },
+    "baseline_id": {
+      "pattern": "^baseline_[0-9a-f]{32}$",
+      "title": "Baseline Id",
+      "type": "string"
+    },
+    "cancelled": {
+      "title": "Cancelled",
+      "type": "boolean"
+    },
+    "capture_truncated": {
+      "title": "Capture Truncated",
+      "type": "boolean"
+    },
+    "claim_id": {
+      "pattern": "^bclaim_[0-9a-f]{32}$",
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "command_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Command Sha256",
+      "type": "string"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "decoding_replaced": {
+      "title": "Decoding Replaced",
+      "type": "boolean"
+    },
+    "execution_id": {
+      "pattern": "^bexec_[0-9a-f]{32}$",
+      "title": "Execution Id",
+      "type": "string"
+    },
+    "exit_code": {
+      "anyOf": [
+        {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exit Code"
+    },
+    "inspection": {
+      "$ref": "#/$defs/BaselineCanonicalSnapshot"
+    },
+    "materialized_source_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Materialized Source Sha256",
+      "type": "string"
+    },
+    "native_handle": {
+      "$ref": "#/$defs/BaselineCanonicalSnapshot"
+    },
+    "post_source_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Post Source Sha256"
+    },
+    "project_id": {
+      "pattern": "^prj_[0-9a-f]{32}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "redaction_truncated": {
+      "title": "Redaction Truncated",
+      "type": "boolean"
+    },
+    "request_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Sha256",
+      "type": "string"
+    },
+    "review_id": {
+      "pattern": "^breview_[0-9a-f]{32}$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "review_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Review Sha256",
+      "type": "string"
+    },
+    "sandbox_id": {
+      "pattern": "^bsandbox_[0-9a-f]{32}$",
+      "title": "Sandbox Id",
+      "type": "string"
+    },
+    "sandbox_policy_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sandbox Policy Sha256",
+      "type": "string"
+    },
+    "sandbox_spec_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sandbox Spec Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "stderr": {
+      "maxLength": 64000,
+      "title": "Stderr",
+      "type": "string"
+    },
+    "stderr_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Stderr Sha256",
+      "type": "string"
+    },
+    "stdout": {
+      "maxLength": 64000,
+      "title": "Stdout",
+      "type": "string"
+    },
+    "stdout_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Stdout Sha256",
+      "type": "string"
+    },
+    "timed_out": {
+      "title": "Timed Out",
+      "type": "boolean"
+    },
+    "workspace_id": {
+      "pattern": "^bws_[0-9a-f]{32}$",
+      "title": "Workspace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "baseline_id",
+    "project_id",
+    "review_id",
+    "review_sha256",
+    "authorization_id",
+    "claim_id",
+    "execution_id",
+    "workspace_id",
+    "sandbox_id",
+    "command_sha256",
+    "sandbox_policy_sha256",
+    "sandbox_spec_sha256",
+    "request_sha256",
+    "approved_source_sha256",
+    "materialized_source_sha256",
+    "post_source_sha256",
+    "native_handle",
+    "inspection",
+    "started_at",
+    "completed_at",
+    "exit_code",
+    "timed_out",
+    "cancelled",
+    "capture_truncated",
+    "redaction_truncated",
+    "decoding_replaced",
+    "stdout",
+    "stderr",
+    "stdout_sha256",
+    "stderr_sha256"
+  ],
+  "title": "BaselineCommandObservation",
+  "type": "object"
+}

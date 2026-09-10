@@ -90,6 +90,8 @@ def test_two_criteria_resolve_to_their_own_exact_independent_evidence() -> None:
     [
         "missing",
         "empty",
+        "empty_mapping",
+        "command_plus_transcript",
         "duplicate_criterion",
         "unknown_criterion",
         "unknown_artifact",
@@ -109,6 +111,17 @@ def test_invalid_or_incomplete_mappings_never_pass(case: str) -> None:
         results.pop()
     elif case == "empty":
         results = []
+    elif case == "empty_mapping":
+        results[0] = first.model_copy(update={"command_ids": [], "evidence_artifact_ids": []})
+    elif case == "command_plus_transcript":
+        results[0] = first.model_copy(
+            update={
+                "evidence_artifact_ids": [
+                    *first.evidence_artifact_ids,
+                    bundle.command_evidence[0].transcript_artifact_id,
+                ]
+            }
+        )
     elif case == "duplicate_criterion":
         results.append(first)
     elif case == "unknown_criterion":

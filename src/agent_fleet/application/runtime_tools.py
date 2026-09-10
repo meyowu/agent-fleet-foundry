@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
 from pydantic import Field
 
 from agent_fleet.application.gateway import ToolGateway
@@ -69,8 +71,16 @@ class _DeleteArguments(StrictModel):
 
 
 class _VerificationArguments(StrictModel):
-    command_id: str = Field(min_length=1, max_length=100)
-    reason: str = Field(min_length=1, max_length=4096)
+    command_id: str = Field(
+        min_length=1,
+        max_length=100,
+        description="The exact command_id of one verification command admitted by the TaskSpec.",
+    )
+    reason: str = Field(
+        min_length=1,
+        max_length=4096,
+        description="Why this admitted command is needed; this does not replace command_id.",
+    )
 
 
 class _ApprovalProbeArguments(StrictModel):
@@ -99,7 +109,10 @@ _LIST_FILES = RuntimeToolDefinition(
 _READ_FILE = RuntimeToolDefinition(
     name="repo_read_file",
     description=(
-        "Read one bounded UTF-8 regular file inside the TaskSpec scope without following symlinks."
+        "Read one bounded UTF-8 regular file by repository-relative path without following "
+        "symlinks. TaskSpec.allowed_paths and forbidden_paths constrain reads too. Never pass "
+        "a directory, .fleet, .git, or another protected or out-of-scope path. Use "
+        "workspace_get_diff for changed-path inspection."
     ),
     parameters_json_schema=_PathArguments.model_json_schema(),
     side_effect=False,
@@ -132,7 +145,11 @@ _DELETE_FILE = RuntimeToolDefinition(
 )
 _GET_DIFF = RuntimeToolDefinition(
     name="workspace_get_diff",
-    description="Return the canonical candidate patch and changed-path summary.",
+    description=(
+        "Return the canonical candidate patch and changed-path summary for scope inspection. "
+        "Use this or the supplied patch instead of reading directories or protected paths. "
+        "Patch inspection alone is not independently executed behavioral proof."
+    ),
     parameters_json_schema=_ReasonArguments.model_json_schema(),
     side_effect=False,
 )
@@ -142,6 +159,61 @@ _APPROVAL_PROBE = RuntimeToolDefinition(
     parameters_json_schema=_ApprovalProbeArguments.model_json_schema(),
     side_effect=True,
 )
+
+
+def _capture_read_scopes(paths: list[str]) -> tuple[str, ...] | None:
+    """Capture only a bounded, canonical subset suitable for a portable hint."""
+    if not paths or len(paths) > 32 or sum(len(path) for path in paths) > 4096:
+        return None
+    for path in paths:
+        if (
+            not path
+            or not path.isascii()
+            or any(ord(character) < 32 or ord(character) == 127 for character in path)
+            or any(character in path for character in "\\*?[]")
+        ):
+            return None
+        parsed = PurePosixPath(path)
+        if (
+            path == "."
+            or parsed.is_absolute()
+            or str(parsed) != path
+            or ".." in parsed.parts
+            or len(parsed.parts) > 64
+        ):
+            return None
+    return tuple(paths)
+
+
+def _read_scope_pattern(scopes: tuple[str, ...] | None, redactor: Redactor) -> str | None:
+    # Scan raw values before regex encoding can conceal a registered secret.
+    # Recheck on every advertisement, including after late secret registration.
+    if scopes is None or redactor.contains_secret_data(scopes):
+        return None
+    alternatives: list[str] = []
+    prefix, suffix = r"(?:^(?:", r")(?:/|$)|[^\x00-\x7F])"
+    size = len(prefix) + len(suffix)
+    for scope in scopes:
+        fragments: list[str] = []
+        for character in scope:
+            if "a" <= character.lower() <= "z":
+                fragment = f"[{character.lower()}{character.upper()}]"
+            elif character in ".^$+{}()|":
+                fragment = "\\" + character
+            else:
+                fragment = character
+            size += len(fragment)
+            if size > 8192:
+                return None
+            fragments.append(fragment)
+        if alternatives:
+            size += 1
+            if size > 8192:
+                return None
+        alternatives.append("".join(fragments))
+    # Non-ASCII input deliberately escapes this hint: Unicode casefold aliases
+    # (including Kelvin sign and long s) must reach the existing path predicate.
+    return prefix + "|".join(alternatives) + suffix
 
 
 class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
@@ -171,6 +243,7 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         self._redactor = redactor
         self._run = run
         self._task = task
+        self._read_scopes = _capture_read_scopes(task.allowed_paths)
         self._agent = agent
         self._workspace = workspace
         self._sandbox_handle = sandbox_handle
@@ -198,24 +271,36 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
         return tuple(item for item in definitions if actions[item.name] in self._allowed_tools)
 
     def _kind_definitions(self) -> tuple[RuntimeToolDefinition, ...]:
-        read_tools = [_LIST_FILES, _READ_FILE, _SEARCH_TEXT, _GET_DIFF]
+        read_tools = [_LIST_FILES, self._read_file_definition(), _SEARCH_TEXT, _GET_DIFF]
         if self._agent.effective_kind in {AgentRole.RESEARCHER, AgentRole.ARCHITECT}:
             return tuple(read_tools)
         run_verification = self._run_verification_definition()
+        verification_tools = () if run_verification is None else (run_verification,)
         if self._agent.effective_kind == AgentRole.ENGINEER:
             definitions = [
                 *read_tools,
                 _WRITE_FILE,
                 _APPLY_EDIT,
                 _DELETE_FILE,
-                run_verification,
+                *verification_tools,
             ]
             if self._run.fake_scenario is FakeScenario.APPROVAL:
                 definitions.append(_APPROVAL_PROBE)
             return tuple(definitions)
         if self._agent.effective_kind == AgentRole.VERIFIER:
-            return (*read_tools, run_verification)
+            return (*read_tools, *verification_tools)
         return ()
+
+    def _read_file_definition(self) -> RuntimeToolDefinition:
+        definition = _READ_FILE.model_copy(deep=True)
+        pattern = _read_scope_pattern(self._read_scopes, self._redactor)
+        if pattern is not None:
+            properties = definition.parameters_json_schema["properties"]
+            assert isinstance(properties, dict)
+            path = properties["path"]
+            assert isinstance(path, dict)
+            path["pattern"] = pattern
+        return definition
 
     @property
     def records(self) -> tuple[RuntimeToolExecutionRecord, ...]:
@@ -488,8 +573,10 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
             details={"command_id": command_id},
         )
 
-    def _run_verification_definition(self) -> RuntimeToolDefinition:
+    def _run_verification_definition(self) -> RuntimeToolDefinition | None:
         command_ids = [command.command_id for command in self._commands()]
+        if not command_ids:
+            return None
         schema = _VerificationArguments.model_json_schema()
         command_property = schema.get("properties", {}).get("command_id")
         if isinstance(command_property, dict):
@@ -498,8 +585,14 @@ class GatewayRuntimeToolCatalog(RuntimeToolCatalog):
             name="run_verification",
             description=(
                 "Run one exact TaskSpec-bound verification command through the configured "
-                "sandbox. The control plane supplies executable, argv, cwd, environment, "
-                "limits, identity, and permission context."
+                "sandbox. Supply both its exact command_id and a reason; mentioning an ID "
+                "inside reason is not supplying command_id. The control plane supplies "
+                "executable, argv, cwd, environment, "
+                "limits, identity, and permission context. The returned "
+                "content.command_evidence_artifact_id names the CommandEvidence receipt; pair "
+                "only that ID with this command_id in criterion mappings. The generic artifact_ids "
+                "collection includes auxiliary artifacts; content.transcript_artifact_id is not "
+                "a CommandEvidence receipt."
             ),
             parameters_json_schema=schema,
             side_effect=True,

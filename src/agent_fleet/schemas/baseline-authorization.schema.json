@@ -1,0 +1,93 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "authorization_id": {
+      "pattern": "^bauth_[0-9a-f]{32}$",
+      "title": "Authorization Id",
+      "type": "string"
+    },
+    "baseline_id": {
+      "pattern": "^baseline_[0-9a-f]{32}$",
+      "title": "Baseline Id",
+      "type": "string"
+    },
+    "choice": {
+      "const": "allow_once",
+      "default": "allow_once",
+      "title": "Choice",
+      "type": "string"
+    },
+    "consumed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Consumed At"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "review_id": {
+      "pattern": "^breview_[0-9a-f]{32}$",
+      "title": "Review Id",
+      "type": "string"
+    },
+    "review_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Review Sha256",
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "revoked_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revoked At"
+    },
+    "status": {
+      "enum": [
+        "available",
+        "consumed",
+        "revoked"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "authorization_id",
+    "review_id",
+    "baseline_id",
+    "review_sha256",
+    "revision",
+    "status",
+    "created_at",
+    "expires_at"
+  ],
+  "title": "BaselineAuthorization",
+  "type": "object"
+}

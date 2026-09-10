@@ -31,6 +31,7 @@ from agent_fleet.domain.models import (
 )
 from agent_fleet.domain.offline_canary import FIXED_CANARY, INCORRECT_CANARY
 from agent_fleet.domain.paths import path_is_within
+from agent_fleet.domain.runtime_contract import require_runtime_invocation
 from agent_fleet.ports.runtime import RuntimeInvocationServices
 
 _WORKSPACE_WRITE_TOOL = "workspace_write_file"
@@ -96,19 +97,20 @@ class FakeRuntimeAdapter:
         request: AgentInvocation,
         services: RuntimeInvocationServices,
     ) -> AgentInvocationResult:
-        if services.configuration.runtime_name != "fake":
-            raise ValueError("FakeRuntimeAdapter requires runtime_name='fake'")
+        kind = require_runtime_invocation(
+            request,
+            selected_runtime=services.configuration.runtime_name,
+            adapter_runtime="fake",
+            execution_kind=services.execution_kind,
+            supported_kinds=frozenset(AgentRole),
+            capabilities=self.capabilities,
+            has_tools=bool(services.tools.definitions),
+            cos_tools_supported=False,
+        )
         if services.accounting is not None:
             services.accounting.record_simulated_step()
         scenario = FakeScenario(str(request.input["fake_scenario"]))
-        kind = services.execution_kind or AgentRole(request.role)
-        if (request.role in {item.value for item in AgentRole} and kind != request.role) or (
-            request.role != AgentRole.COS and kind is AgentRole.COS
-        ):
-            raise ValueError("fake role and execution kind disagree")
         if kind == AgentRole.COS:
-            if services.tools.definitions:
-                raise ValueError("fake CoS invocation requires an empty tool catalog")
             return AgentInvocationResult(output=self._scope_decision(request, scenario))
         if kind == AgentRole.ENGINEER:
             engineer_script = self._engineer_script(request, scenario)

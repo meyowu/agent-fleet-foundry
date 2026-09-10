@@ -7,13 +7,20 @@ import re
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeVar
 
 from pydantic import JsonValue, ValidationError
 
-from agent_fleet.adapters.persistence.sqlite import SUPPORTED_SCHEMA_VERSION, SqliteStateStore
+from agent_fleet.adapters.persistence.graphs import SqliteGraphStore
+from agent_fleet.adapters.persistence.sqlite import (
+    SUPPORTED_SCHEMA_VERSION,
+    SqliteStateStore,
+    _lease_event_types,
+    _validate_lease_transition,
+)
 from agent_fleet.domain.budgets import RunBudgetLimits
 from agent_fleet.domain.conversation import (
     Conversation,
@@ -33,13 +40,21 @@ from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     ArtifactMetadata,
     FleetEvent,
+    LeaseStatus,
     Project,
     ResourceLease,
     Run,
     RunStatus,
     StrictModel,
 )
+from agent_fleet.domain.recovery_binding import (
+    RecoveryBinding,
+    RecoveryLeaseClaim,
+    RecoverySnapshot,
+    ReviewedRecoveryPlan,
+)
 from agent_fleet.domain.security import Redactor, canonical_json_hash
+from agent_fleet.domain.session_review import SessionSelection
 from agent_fleet.domain.workflow import is_terminal
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.id_generator import IdGenerator
@@ -164,12 +179,15 @@ class SqliteConversationStore:
         ids: IdGenerator,
         redactor: Redactor,
         state: SqliteStateStore,
+        *,
+        graphs: SqliteGraphStore | None = None,
     ) -> None:
         self.database_path = database_path
         self.clock = clock
         self.ids = ids
         self.redactor = redactor
         self.state = state
+        self.graphs = graphs
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -783,6 +801,427 @@ class SqliteConversationStore:
                 outstanding |= lease.status.value not in {"released", "recovered"}
         return outstanding
 
+    def _recovery_snapshot(
+        self, connection: sqlite3.Connection, selection: SessionSelection
+    ) -> RecoverySnapshot:
+        if (
+            selection.run_id is None
+            or self.graphs is None
+            or self.graphs.database_path.absolute() != self.database_path.absolute()
+        ):
+            raise _invalid()
+        conversation = self._conversation(
+            connection, selection.project_id, selection.conversation_id
+        )
+        self._revision(conversation.revision, selection.conversation_revision)
+        turn = self._turn_for_run(connection, selection.run_id)
+        if (
+            turn is None
+            or turn.binding.conversation_id != selection.conversation_id
+            or turn.binding.project_id != selection.project_id
+            or turn.binding.sequence != conversation.next_turn_sequence - 1
+        ):
+            raise _invalid()
+        claim_row = connection.execute(
+            "SELECT * FROM conversation_turn_claims WHERE turn_id=? AND generation=?",
+            (turn.binding.turn_id, turn.owner_generation),
+        ).fetchone()
+        if claim_row is None:
+            raise _invalid()
+        claim = self._claim_row(connection, claim_row)
+        runs: list[Run] = []
+        graphs: list[GraphSnapshot] = []
+        leases: list[ResourceLease] = []
+        pending = [selection.run_id]
+        seen: set[str] = set()
+        while pending:
+            run_id = pending.pop(0)
+            if run_id in seen or len(seen) >= 129:
+                raise _invalid()
+            seen.add(run_id)
+            run = self.state._validated_run(connection, run_id)
+            if run.project_id != selection.project_id or (
+                not runs and run.parent_run_id is not None
+            ):
+                raise _invalid()
+            runs.append(run)
+            graph = self.graphs._get(connection, run_id)
+            child_ids = (
+                [node.binding.child_run_id for node in graph.nodes] if graph is not None else []
+            )
+            # A Run or node hidden from the declared graph must not disappear from
+            # the reviewed ownership set, even if no valid graph can be decoded.
+            children = connection.execute(
+                "SELECT run_id FROM runs WHERE json_extract(data_json,'$.parent_run_id')=? "
+                "ORDER BY run_id LIMIT 130",
+                (run_id,),
+            ).fetchall()
+            node_rows = connection.execute(
+                "SELECT child_run_id FROM fleet_graph_nodes WHERE parent_run_id=? "
+                "ORDER BY child_run_id LIMIT 130",
+                (run_id,),
+            ).fetchall()
+            if [row["run_id"] for row in children] != sorted(child_ids) or [
+                row["child_run_id"] for row in node_rows
+            ] != sorted(child_ids):
+                raise _invalid()
+            pending.extend(child_ids)
+            if graph is not None:
+                graphs.append(graph)
+            rows = connection.execute(
+                "SELECT * FROM resource_leases WHERE run_id=? ORDER BY lease_id LIMIT 257",
+                (run_id,),
+            ).fetchall()
+            if len(leases) + len(rows) > 256:
+                raise _invalid()
+            for row in rows:
+                lease = self._decode(ResourceLease, row["data_json"])
+                if lease.run_id != run_id or any(
+                    getattr(lease, key) != row[key]
+                    for key in ("lease_id", "run_id", "kind", "resource_id", "status")
+                ):
+                    raise _invalid()
+                leases.append(lease)
+        return RecoverySnapshot(
+            selection=selection,
+            project=self._project(connection, selection.project_id),
+            conversation=conversation,
+            turn=turn,
+            claim=claim,
+            claim_status=claim_row["status"],
+            claim_released_at=claim_row["released_at"],
+            runs=tuple(runs),
+            graphs=tuple(graphs),
+            leases=tuple(sorted(leases, key=lambda lease: lease.lease_id)),
+        )
+
+    @staticmethod
+    def _recoverable(snapshot: RecoverySnapshot) -> None:
+        run = snapshot.runs[0]
+        retained = (
+            snapshot.turn.active_claim_id is not None
+            or snapshot.turn.status is ConversationTurnStatus.RECOVERY_REQUIRED
+        )
+        graph_owner = any(graph.driver_claim is not None for graph in snapshot.graphs)
+        outstanding = any(
+            lease.status not in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED}
+            for lease in snapshot.leases
+        )
+        if not (
+            is_terminal(run.status)
+            or run.status in {RunStatus.RUNNING, RunStatus.APPLYING}
+            or retained
+            or (
+                graph_owner
+                and run.status in {RunStatus.PAUSED_FOR_APPROVAL, RunStatus.WAITING_FOR_CHILDREN}
+            )
+        ) or (is_terminal(run.status) and not outstanding and not retained and not graph_owner):
+            raise _invalid()
+
+    @_boundary
+    def capture_recovery(self, selection: SessionSelection) -> RecoveryBinding:
+        selection = self._validated(SessionSelection, selection)
+        with self._transaction() as connection:
+            snapshot = self._recovery_snapshot(connection, selection)
+            self._recoverable(snapshot)
+            return RecoveryBinding(snapshot_json=snapshot.model_dump_json())
+
+    @_boundary
+    def prepare_reviewed_recovery(self, binding: RecoveryBinding) -> ReviewedRecoveryPlan:
+        original = binding.snapshot()
+        with self._transaction() as connection:
+            current = self._recovery_snapshot(connection, original.selection)
+            if current != original:
+                raise _invalid()
+            self._recoverable(current)
+            # Do not replace expected_revision with a new read. Comparison and
+            # fencing share this connection and its single BEGIN IMMEDIATE.
+            if current.turn.status in _ACTIVE:
+                self._fence_in_transaction(
+                    connection,
+                    current.runs[0].run_id,
+                    expected_revision=original.turn.revision,
+                    reason="recovery",
+                )
+            else:
+                # A terminal turn with later residual resources must regain a
+                # recovery fence, never execution ownership or replay authority.
+                if not is_terminal(current.runs[0].status):
+                    raise _invalid()
+                updated = current.turn.model_copy(
+                    update={
+                        "status": ConversationTurnStatus.RECOVERY_REQUIRED,
+                        "revision": current.turn.revision + 1,
+                        "fenced_at": current.turn.fenced_at or self.clock.now(),
+                        "updated_at": self.clock.now(),
+                        "settled_at": None,
+                    }
+                )
+                self._write_turn(connection, updated, "conversation.turn_fenced")
+                self._advance(connection, current.conversation, updated)
+            assert self.graphs is not None
+            for graph in reversed(current.graphs):
+                self.graphs._request_cancel_in_transaction(
+                    connection, graph.parent_run_id, expected_revision=graph.revision
+                )
+            conversation = self._conversation(
+                connection, original.selection.project_id, original.selection.conversation_id
+            )
+            selection = original.selection.model_copy(
+                update={"conversation_revision": conversation.revision}
+            )
+            post_fence = self._recovery_snapshot(connection, selection)
+            plan = ReviewedRecoveryPlan(
+                plan_id=self.ids.new(IdPrefix.CORRELATION),
+                binding=RecoveryBinding(snapshot_json=post_fence.model_dump_json()),
+            )
+            self._event(
+                connection,
+                selection.project_id,
+                selection.run_id,
+                "conversation.recovery_prepared",
+                "recovery_plan",
+                plan.plan_id,
+                plan.model_dump(mode="json"),
+            )
+            return plan
+
+    def _recovery_events(
+        self, connection: sqlite3.Connection, plan: ReviewedRecoveryPlan
+    ) -> tuple[FleetEvent, ...]:
+        original = plan.binding.snapshot()
+        rows = connection.execute(
+            "SELECT * FROM run_events WHERE run_id=? "
+            "AND event_type='conversation.recovery_prepared' "
+            "AND json_extract(data_json,'$.payload.record_id')=? LIMIT 2",
+            (original.runs[0].run_id, plan.plan_id),
+        ).fetchall()
+        if len(rows) != 1:
+            raise _invalid()
+        self._receipt(
+            connection,
+            rows[0]["event_id"],
+            original.selection.project_id,
+            original.runs[0].run_id,
+            "recovery_plan",
+            plan.plan_id,
+            plan.model_dump(mode="json"),
+        )
+        rows = connection.execute(
+            "SELECT * FROM run_events WHERE run_id=? AND event_type IN "
+            "('conversation.recovery_lease_claimed','conversation.recovery_lease_finished') "
+            "AND json_extract(data_json,'$.payload.plan_id')=? ORDER BY sequence LIMIT 513",
+            (original.runs[0].run_id, plan.plan_id),
+        ).fetchall()
+        if len(rows) > 512:
+            raise _invalid()
+        events = []
+        for row in rows:
+            event = self._decode(FleetEvent, row["data_json"])
+            if (
+                any(
+                    getattr(event, key) != row[key]
+                    for key in ("event_id", "run_id", "project_id", "event_type", "sequence")
+                )
+                or event.occurred_at.isoformat() != row["occurred_at"]
+                or event.project_id != original.selection.project_id
+                or event.payload.get("plan_id") != plan.plan_id
+                or event.payload.get("plan_sha256") != plan.sha256
+            ):
+                raise _invalid()
+            events.append(event)
+        return tuple(events)
+
+    def _reviewed_leases(
+        self, plan: ReviewedRecoveryPlan, events: tuple[FleetEvent, ...]
+    ) -> tuple[dict[str, ResourceLease], dict[str, str]]:
+        expected = {lease.lease_id: lease for lease in plan.binding.snapshot().leases}
+        claims: dict[str, str] = {}
+        finished: set[str] = set()
+        for event in events:
+            data = event.payload
+            if set(data) != {
+                "plan_id",
+                "plan_sha256",
+                "lease_id",
+                "claim_id",
+                "before_sha256",
+                "after_sha256",
+                "status",
+                "updated_at",
+            } or any(type(value) is not str for value in data.values()):
+                raise _invalid()
+            lease_id = str(data["lease_id"])
+            claim_id = str(data["claim_id"])
+            self._identifier(claim_id, "corr")
+            if lease_id not in expected:
+                raise _invalid()
+            before = expected[lease_id]
+            if canonical_json_hash(before.model_dump(mode="json")) != data["before_sha256"]:
+                raise _invalid()
+            status = LeaseStatus(str(data["status"]))
+            if event.event_type == "conversation.recovery_lease_claimed":
+                if (
+                    lease_id in claims
+                    or claim_id in claims.values()
+                    or status is not LeaseStatus.RELEASING
+                    or before.status in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED}
+                ):
+                    raise _invalid()
+                claims[lease_id] = claim_id
+            elif (
+                claims.get(lease_id) != claim_id
+                or lease_id in finished
+                or status not in {LeaseStatus.RECOVERED, LeaseStatus.FAILED}
+            ):
+                raise _invalid()
+            else:
+                finished.add(lease_id)
+            after = self._validated(
+                ResourceLease,
+                before.model_copy(
+                    update={
+                        "status": status,
+                        "updated_at": datetime.fromisoformat(str(data["updated_at"])),
+                    }
+                ),
+            )
+            if canonical_json_hash(after.model_dump(mode="json")) != data["after_sha256"]:
+                raise _invalid()
+            expected[lease_id] = after
+        return expected, claims
+
+    def _assert_recovery_plan(
+        self, connection: sqlite3.Connection, plan: ReviewedRecoveryPlan
+    ) -> tuple[RecoverySnapshot, dict[str, str]]:
+        original = plan.binding.snapshot()
+        current = self._recovery_snapshot(connection, original.selection)
+        expected, claims = self._reviewed_leases(plan, self._recovery_events(connection, plan))
+        if (
+            current.model_dump(exclude={"leases"}) != original.model_dump(exclude={"leases"})
+            or {lease.lease_id: lease for lease in current.leases} != expected
+            or current.turn.status is not ConversationTurnStatus.RECOVERY_REQUIRED
+            or current.turn.active_claim_id is not None
+        ):
+            raise _invalid()
+        return current, claims
+
+    def _record_recovery_lease(
+        self,
+        connection: sqlite3.Connection,
+        plan: ReviewedRecoveryPlan,
+        claim_id: str,
+        before: ResourceLease,
+        after: ResourceLease,
+        *,
+        finished: bool,
+    ) -> None:
+        if before.status is not after.status:
+            _validate_lease_transition(before.status, after.status)
+        changed = connection.execute(
+            "UPDATE resource_leases SET status=?,data_json=? WHERE lease_id=? AND data_json=?",
+            (
+                after.status.value,
+                after.model_dump_json(),
+                before.lease_id,
+                before.model_dump_json(),
+            ),
+        )
+        if changed.rowcount != 1:
+            raise _invalid()
+        run = self.state._validated_run(connection, after.run_id)
+        for event_type in _lease_event_types(after.kind, after.status):
+            self.state._insert_event(
+                connection,
+                self.state._event_for_run(
+                    run,
+                    event_type,
+                    {"lease_id": after.lease_id, "lease_status": after.status.value},
+                ),
+            )
+        root = plan.binding.snapshot().runs[0]
+        self.state._insert_event(
+            connection,
+            self.state._event_for_run(
+                root,
+                "conversation.recovery_lease_finished"
+                if finished
+                else "conversation.recovery_lease_claimed",
+                {
+                    "plan_id": plan.plan_id,
+                    "plan_sha256": plan.sha256,
+                    "lease_id": after.lease_id,
+                    "claim_id": claim_id,
+                    "before_sha256": canonical_json_hash(before.model_dump(mode="json")),
+                    "after_sha256": canonical_json_hash(after.model_dump(mode="json")),
+                    "status": after.status.value,
+                    "updated_at": after.updated_at.isoformat(),
+                },
+            ),
+        )
+
+    @_boundary
+    def claim_recovery_lease(self, plan: ReviewedRecoveryPlan, lease_id: str) -> RecoveryLeaseClaim:
+        with self._transaction() as connection:
+            current, claims = self._assert_recovery_plan(connection, plan)
+            matches = [lease for lease in current.leases if lease.lease_id == lease_id]
+            if (
+                len(matches) != 1
+                or lease_id in claims
+                or matches[0].status in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED}
+            ):
+                raise _invalid()
+            before = matches[0]
+            after = before.model_copy(
+                update={
+                    "status": LeaseStatus.RELEASING,
+                    # Even an already-releasing lease under a frozen/coarse
+                    # clock must change bytes when ownership is claimed.
+                    "updated_at": max(
+                        self.clock.now(), before.updated_at + timedelta(microseconds=1)
+                    ),
+                }
+            )
+            claim_id = self.ids.new(IdPrefix.CORRELATION)
+            self._record_recovery_lease(connection, plan, claim_id, before, after, finished=False)
+            return RecoveryLeaseClaim(
+                claim_id=claim_id, plan=plan, lease_json=after.model_dump_json()
+            )
+
+    @_boundary
+    def finish_recovery_lease(self, claim: RecoveryLeaseClaim, status: LeaseStatus) -> None:
+        if status not in {LeaseStatus.RECOVERED, LeaseStatus.FAILED}:
+            raise _invalid()
+        with self._transaction() as connection:
+            current, claims = self._assert_recovery_plan(connection, claim.plan)
+            before = claim.lease()
+            if claims.get(before.lease_id) != claim.claim_id or before not in current.leases:
+                raise _invalid()
+            after = before.model_copy(update={"status": status, "updated_at": self.clock.now()})
+            self._record_recovery_lease(
+                connection, claim.plan, claim.claim_id, before, after, finished=True
+            )
+
+    @_boundary
+    def reconcile_reviewed_recovery(self, plan: ReviewedRecoveryPlan) -> Run:
+        with self._transaction() as connection:
+            current, _ = self._assert_recovery_plan(connection, plan)
+            if (
+                any(not is_terminal(run.status) for run in current.runs)
+                or any(graph.driver_claim is not None for graph in current.graphs)
+                or any(
+                    lease.status not in {LeaseStatus.RELEASED, LeaseStatus.RECOVERED}
+                    for lease in current.leases
+                )
+            ):
+                raise _invalid()
+            updated = self._settled_update(connection, current.turn, None, ())
+            if updated.status is ConversationTurnStatus.RECOVERY_REQUIRED:
+                raise _invalid()
+            self._write_turn(connection, updated, "conversation.turn_reconciled")
+            self._advance(connection, current.conversation, updated)
+            return self.state._validated_run(connection, current.runs[0].run_id)
+
     @_boundary
     def create(self, project_id: str, repository_identity: str) -> Conversation:
         with self._transaction() as connection:
@@ -1149,69 +1588,82 @@ class SqliteConversationStore:
         claim: ConversationClaim | None = None,
     ) -> ConversationTurn:
         with self._transaction() as connection:
-            if reason not in {"cancel", "recovery"}:
-                raise _denied()
-            turn = self._turn_for_run(connection, run_id)
-            if turn is None:
-                raise _invalid()
-            self._revision(turn.revision, expected_revision)
-            if reason == "cancel":
-                if claim is not None:
-                    if self._owned(connection, claim).binding.run_id != run_id:
-                        raise ConversationOwnershipUnavailableError()
-                elif (
-                    turn.status is not ConversationTurnStatus.WAITING
-                    or turn.active_claim_id is not None
-                ):
-                    raise ConversationOwnershipUnavailableError()
-            elif claim is not None and self._owned(connection, claim).binding.run_id != run_id:
-                raise ConversationOwnershipUnavailableError()
-            if turn.status not in _ACTIVE:
-                raise ConversationOwnershipUnavailableError()
-            conversation = self._conversation(
-                connection, turn.binding.project_id, turn.binding.conversation_id
+            return self._fence_in_transaction(
+                connection, run_id, expected_revision=expected_revision, reason=reason, claim=claim
             )
-            run = self.state._validated_run(connection, run_id)
-            if not is_terminal(run.status):
-                run = run.model_copy(
-                    update={
-                        "status": RunStatus.CANCELLED if reason == "cancel" else RunStatus.FAILED,
-                        "updated_at": self.clock.now(),
-                    }
-                )
-                self.state._save_run_in_transaction(
-                    connection,
-                    run,
-                    "run.cancelled" if reason == "cancel" else "run.failed",
-                    {
-                        "reason": "conversation_cancelled"
-                        if reason == "cancel"
-                        else "operator_confirmed_owner_stopped"
-                    },
-                )
-            if turn.active_claim_id:
-                row = connection.execute(
-                    "SELECT * FROM conversation_turn_claims WHERE claim_id=?",
-                    (turn.active_claim_id,),
-                ).fetchone()
-                if row is None:
-                    raise _invalid()
-                self._write_claim(connection, self._claim_row(connection, row), "fenced")
-            now = self.clock.now()
-            updated = turn.model_copy(
+
+    def _fence_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        *,
+        expected_revision: int,
+        reason: Literal["cancel", "recovery"],
+        claim: ConversationClaim | None = None,
+    ) -> ConversationTurn:
+        if reason not in {"cancel", "recovery"}:
+            raise _denied()
+        turn = self._turn_for_run(connection, run_id)
+        if turn is None:
+            raise _invalid()
+        self._revision(turn.revision, expected_revision)
+        if reason == "cancel":
+            if claim is not None:
+                if self._owned(connection, claim).binding.run_id != run_id:
+                    raise ConversationOwnershipUnavailableError()
+            elif (
+                turn.status is not ConversationTurnStatus.WAITING
+                or turn.active_claim_id is not None
+            ):
+                raise ConversationOwnershipUnavailableError()
+        elif claim is not None and self._owned(connection, claim).binding.run_id != run_id:
+            raise ConversationOwnershipUnavailableError()
+        if turn.status not in _ACTIVE:
+            raise ConversationOwnershipUnavailableError()
+        conversation = self._conversation(
+            connection, turn.binding.project_id, turn.binding.conversation_id
+        )
+        run = self.state._validated_run(connection, run_id)
+        if not is_terminal(run.status):
+            run = run.model_copy(
                 update={
-                    "revision": turn.revision + 1,
-                    "status": ConversationTurnStatus.RECOVERY_REQUIRED,
-                    "active_claim_id": None,
-                    "observed_run_status": run.status,
-                    "updated_at": now,
-                    "fenced_at": turn.fenced_at or now,
-                    "settled_at": None,
+                    "status": RunStatus.CANCELLED if reason == "cancel" else RunStatus.FAILED,
+                    "updated_at": self.clock.now(),
                 }
             )
-            self._write_turn(connection, updated, "conversation.turn_fenced")
-            self._advance(connection, conversation, updated)
-            return updated
+            self.state._save_run_in_transaction(
+                connection,
+                run,
+                "run.cancelled" if reason == "cancel" else "run.failed",
+                {
+                    "reason": "conversation_cancelled"
+                    if reason == "cancel"
+                    else "operator_confirmed_owner_stopped"
+                },
+            )
+        if turn.active_claim_id:
+            row = connection.execute(
+                "SELECT * FROM conversation_turn_claims WHERE claim_id=?",
+                (turn.active_claim_id,),
+            ).fetchone()
+            if row is None:
+                raise _invalid()
+            self._write_claim(connection, self._claim_row(connection, row), "fenced")
+        now = self.clock.now()
+        updated = turn.model_copy(
+            update={
+                "revision": turn.revision + 1,
+                "status": ConversationTurnStatus.RECOVERY_REQUIRED,
+                "active_claim_id": None,
+                "observed_run_status": run.status,
+                "updated_at": now,
+                "fenced_at": turn.fenced_at or now,
+                "settled_at": None,
+            }
+        )
+        self._write_turn(connection, updated, "conversation.turn_fenced")
+        self._advance(connection, conversation, updated)
+        return updated
 
     @_boundary
     def reconcile_fenced(

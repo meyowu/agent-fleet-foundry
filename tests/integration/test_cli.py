@@ -11,10 +11,13 @@ from types import TracebackType
 from typing import Any, cast
 from unittest.mock import patch
 
+import httpx2
 import pytest
 import typer
+from action_tool_fixtures import SENTINEL, sdk_adapter, tool_response
+from openai import OpenAIError, RateLimitError
 from pydantic_ai import ModelMessage, ModelResponse, ToolCallPart
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, override_allow_model_requests
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from typer.testing import CliRunner
 
@@ -22,6 +25,10 @@ import agent_fleet.adapters.runtime.pydantic_ai as runtime_module
 import agent_fleet.cli.app as cli_module
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.runtime.fake import FakeRuntimeAdapter
+from agent_fleet.adapters.runtime.openai_transport_policy import (
+    OpenAIRequestPolicyError,
+    OpenAIResponsePolicyError,
+)
 from agent_fleet.adapters.system import UuidIdGenerator
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.bootstrap import build_container
@@ -84,7 +91,7 @@ def test_version_and_doctor_json_envelopes(tmp_path: Path) -> None:
     assert version_data["data"]["phase"] == "6"
     assert version_data["data"]["sandboxes"] == ["docker", "fake", "local-unsafe"]
     assert version_data["data"]["runtime"] == "fake"
-    assert version_data["data"]["runtimes"] == ["fake", "pydantic-ai"]
+    assert version_data["data"]["runtimes"] == ["fake", "pydantic-ai", "openai-agents", "langgraph"]
     assert version_data["data"]["sandbox"] == "fake"
 
     resume_help = runner.invoke(app, ["resume", "--help"], env=environment)
@@ -688,7 +695,7 @@ def test_cli_unsupported_provider_fails_before_credential_read_or_state_write(
             "--runtime",
             "pydantic-ai",
             "--provider-model",
-            "anthropic:not-enabled",
+            "unsupported-provider:offline",
             "--credential-ref",
             credential_ref,
             "--yes",
@@ -942,6 +949,169 @@ def test_cli_provider_failure_redacts_registered_secret_before_goal_and_error_pe
             assert encoded.encode() not in content, path
 
 
+@pytest.mark.parametrize("cause", ["api_rate_limit", "request_policy", "response_policy"])
+def test_cli_runtime_diagnostic_survives_reopened_logs_without_provider_contents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cause: str,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "safe-runtime-diagnostic-state"
+    variable_name = "FLEET_OFFLINE_DIAGNOSTIC_KEY"
+    sentinel = "safe-diagnostic-secret+/="
+    encoded = base64.b64encode(sentinel.encode()).decode()
+    environment = {"AGENT_FLEET_HOME": str(state_root), variable_name: sentinel}
+    _register_test_project(
+        repository,
+        state_root,
+        runtime_name="pydantic-ai",
+        provider_model="openai:offline-test",
+        credential_ref=f"env:{variable_name}",
+        environment={variable_name: sentinel},
+    )
+
+    def reject_client(**arguments: object) -> object:
+        assert arguments["api_key"] == sentinel
+        if cause != "api_rate_limit":
+            policy_error = (
+                OpenAIRequestPolicyError()
+                if cause == "request_policy"
+                else OpenAIResponsePolicyError()
+            )
+            policy_error.__context__ = OpenAIError(sentinel)
+            policy_error.add_note(encoded)
+            raise policy_error
+        response = httpx2.Response(
+            429,
+            request=httpx2.Request("POST", f"https://example.invalid/{sentinel}"),
+            headers={"x-request-id": encoded},
+        )
+        raise RateLimitError(sentinel, response=response, body={"error": encoded})
+
+    monkeypatch.setattr(runtime_module, "AsyncOpenAI", reject_client)
+    result = runner.invoke(
+        app,
+        ["run", "Fix the bounded fixture", "--project", str(repository), "--json"],
+        env=environment,
+    )
+    assert result.exit_code == 5
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "PROVIDER_FAILED"
+    expected: dict[str, Any] = {"category": "provider_sdk", "cause_category": cause}
+    if cause == "api_rate_limit":
+        expected["http_status"] = 429
+    assert payload["error"]["details"]["runtime_diagnostic"] == expected
+    run_id = payload["error"]["details"]["run_id"]
+    logs = runner.invoke(app, ["logs", run_id, "--json"], env=environment)
+    assert logs.exit_code == 0
+    assert expected == next(
+        event["payload"]["runtime_diagnostic"]
+        for event in json.loads(logs.stdout)["data"]
+        if event["event_type"] == "agent.failed"
+    )
+    for output in (result.stdout, logs.stdout):
+        assert sentinel not in output and encoded not in output
+    for path in state_root.rglob("*"):
+        if path.is_file():
+            content = path.read_bytes()
+            assert sentinel.encode() not in content and encoded.encode() not in content
+
+
+def test_cli_tool_argument_diagnostic_survives_reopened_logs_and_settled_accounting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "tool-argument-diagnostic-state"
+    variable_name = "FLEET_ACTION_TEST_KEY"
+    untrusted_reason = "offline-untrusted-validation-input+/="
+    environment = {"AGENT_FLEET_HOME": str(state_root), variable_name: SENTINEL}
+    _register_test_project(
+        repository,
+        state_root,
+        runtime_name="pydantic-ai",
+        provider_model="openai:gpt-test",
+        credential_ref=f"env:{variable_name}",
+        environment={variable_name: SENTINEL},
+    )
+    sends: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sends.append(request)
+        if len(sends) == 1:
+            return tool_response(
+                request,
+                [
+                    (
+                        "submit_scope_decision",
+                        {
+                            "normalized_goal": "Fix the canary behavior.",
+                            "workflow": "code-change",
+                            "change_kind": "code_change",
+                            "fleet_strategy": "engineer_verifier",
+                            "allowed_paths": ["src/canary_calc/core.py"],
+                            "forbidden_paths": [".git", ".fleet"],
+                            "acceptance_criteria": [
+                                {
+                                    "criterion_id": "canary-zero-division",
+                                    "description": "divide by zero raises the stable ValueError",
+                                }
+                            ],
+                            "required_evidence": [
+                                "canonical_patch",
+                                "command_evidence",
+                                "independent_verifier_verdict",
+                            ],
+                        },
+                    )
+                ],
+            )
+        assert len(sends) == 2, "malformed tool arguments must not trigger a model retry"
+        return tool_response(request, [("run_verification", {"reason": untrusted_reason})], 2)
+
+    _, clients = sdk_adapter(monkeypatch, handler)
+    with override_allow_model_requests(True):
+        result = runner.invoke(
+            app,
+            ["run", "Fix the bounded fixture", "--project", str(repository), "--json"],
+            env=environment,
+        )
+    assert result.exit_code == 5
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "RUNTIME_OUTPUT_INVALID"
+    expected = {"category": "tool_arguments", "cause_category": "schema_validation"}
+    assert payload["error"]["details"]["runtime_diagnostic"] == expected
+    run_id = payload["error"]["details"]["run_id"]
+    logs = runner.invoke(app, ["logs", run_id, "--json"], env=environment)
+    assert logs.exit_code == 0
+    assert expected == next(
+        event["payload"]["runtime_diagnostic"]
+        for event in json.loads(logs.stdout)["data"]
+        if event["event_type"] == "agent.failed"
+    )
+    reopened = build_container(state_root)
+    snapshot = reopened.budgets.snapshot(run_id)
+    assert snapshot.model_requests == 2 and snapshot.reported_total_tokens == 30
+    assert snapshot.tool_calls == snapshot.outstanding_requests == snapshot.unknown_requests == 0
+    assert snapshot.reserved_tokens == 0 and snapshot.completeness == "complete"
+    assert reopened.state.outstanding_leases(run_id) == []
+    assert len(sends) == 2 and clients and all(client.is_closed for client in clients)
+    forbidden = (
+        SENTINEL.encode(),
+        base64.b64encode(SENTINEL.encode()),
+        untrusted_reason.encode(),
+        base64.b64encode(untrusted_reason.encode()),
+    )
+    for output in (result.stdout.encode(), logs.stdout.encode()):
+        assert not any(value in output for value in forbidden)
+    for path in state_root.rglob("*"):
+        if path.is_file():
+            content = path.read_bytes()
+            assert not any(value in content for value in forbidden)
+
+
 def test_cli_offline_pydantic_ai_run_reports_usage_and_fake_sandbox_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1100,7 +1270,7 @@ def test_cli_offline_pydantic_ai_run_reports_usage_and_fake_sandbox_limit(
     assert len(data["runtime_usage_artifact_ids"]) == 3
     assert data["verified_complete"] is False
     assert "SIMULATED_EVIDENCE_ONLY" in data["evidence"]["completion_reason_codes"]
-    assert "model provider was contacted" in envelope["warnings"][0]
+    assert "actual provider contact requires run evidence" in envelope["warnings"][0]
     assert "FakeSandbox" in envelope["warnings"][0]
     assert calls == {
         "submit_scope_decision": 1,
@@ -1112,7 +1282,7 @@ def test_cli_offline_pydantic_ai_run_reports_usage_and_fake_sandbox_limit(
 
     human = runner.invoke(app, ["resume", run_id], env=environment)
     assert human.exit_code == 0, human.output
-    assert "model provider was contacted" in human.stdout
+    assert "actual provider contact requires run evidence" in " ".join(human.stdout.split())
     assert "FakeSandbox" in human.stdout
     assert sentinel not in human.stdout
 

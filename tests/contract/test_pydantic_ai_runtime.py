@@ -4,13 +4,23 @@ import asyncio
 import base64
 import logging
 import os
+import re
 import socket
+from http.cookiejar import CookieJar
 from importlib import resources
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 import pytest
+from action_tool_fixtures import (
+    ActionTools,
+    make_action_tools,
+    sdk_adapter,
+    tool_response,
+    wire_tools,
+)
+from action_tool_fixtures import configuration as action_configuration
 from openai import AsyncOpenAI as SDKAsyncOpenAI
 from openai import OpenAIError
 from pydantic_ai import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -22,7 +32,9 @@ from pydantic_ai.usage import RequestUsage
 
 import agent_fleet.adapters.runtime.pydantic_ai as runtime_module
 from agent_fleet.adapters.runtime.pydantic_ai import PydanticAIRuntimeAdapter
-from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.application.gateway import ToolGateway
+from agent_fleet.application.runtime_tools import GatewayRuntimeToolCatalog
+from agent_fleet.domain.errors import ApprovalRequiredError, ErrorCode, FleetError
 from agent_fleet.domain.models import (
     AgentInvocation,
     AgentRole,
@@ -55,6 +67,34 @@ from agent_fleet.ports.secret_store import (
 RUN_ID = "run_00000000000000000000000000000001"
 TASK_ID = "task_00000000000000000000000000000001"
 AGENT_ID = "agent_00000000000000000000000000000001"
+SCOPE_KEY = "SyntheticLateScopeCollisionAbCd"
+
+
+def selected_key_scope_tools(mode: str) -> tuple[ActionTools, Redactor]:
+    """Synthetic raw scope exists only in the catalog unless explicitly requested."""
+    tools = make_action_tools()
+    tools.task.allowed_paths[:] = [
+        "src/ordinary.py" if mode == "late_no_collision" else f"src/{SCOPE_KEY}.py"
+    ]
+    shared = Redactor([SCOPE_KEY] if mode == "pre_registered" else [])
+    tools.catalog = GatewayRuntimeToolCatalog(
+        gateway=cast(ToolGateway, tools.gateway),
+        redactor=shared,
+        run=tools.run,
+        task=tools.task,
+        agent=tools.agent,
+        workspace=tools.catalog._workspace,
+        sandbox_handle=tools.catalog._sandbox_handle,
+        max_calls=12,
+    )
+    tools.invocation = tools.invocation.model_copy(
+        update={
+            "input": {"task": tools.task.model_dump(mode="json")}
+            if mode == "late_raw_context"
+            else {}
+        }
+    )
+    return tools, shared
 
 
 @pytest.fixture
@@ -106,6 +146,82 @@ class RecordingCatalog:
             name=call.name,
             content={"accepted": True},
         )
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-chat"])
+@pytest.mark.parametrize("path", ["src/canary_calc/core.py", "README.md"])
+async def test_actual_sdk_forwards_read_pattern_but_defers_path_authority_to_catalog(
+    monkeypatch: pytest.MonkeyPatch, provider: str, path: str
+) -> None:
+    tools = make_action_tools()
+    sent: list[httpx2.Request] = []
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        sent.append(received)
+        wire = wire_tools(received)["repo_read_file"]
+        assert wire["strict"] is True
+        pattern = wire["parameters"]["properties"]["path"]["pattern"]
+        assert bool(re.search(pattern, path)) is (path != "README.md")
+        if len(sent) == 1:
+            return tool_response(received, [("repo_read_file", {"path": path, "reason": "Probe."})])
+        assert len(sent) == 2 and len(tools.gateway.calls) == 1
+        return tool_response(
+            received,
+            [("submit_implementation_report", _implementation_report().model_dump(mode="json"))],
+            index=2,
+        )
+
+    runtime, clients = sdk_adapter(monkeypatch, respond)
+    with override_allow_model_requests(True):
+        result = await runtime.invoke(
+            tools.invocation,
+            RuntimeInvocationServices(
+                configuration=action_configuration(provider), tools=tools.catalog
+            ),
+        )
+    # Pinned ExternalToolset uses any_schema locally. This recording gateway
+    # proves routing only; the integration workflow checks actual persisted DENY.
+    assert len(sent) == 2 and len(tools.gateway.calls) == len(tools.catalog.records) == 1
+    assert tools.gateway.calls[0]["scripted"].resource.identifier == path
+    assert result.usage is not None and result.usage.tool_calls == 1
+    assert all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-chat"])
+@pytest.mark.parametrize("mode", ["pre_registered", "late_collision", "late_no_collision"])
+async def test_actual_sdk_selected_key_scope_collision_is_checked_before_schema_encoding(
+    monkeypatch: pytest.MonkeyPatch, provider: str, mode: str
+) -> None:
+    tools, shared = selected_key_scope_tools(mode)
+    store = StaticSecretStore(SCOPE_KEY)
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        read = wire_tools(received)["repo_read_file"]
+        pattern = read["parameters"]["properties"]["path"].get("pattern")
+        assert read["strict"] is True and shared.contains_secret(SCOPE_KEY)
+        assert SCOPE_KEY.encode() not in received.content
+        assert bool(pattern) is (mode == "late_no_collision")
+        assert not pattern or re.search(pattern, f"src/{SCOPE_KEY}.py") is None
+        return tool_response(
+            received,
+            [("submit_implementation_report", _implementation_report().model_dump(mode="json"))],
+        )
+
+    _, clients = sdk_adapter(monkeypatch, respond)
+    runtime = PydanticAIRuntimeAdapter(store, shared)
+    with override_allow_model_requests(True):
+        await runtime.invoke(
+            tools.invocation,
+            RuntimeInvocationServices(
+                configuration=action_configuration(provider), tools=tools.catalog
+            ),
+        )
+    assert store.resolve_calls == sends == len(clients) == 1
+    assert all(client.is_closed for client in clients)
+    assert tools.gateway.calls == [] and tools.catalog.records == ()
 
 
 class StaticSecretStore:
@@ -968,6 +1084,124 @@ async def test_invalid_output_after_side_effect_is_not_retried() -> None:
     assert caught.value.code is ErrorCode.RUNTIME_OUTPUT_INVALID
     assert model_requests == 2
     assert len(catalog.calls) == 1
+    assert caught.value.details["runtime_diagnostic"]["category"] == (
+        "structured_output_after_side_effect"
+    )
+
+
+@pytest.mark.parametrize(
+    ("malformation", "field", "issue"),
+    [
+        ("uppercase_verdict", "verdict", "enum"),
+        ("missing_rationale", "rationale", "missing"),
+        ("object_in_narrative", "criterion_results", "type"),
+    ],
+)
+async def test_verifier_schema_diagnostic_after_effect_preserves_single_dispatch(
+    malformation: str, field: str, issue: str
+) -> None:
+    from agent_fleet.domain.runtime_diagnostics import runtime_diagnostic_payload
+
+    model_requests = 0
+    payload = _verifier_verdict().model_dump(mode="json")
+    if malformation == "uppercase_verdict":
+        payload["verdict"] = "PASS"
+    elif malformation == "missing_rationale":
+        del payload["rationale"]
+    else:
+        payload["criterion_results"] = [{"criterion_id": "nonpublic-synthetic-model-value"}]
+
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_requests
+        del messages, info
+        model_requests += 1
+        if model_requests == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("run_verification", {}, tool_call_id="one-check")]
+            )
+        return ModelResponse(
+            parts=[ToolCallPart("submit_verifier_verdict", payload, tool_call_id="invalid-verdict")]
+        )
+
+    catalog = RecordingCatalog(
+        (
+            RuntimeToolDefinition(
+                name="run_verification",
+                description="Synthetic counted check; no real command.",
+                parameters_json_schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                side_effect=True,
+            ),
+        )
+    )
+    adapter = PydanticAIRuntimeAdapter.for_test_model(FunctionModel(model))
+    with pytest.raises(FleetError) as caught:
+        await adapter.invoke(
+            _invocation(AgentRole.VERIFIER, WorkflowStage.VERIFYING),
+            RuntimeInvocationServices(configuration=_configuration(max_retries=3), tools=catalog),
+        )
+    assert caught.value.code is ErrorCode.RUNTIME_OUTPUT_INVALID
+    assert model_requests == 2 and len(catalog.calls) == 1 and len(catalog.records) == 1
+    assert catalog.records[0].side_effect_committed is True
+    expected = {
+        "category": "structured_output_after_side_effect",
+        "cause_category": "schema_validation",
+        "expected_output_contract": "verifier_verdict",
+        "validation_issues": [{"field": field, "issue": issue}],
+    }
+    assert caught.value.details["runtime_diagnostic"] == expected
+    assert runtime_diagnostic_payload(caught.value.details) == {"runtime_diagnostic": expected}
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+    assert not getattr(caught.value, "__notes__", ())
+    assert "nonpublic-synthetic-model-value" not in str(caught.value)
+
+
+async def test_valid_lowercase_verifier_output_after_effect_is_unchanged() -> None:
+    model_requests = 0
+
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_requests
+        del messages, info
+        model_requests += 1
+        if model_requests == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("run_verification", {}, tool_call_id="one-check")]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit_verifier_verdict",
+                    _verifier_verdict().model_dump(mode="json"),
+                    tool_call_id="valid-verdict",
+                )
+            ]
+        )
+
+    catalog = RecordingCatalog(
+        (
+            RuntimeToolDefinition(
+                name="run_verification",
+                description="Synthetic counted check; no real command.",
+                parameters_json_schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+                side_effect=True,
+            ),
+        )
+    )
+    result = await PydanticAIRuntimeAdapter.for_test_model(FunctionModel(model)).invoke(
+        _invocation(AgentRole.VERIFIER, WorkflowStage.VERIFYING),
+        RuntimeInvocationServices(configuration=_configuration(max_retries=3), tools=catalog),
+    )
+    assert result.output == _verifier_verdict()
+    assert model_requests == 2 and len(catalog.calls) == 1
 
 
 @pytest.mark.parametrize(
@@ -1001,6 +1235,7 @@ async def test_invalid_structured_output_maps_to_stable_error(
 
     assert caught.value.code is expected_code
     assert caught.value.__cause__ is None
+    assert caught.value.details["runtime_diagnostic"]["category"] == "structured_output"
 
 
 async def test_provider_failure_is_redacted_and_has_no_exception_context() -> None:
@@ -1029,10 +1264,45 @@ async def test_provider_failure_is_redacted_and_has_no_exception_context() -> No
 
     error = caught.value
     assert error.code is ErrorCode.PROVIDER_FAILED
+    assert error.details["runtime_diagnostic"] == {
+        "category": "provider_api",
+        "cause_category": "unknown",
+    }
     assert sentinel not in str(error)
     assert sentinel not in repr(error.details)
     assert error.__cause__ is None
     assert error.__context__ is None
+
+
+async def test_domain_approval_subtype_survives_raw_sdk_context_removal() -> None:
+    sentinel = "raw-sdk-approval-context-sentinel"
+    original = ApprovalRequiredError("approval_exact_pending")
+    original.add_note(sentinel)
+
+    async def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del messages, info
+        try:
+            raise ExceptionGroup("raw provider context", [ValueError(sentinel)])
+        except ExceptionGroup as raw:
+            raise original from raw
+
+    adapter = PydanticAIRuntimeAdapter.for_test_model(
+        FunctionModel(failing_model), redactor=Redactor([sentinel])
+    )
+    with pytest.raises(ApprovalRequiredError) as caught:
+        await adapter.invoke(
+            _invocation(AgentRole.COS, WorkflowStage.SCOPING),
+            RuntimeInvocationServices(configuration=_configuration(), tools=RecordingCatalog()),
+        )
+    error = caught.value
+    assert error is original
+    assert type(error) is ApprovalRequiredError
+    assert error.code is ErrorCode.APPROVAL_REQUIRED
+    assert error.request_id == "approval_exact_pending"
+    assert error.details == {"request_id": "approval_exact_pending"}
+    assert error.__context__ is error.__cause__ is None
+    assert not getattr(error, "__notes__", [])
+    assert sentinel not in str(error)
 
 
 async def test_total_invocation_timeout_maps_to_cause_free_fleet_error() -> None:
@@ -1056,7 +1326,10 @@ async def test_total_invocation_timeout_maps_to_cause_free_fleet_error() -> None
         )
 
     assert caught.value.code is ErrorCode.RUNTIME_TIMEOUT
-    assert caught.value.details == {"timeout_seconds": 1}
+    assert caught.value.details == {
+        "timeout_seconds": 1,
+        "runtime_diagnostic": {"category": "invocation_timeout", "cause_category": "unknown"},
+    }
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
 
@@ -1090,7 +1363,7 @@ def test_unsupported_provider_fails_preflight_before_credential_read() -> None:
     with pytest.raises(FleetError) as caught:
         adapter.preflight(
             _configuration(
-                provider_model="anthropic:unsupported",
+                provider_model="unsupported-provider:offline",
                 credential_ref="env:FLEET_PROVIDER_KEY",
             ),
             credential_check=RuntimeCredentialCheck.RESOLVE,
@@ -1190,6 +1463,16 @@ async def test_explicit_openai_client_pins_transport_and_ignores_ambient_routing
     assert captured_client_arguments["timeout"] == 5.0
     assert captured_transport_arguments["trust_env"] is False
     assert captured_transport_arguments["follow_redirects"] is False
+    cookie_jar = captured_transport_arguments["cookies"]
+    assert isinstance(cookie_jar, CookieJar)
+    httpx2.Cookies(cookie_jar).extract_cookies(
+        httpx2.Response(
+            200,
+            headers={"Set-Cookie": "provider_cookie=offline; Path=/; Secure"},
+            request=httpx2.Request("POST", "https://api.openai.com/v1/responses"),
+        )
+    )
+    assert len(cookie_jar) == 0
     event_hooks = captured_transport_arguments["event_hooks"]
     assert isinstance(event_hooks, dict)
     request_hooks = event_hooks["request"]
@@ -1478,12 +1761,14 @@ async def test_response_guard_blocks_secret_bearing_sdk_logs(
         *,
         trust_env: bool,
         follow_redirects: bool,
+        cookies: CookieJar,
         event_hooks: dict[str, list[Any]],
     ) -> httpx2.AsyncClient:
         return httpx2.AsyncClient(
             transport=httpx2.MockTransport(handler),
             trust_env=trust_env,
             follow_redirects=follow_redirects,
+            cookies=cookies,
             event_hooks=event_hooks,
         )
 
@@ -1553,6 +1838,50 @@ def test_package_owned_prompts_are_loadable_and_state_the_control_boundary(name:
 
     assert prompt.strip()
     assert "control plane" in prompt.casefold()
+
+
+async def test_verifier_invocation_receives_scoped_read_and_proof_gap_guidance(
+    deny_socket_connections: None,
+) -> None:
+    del deny_socket_connections
+    calls = 0
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        assert messages
+        instructions = info.instructions or ""
+        assert (
+            "TaskSpec.allowed_paths and forbidden_paths constrain repository reads" in instructions
+        )
+        assert "never a directory, .fleet, .git" in instructions
+        assert "workspace_get_diff for changed-path scope inspection" in instructions
+        assert "no configuration\nread is needed" in instructions
+        assert "Missing proof remains INCONCLUSIVE" in instructions
+        assert "do not broaden the task, invent coverage" in instructions
+        assert "Inspection-only or missing/inadequate proof remains INCONCLUSIVE" in instructions
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    _verifier_verdict().model_dump(mode="json"),
+                    tool_call_id="scope-guidance-verdict",
+                )
+            ]
+        )
+
+    adapter = PydanticAIRuntimeAdapter.for_test_model(FunctionModel(model_function))
+    catalog = RecordingCatalog()
+    result = await adapter.invoke(
+        _invocation(AgentRole.VERIFIER, WorkflowStage.VERIFYING),
+        RuntimeInvocationServices(configuration=_configuration(), tools=catalog),
+    )
+
+    assert isinstance(result.usage, UsageRecord)
+    assert calls == result.usage.requests == 1
+    assert result.output == _verifier_verdict()
+    assert result.output.verdict is Verdict.INCONCLUSIVE
+    assert catalog.calls == []
 
 
 @pytest.mark.parametrize("role", [AgentRole.RESEARCHER, AgentRole.ARCHITECT])

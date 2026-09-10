@@ -279,12 +279,16 @@ def default_fleet_files(
     sandbox_configuration: SandboxConfiguration | None = None,
     trusted_canary: bool = False,
 ) -> dict[str, str]:
-    if runtime_name not in {"fake", "pydantic-ai"}:
+    if runtime_name not in {"fake", "pydantic-ai", "openai-agents", "langgraph"}:
         raise _config_error(f"unsupported runtime adapter: {runtime_name!r}")
     if runtime_name == "fake" and provider_model is not None:
         raise _config_error("fake runtime cannot declare a provider model")
-    if runtime_name == "pydantic-ai" and provider_model is None:
-        raise _config_error("pydantic-ai runtime requires an explicit provider model")
+    if runtime_name in {"pydantic-ai", "openai-agents", "langgraph"} and provider_model is None:
+        raise _config_error(f"{runtime_name} runtime requires an explicit provider model")
+    if runtime_name in {"openai-agents", "langgraph"} and (
+        provider_model is None or provider_model.partition(":")[0] != "openai"
+    ):
+        raise _config_error(f"{runtime_name} runtime requires an explicit OpenAI Responses model")
     sandbox_configuration = sandbox_configuration or SandboxConfiguration()
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", repository_name).strip("-") or "project"
     runtime_data: dict[str, object] = {

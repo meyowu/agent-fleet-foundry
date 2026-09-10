@@ -3,9 +3,63 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+import agent_fleet.adapters.repository.profile as profile_module
 from agent_fleet.adapters.repository.profile import StaticRepositoryProfiler
+from agent_fleet.adapters.repository.readiness_metadata import MetadataCapture
 from agent_fleet.domain.repository_profile import ProjectKnowledge
 from agent_fleet.domain.security import canonical_json_hash
+
+
+def test_metadata_capture_preserves_profile_bytes_and_reads_each_manifest_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies=["pytest"]\n')
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"PRIVATE SCRIPT"}}')
+    (tmp_path / "package-lock.json").write_text("PRIVATE LOCK")
+    profiler = StaticRepositoryProfiler()
+    legacy = profiler.profile(tmp_path).model_dump_json()
+    observed: list[str] = []
+    original = profile_module._ReadBudget.read
+
+    def read(budget: profile_module._ReadBudget, candidate: profile_module._Candidate) -> bytes:
+        observed.append(candidate.relative)
+        return original(budget, candidate)
+
+    monkeypatch.setattr(profile_module._ReadBudget, "read", read)
+    result, metadata = profiler.profile_with_metadata(tmp_path)
+    assert result.model_dump_json() == legacy
+    assert sorted(observed) == ["package.json", "pyproject.toml"]
+    assert len(metadata.manifests) == 2
+    assert "PRIVATE" not in metadata.model_dump_json()
+
+
+def test_legacy_profile_does_not_create_metadata_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forbidden() -> None:
+        raise AssertionError("legacy profiling cannot instantiate metadata capture")
+
+    monkeypatch.setattr(profile_module, "MetadataCapture", forbidden)
+    assert StaticRepositoryProfiler().profile(tmp_path).profile.root == "."
+
+
+def test_metadata_failure_does_not_change_legacy_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\ndependencies=["pytest"]\n')
+    profiler = StaticRepositoryProfiler()
+    before = profiler.profile(tmp_path).model_dump_json()
+
+    def failing(*args: object) -> None:
+        raise ValueError("PRIVATE parser input")
+
+    monkeypatch.setattr(MetadataCapture, "observe", failing)
+    result, metadata = profiler.profile_with_metadata(tmp_path)
+    assert result.model_dump_json() == before
+    assert metadata.diagnostics[0].code == "metadata_capture_failed"
+    assert "PRIVATE" not in metadata.model_dump_json()
 
 
 def _commands(result: object) -> set[tuple[str, tuple[str, ...]]]:

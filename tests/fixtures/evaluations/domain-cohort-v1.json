@@ -1,0 +1,1262 @@
+{
+  "schema_version": 1,
+  "manifest_id": "eval_11111111111111111111111111111111",
+  "campaign_id": "campaign_22222222222222222222222222222222",
+  "revision": 0,
+  "previous_sha256": null,
+  "frozen_at": "2026-01-01T00:00:00Z",
+  "repositories": [
+    {
+      "repository_id": "repo_1",
+      "source_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "commit_sha": "1111111111111111111111111111111111111111",
+      "cohort": "development"
+    },
+    {
+      "repository_id": "repo_2",
+      "source_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "commit_sha": "2222222222222222222222222222222222222222",
+      "cohort": "development"
+    },
+    {
+      "repository_id": "repo_3",
+      "source_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "commit_sha": "3333333333333333333333333333333333333333",
+      "cohort": "development"
+    },
+    {
+      "repository_id": "repo_4",
+      "source_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "commit_sha": "4444444444444444444444444444444444444444",
+      "cohort": "sealed_holdout"
+    },
+    {
+      "repository_id": "repo_5",
+      "source_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+      "commit_sha": "5555555555555555555555555555555555555555",
+      "cohort": "sealed_holdout"
+    },
+    {
+      "repository_id": "repo_6",
+      "source_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "commit_sha": "6666666666666666666666666666666666666666",
+      "cohort": "sealed_holdout"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "repo_1_task_1",
+      "repository_id": "repo_1",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_1_task_1; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_1_task_2",
+      "repository_id": "repo_1",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_1_task_2; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_1_task_3",
+      "repository_id": "repo_1",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_1_task_3; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_1_task_4",
+      "repository_id": "repo_1",
+      "task_kind": "read_only",
+      "requirement": "Synthetic preregistration only: repo_1_task_4; no live result.",
+      "allowed_paths": [],
+      "required_evidence": [
+        "source_baseline",
+        "answer",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_2_task_1",
+      "repository_id": "repo_2",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_2_task_1; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_2_task_2",
+      "repository_id": "repo_2",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_2_task_2; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_2_task_3",
+      "repository_id": "repo_2",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_2_task_3; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_2_task_4",
+      "repository_id": "repo_2",
+      "task_kind": "read_only",
+      "requirement": "Synthetic preregistration only: repo_2_task_4; no live result.",
+      "allowed_paths": [],
+      "required_evidence": [
+        "source_baseline",
+        "answer",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_3_task_1",
+      "repository_id": "repo_3",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_3_task_1; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_3_task_2",
+      "repository_id": "repo_3",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_3_task_2; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_3_task_3",
+      "repository_id": "repo_3",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_3_task_3; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_3_task_4",
+      "repository_id": "repo_3",
+      "task_kind": "read_only",
+      "requirement": "Synthetic preregistration only: repo_3_task_4; no live result.",
+      "allowed_paths": [],
+      "required_evidence": [
+        "source_baseline",
+        "answer",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_4_task_1",
+      "repository_id": "repo_4",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_4_task_1; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_4_task_2",
+      "repository_id": "repo_4",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_4_task_2; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_4_task_3",
+      "repository_id": "repo_4",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_4_task_3; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_4_task_4",
+      "repository_id": "repo_4",
+      "task_kind": "read_only",
+      "requirement": "Synthetic preregistration only: repo_4_task_4; no live result.",
+      "allowed_paths": [],
+      "required_evidence": [
+        "source_baseline",
+        "answer",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_5_task_1",
+      "repository_id": "repo_5",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_5_task_1; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_5_task_2",
+      "repository_id": "repo_5",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_5_task_2; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_5_task_3",
+      "repository_id": "repo_5",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_5_task_3; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_5_task_4",
+      "repository_id": "repo_5",
+      "task_kind": "read_only",
+      "requirement": "Synthetic preregistration only: repo_5_task_4; no live result.",
+      "allowed_paths": [],
+      "required_evidence": [
+        "source_baseline",
+        "answer",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_6_task_1",
+      "repository_id": "repo_6",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_6_task_1; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_6_task_2",
+      "repository_id": "repo_6",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_6_task_2; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_6_task_3",
+      "repository_id": "repo_6",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: repo_6_task_3; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "repo_6_task_4",
+      "repository_id": "repo_6",
+      "task_kind": "read_only",
+      "requirement": "Synthetic preregistration only: repo_6_task_4; no live result.",
+      "allowed_paths": [],
+      "required_evidence": [
+        "source_baseline",
+        "answer",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": null
+    },
+    {
+      "case_id": "auxiliary_1",
+      "repository_id": "repo_1",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: auxiliary_1; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": "provider_canary"
+    },
+    {
+      "case_id": "auxiliary_2",
+      "repository_id": "repo_1",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: auxiliary_2; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": "cold_start"
+    },
+    {
+      "case_id": "auxiliary_3",
+      "repository_id": "repo_1",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: auxiliary_3; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": "cold_start"
+    },
+    {
+      "case_id": "auxiliary_4",
+      "repository_id": "repo_1",
+      "task_kind": "code_change",
+      "requirement": "Synthetic preregistration only: auxiliary_4; no live result.",
+      "allowed_paths": [
+        "src"
+      ],
+      "required_evidence": [
+        "source_baseline",
+        "patch",
+        "verification",
+        "apply",
+        "post_apply",
+        "oracle",
+        "cleanup"
+      ],
+      "oracle_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scoring_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": [
+        {
+          "command_id": "python-test",
+          "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "image_identity": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "dependencies_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "profile_id": "synthetic-nano",
+      "profile_revision": 0,
+      "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "configuration_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "run_budget": {
+        "max_agent_invocations": 12,
+        "max_model_requests": 24,
+        "max_tool_calls": 32,
+        "max_total_tokens": 65536,
+        "max_active_seconds": 600
+      },
+      "auxiliary_purpose": "cold_start"
+    }
+  ],
+  "slots": [
+    {
+      "case_id": "repo_1_task_1",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_1_task_2",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_1_task_3",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_1_task_4",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_2_task_1",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_2_task_2",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_2_task_3",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_2_task_4",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_3_task_1",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_3_task_2",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_3_task_3",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_3_task_4",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_4_task_1",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_4_task_2",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_4_task_3",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_4_task_4",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_5_task_1",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_5_task_2",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_5_task_3",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_5_task_4",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_6_task_1",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_6_task_2",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_6_task_3",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_6_task_4",
+      "repetition": 0
+    },
+    {
+      "case_id": "repo_1_task_1",
+      "repetition": 1
+    },
+    {
+      "case_id": "repo_1_task_1",
+      "repetition": 2
+    },
+    {
+      "case_id": "repo_1_task_2",
+      "repetition": 1
+    },
+    {
+      "case_id": "repo_1_task_2",
+      "repetition": 2
+    },
+    {
+      "case_id": "repo_1_task_3",
+      "repetition": 1
+    },
+    {
+      "case_id": "repo_1_task_3",
+      "repetition": 2
+    },
+    {
+      "case_id": "repo_1_task_4",
+      "repetition": 1
+    },
+    {
+      "case_id": "repo_1_task_4",
+      "repetition": 2
+    },
+    {
+      "case_id": "auxiliary_1",
+      "repetition": 0
+    },
+    {
+      "case_id": "auxiliary_2",
+      "repetition": 0
+    },
+    {
+      "case_id": "auxiliary_3",
+      "repetition": 0
+    },
+    {
+      "case_id": "auxiliary_4",
+      "repetition": 0
+    }
+  ],
+  "budget": {
+    "max_agent_invocations": 432,
+    "max_model_requests": 864,
+    "max_tool_calls": 1152,
+    "max_total_tokens": 2359296,
+    "max_active_seconds": 21600,
+    "max_attempts": 36
+  }
+}

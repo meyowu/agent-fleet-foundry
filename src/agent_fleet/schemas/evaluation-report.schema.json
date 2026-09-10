@@ -1,0 +1,414 @@
+{
+  "$defs": {
+    "EvaluationCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "observed": {
+          "maximum": 256,
+          "minimum": 0,
+          "title": "Observed",
+          "type": "integer"
+        },
+        "outcomes": {
+          "items": {
+            "$ref": "#/$defs/OutcomeCount"
+          },
+          "maxItems": 11,
+          "title": "Outcomes",
+          "type": "array"
+        },
+        "planned": {
+          "maximum": 256,
+          "minimum": 0,
+          "title": "Planned",
+          "type": "integer"
+        },
+        "success_percentage": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Success Percentage"
+        },
+        "successful": {
+          "maximum": 256,
+          "minimum": 0,
+          "title": "Successful",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "planned",
+        "observed",
+        "successful",
+        "outcomes"
+      ],
+      "title": "EvaluationCounts",
+      "type": "object"
+    },
+    "EvaluationCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "cost_complete": {
+          "title": "Cost Complete",
+          "type": "boolean"
+        },
+        "missing_outcomes": {
+          "maximum": 256,
+          "minimum": 0,
+          "title": "Missing Outcomes",
+          "type": "integer"
+        },
+        "planned_slots": {
+          "maximum": 256,
+          "minimum": 1,
+          "title": "Planned Slots",
+          "type": "integer"
+        },
+        "recorded_outcomes": {
+          "maximum": 256,
+          "minimum": 0,
+          "title": "Recorded Outcomes",
+          "type": "integer"
+        },
+        "usage_complete": {
+          "title": "Usage Complete",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "planned_slots",
+        "recorded_outcomes",
+        "missing_outcomes",
+        "usage_complete",
+        "cost_complete"
+      ],
+      "title": "EvaluationCoverage",
+      "type": "object"
+    },
+    "OutcomeCount": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "maximum": 256,
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "enum": [
+                "verified_success",
+                "functional_failure",
+                "environment_failure",
+                "provider_failure",
+                "budget_exhausted",
+                "timeout",
+                "cancelled",
+                "inconclusive",
+                "not_run",
+                "dispatch_unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "missing",
+              "type": "string"
+            }
+          ],
+          "title": "Result"
+        }
+      },
+      "required": [
+        "result",
+        "count"
+      ],
+      "title": "OutcomeCount",
+      "type": "object"
+    },
+    "ReportedCost": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "pattern": "^[A-Z]{3}$",
+          "title": "Currency",
+          "type": "string"
+        },
+        "microunits_lower_bound": {
+          "maximum": 151115727451828646821888,
+          "minimum": 0,
+          "title": "Microunits Lower Bound",
+          "type": "integer"
+        },
+        "reported_records": {
+          "maximum": 256,
+          "minimum": 1,
+          "title": "Reported Records",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "currency",
+        "microunits_lower_bound",
+        "reported_records"
+      ],
+      "title": "ReportedCost",
+      "type": "object"
+    },
+    "ReportedUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "active_milliseconds_lower_bound": {
+          "maximum": 151115727451828646821888,
+          "minimum": 0,
+          "title": "Active Milliseconds Lower Bound",
+          "type": "integer"
+        },
+        "input_tokens_lower_bound": {
+          "maximum": 151115727451828646821888,
+          "minimum": 0,
+          "title": "Input Tokens Lower Bound",
+          "type": "integer"
+        },
+        "model_requests_lower_bound": {
+          "maximum": 151115727451828646821888,
+          "minimum": 0,
+          "title": "Model Requests Lower Bound",
+          "type": "integer"
+        },
+        "output_tokens_lower_bound": {
+          "maximum": 151115727451828646821888,
+          "minimum": 0,
+          "title": "Output Tokens Lower Bound",
+          "type": "integer"
+        },
+        "records_without_usage": {
+          "maximum": 256,
+          "minimum": 0,
+          "title": "Records Without Usage",
+          "type": "integer"
+        },
+        "tool_calls_lower_bound": {
+          "maximum": 151115727451828646821888,
+          "minimum": 0,
+          "title": "Tool Calls Lower Bound",
+          "type": "integer"
+        },
+        "unknown_requests": {
+          "maximum": 151115727451828646821888,
+          "minimum": 0,
+          "title": "Unknown Requests",
+          "type": "integer"
+        },
+        "unreported_segments": {
+          "maximum": 151115727451828646821888,
+          "minimum": 0,
+          "title": "Unreported Segments",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model_requests_lower_bound",
+        "tool_calls_lower_bound",
+        "input_tokens_lower_bound",
+        "output_tokens_lower_bound",
+        "active_milliseconds_lower_bound",
+        "unknown_requests",
+        "unreported_segments",
+        "records_without_usage"
+      ],
+      "title": "ReportedUsage",
+      "type": "object"
+    },
+    "RepositoryEvaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "first_round": {
+          "$ref": "#/$defs/EvaluationCounts"
+        },
+        "repository_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Repository Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository_id",
+        "first_round"
+      ],
+      "title": "RepositoryEvaluation",
+      "type": "object"
+    },
+    "SlotEvaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "group": {
+          "enum": [
+            "first_round",
+            "repeat",
+            "auxiliary"
+          ],
+          "title": "Group",
+          "type": "string"
+        },
+        "repetition": {
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Repetition",
+          "type": "integer"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "enum": [
+                "verified_success",
+                "functional_failure",
+                "environment_failure",
+                "provider_failure",
+                "budget_exhausted",
+                "timeout",
+                "cancelled",
+                "inconclusive",
+                "not_run",
+                "dispatch_unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "missing",
+              "type": "string"
+            }
+          ],
+          "title": "Result"
+        }
+      },
+      "required": [
+        "case_id",
+        "repetition",
+        "group",
+        "result"
+      ],
+      "title": "SlotEvaluation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Structural summary; consumers must recompute against manifest and outcomes.",
+  "properties": {
+    "assurance": {
+      "const": "structural_only",
+      "default": "structural_only",
+      "title": "Assurance",
+      "type": "string"
+    },
+    "auxiliary": {
+      "$ref": "#/$defs/EvaluationCounts"
+    },
+    "campaign_id": {
+      "pattern": "^campaign_[0-9a-f]{32}$",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "costs": {
+      "items": {
+        "$ref": "#/$defs/ReportedCost"
+      },
+      "maxItems": 256,
+      "title": "Costs",
+      "type": "array"
+    },
+    "coverage": {
+      "$ref": "#/$defs/EvaluationCoverage"
+    },
+    "development": {
+      "$ref": "#/$defs/EvaluationCounts"
+    },
+    "first_round": {
+      "$ref": "#/$defs/EvaluationCounts"
+    },
+    "kr_status": {
+      "const": "not_evaluated",
+      "default": "not_evaluated",
+      "title": "Kr Status",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "records_without_cost": {
+      "maximum": 256,
+      "minimum": 0,
+      "title": "Records Without Cost",
+      "type": "integer"
+    },
+    "repeats": {
+      "$ref": "#/$defs/EvaluationCounts"
+    },
+    "repositories": {
+      "items": {
+        "$ref": "#/$defs/RepositoryEvaluation"
+      },
+      "maxItems": 16,
+      "title": "Repositories",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "sealed_holdout": {
+      "$ref": "#/$defs/EvaluationCounts"
+    },
+    "slots": {
+      "items": {
+        "$ref": "#/$defs/SlotEvaluation"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "title": "Slots",
+      "type": "array"
+    },
+    "usage": {
+      "$ref": "#/$defs/ReportedUsage"
+    }
+  },
+  "required": [
+    "campaign_id",
+    "manifest_sha256",
+    "first_round",
+    "development",
+    "sealed_holdout",
+    "repositories",
+    "repeats",
+    "auxiliary",
+    "slots",
+    "coverage",
+    "usage",
+    "costs",
+    "records_without_cost"
+  ],
+  "title": "EvaluationReport",
+  "type": "object"
+}

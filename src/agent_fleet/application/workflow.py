@@ -46,6 +46,12 @@ from agent_fleet.domain.errors import (
     FleetError,
     GraphOwnershipUnavailableError,
 )
+from agent_fleet.domain.evaluation import EvaluationCommand
+from agent_fleet.domain.evaluation_execution import (
+    EvaluationAdmission,
+    EvaluationClaim,
+    EvaluationSubmission,
+)
 from agent_fleet.domain.evidence import (
     CleanupLeaseRecord,
     EvidenceBundle,
@@ -91,10 +97,12 @@ from agent_fleet.domain.models import (
 )
 from agent_fleet.domain.paths import path_is_within
 from agent_fleet.domain.role_templates import ResolvedRoleTemplate, validate_role_plan
-from agent_fleet.domain.security import Redactor
+from agent_fleet.domain.runtime_diagnostics import runtime_diagnostic_payload
+from agent_fleet.domain.security import Redactor, canonical_json_hash
 from agent_fleet.ports.clock import Clock
 from agent_fleet.ports.config import ConfigurationPort
 from agent_fleet.ports.conversation import ConversationStore
+from agent_fleet.ports.evaluation_execution import EvaluationExecutionStore
 from agent_fleet.ports.graph import GraphStore
 from agent_fleet.ports.id_generator import IdGenerator
 from agent_fleet.ports.repository import RepositoryPort
@@ -140,6 +148,7 @@ class WorkflowEngine:
         conversations: ConversationStore | None = None,
         model_profiles: ModelProfileService | None = None,
         plan_reviews: PlanReviewService | None = None,
+        evaluations: EvaluationExecutionStore | None = None,
     ) -> None:
         self.state = state
         self.repository = repository
@@ -161,9 +170,45 @@ class WorkflowEngine:
         self.conversations = conversations
         self.model_profiles = model_profiles
         self.plan_reviews = plan_reviews
+        self.evaluations = evaluations
+        self._evaluation_claims: dict[str, EvaluationClaim] = {}
         self._conversation_claims: dict[str, ConversationClaim] = {}
         self.graph_execution = GraphWorkflowExecution(self)
         self.graph_coordinator = GraphCoordinator(graphs, state, self.graph_execution, clock)
+
+    async def execute_evaluation(self, submission: EvaluationSubmission, project_path: Path) -> Run:
+        if self.evaluations is None:
+            raise self._evaluation_error()
+        existing = self.evaluations.for_attempt(submission)
+        project_info = self.repository.inspect(project_path)
+        project = self.state.get_project_by_root(project_info.root)
+        if project is None or project.identity_hash != project_info.identity_hash:
+            raise self._evaluation_error()
+        if existing is not None:
+            if existing.binding.project_id != project.project_id:
+                raise self._evaluation_error()
+            return self.state.get_run(existing.binding.root_run_id)
+        manifest = self.evaluations.manifest(submission)
+        case = next(item for item in manifest.cases if item.case_id == submission.case_id)
+        return await self.start(
+            project_path=project_path,
+            goal=case.requirement,
+            runtime_name=project.runtime_name,
+            sandbox_name=project.sandbox_name,
+            fake_scenario=None,
+            provider_model=project.provider_model,
+            credential_ref=project.credential_ref,
+            budget_limits=RunBudgetLimits.model_validate(case.run_budget.model_dump()),
+            evaluation_submission=submission,
+        )
+
+    @staticmethod
+    def _evaluation_error() -> FleetError:
+        return FleetError(
+            ErrorCode.RECOVERY_REQUIRED,
+            "The evaluation does not match its frozen admission or active owner.",
+            "Inspect the reserved attempt; do not replay or substitute its scope.",
+        )
 
     async def start(
         self,
@@ -179,7 +224,12 @@ class WorkflowEngine:
         budget_limits: RunBudgetLimits | None = None,
         conversation_submission: ConversationSubmission | None = None,
         review_plan: bool = False,
+        evaluation_submission: EvaluationSubmission | None = None,
     ) -> Run:
+        if evaluation_submission is not None and (
+            conversation_submission is not None or review_plan or self.evaluations is None
+        ):
+            raise self._evaluation_error()
         self._reject_untrusted_secrets(
             {
                 "project_path": str(project_path),
@@ -409,8 +459,74 @@ class WorkflowEngine:
             updated_at=now,
         )
         conversation_claim: ConversationClaim | None = None
+        evaluation_claim: EvaluationClaim | None = None
         with self.organization.admission(project, expected=admitted):
-            if conversation_submission is None:
+            if evaluation_submission is not None:
+                if self.evaluations is None or model_bindings is None:
+                    raise self._evaluation_error()
+                manifest = self.evaluations.manifest(evaluation_submission)
+                case = next(
+                    item for item in manifest.cases if item.case_id == evaluation_submission.case_id
+                )
+                current = self.repository.inspect(project_path)
+                if (
+                    current != info
+                    or (budget_limits or RunBudgetLimits()).model_dump()
+                    != case.run_budget.model_dump()
+                ):
+                    raise self._evaluation_error()
+                source = self.repository.committed_source(project_path, run.base_revision)
+                profile = self.config.verification_profile(spec, config_snapshot)
+                commands = tuple(
+                    EvaluationCommand(
+                        command_id=command_id,
+                        sha256=canonical_json_hash(
+                            CommandSpec(
+                                command_id=command_id,
+                                executable=command.executable,
+                                argv=tuple(command.argv),
+                                logical_cwd=command.cwd,
+                                timeout_seconds=command.timeout_seconds,
+                                network_requirement="required"
+                                if command.network_required
+                                else "none",
+                            ).model_dump(mode="json")
+                        ),
+                    )
+                    for command_id, command in sorted(profile.commands.items())
+                    if command_id in {item.command_id for item in case.commands}
+                )
+                required = self.config.required_verification_commands(
+                    spec,
+                    config_snapshot,
+                    workflow_id="code-change",
+                    allowed_paths=case.allowed_paths,
+                    change_kind=case.task_kind,
+                )
+                if (
+                    set(required) != {item.command_id for item in case.commands}
+                    or self.config.snapshot_hash(
+                        self.config.load_snapshot(
+                            Path(project.canonical_root) / ".fleet" / "fleet.yaml"
+                        )[1]
+                    )
+                    != config_hash
+                ):
+                    raise self._evaluation_error()
+                evaluation_registration = self.evaluations.register(
+                    evaluation_submission,
+                    run,
+                    EvaluationAdmission(
+                        source=source, configuration_sha256=config_hash, commands=commands
+                    ),
+                    model_bindings,
+                    organization_admission=admitted,
+                )
+                evaluation_claim = evaluation_registration.claim
+                if evaluation_claim is None:
+                    return self.state.get_run(evaluation_registration.record.binding.root_run_id)
+                self._evaluation_claims[run.run_id] = evaluation_claim
+            elif conversation_submission is None:
                 self.state.create_run(run, organization_admission=admitted)
             else:
                 if self.conversations is None:
@@ -429,11 +545,12 @@ class WorkflowEngine:
                 self._conversation_claims[run.run_id] = conversation_claim
         orderly = False
         try:
-            if model_bindings is not None:
+            if model_bindings is not None and evaluation_claim is None:
                 if self.model_profiles is None:
                     raise RuntimeError("Model profile service is unavailable")
                 self.model_profiles.save_bindings(model_bindings)
-            self.budgets.initialize_run(run.run_id, budget_limits or RunBudgetLimits())
+            if evaluation_claim is None:
+                self.budgets.initialize_run(run.run_id, budget_limits or RunBudgetLimits())
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.INTAKE)
             run = self._transition(run, RunStatus.RUNNING, WorkflowStage.SCOPING)
             run = await self._scope(
@@ -457,6 +574,9 @@ class WorkflowEngine:
         except asyncio.CancelledError:
             if conversation_claim is not None:
                 await self._cancel_conversation_execution(conversation_claim)
+            if evaluation_claim is not None:
+                await self._cancel_evaluation_execution(evaluation_claim)
+                orderly = True
             raise
         except FleetError as error:
             if isinstance(error, ConversationOwnershipUnavailableError):
@@ -477,6 +597,12 @@ class WorkflowEngine:
                 orderly = True
             raise
         finally:
+            if evaluation_claim is not None:
+                try:
+                    if orderly and self.evaluations is not None:
+                        self.evaluations.settle(evaluation_claim)
+                finally:
+                    self._evaluation_claims.pop(run.run_id, None)
             if conversation_claim is not None:
                 try:
                     if orderly:
@@ -485,6 +611,8 @@ class WorkflowEngine:
                     self._conversation_claims.pop(run.run_id, None)
 
     async def resume(self, run_id: str) -> Run:
+        if self.evaluations is not None and self.evaluations.for_run(run_id) is not None:
+            raise self._evaluation_error()
         # This guard deliberately precedes every terminal, approval and graph
         # shortcut. Public fleet resume is not a conversation-ownership bypass.
         if self.conversations is None:
@@ -755,6 +883,13 @@ class WorkflowEngine:
             raise
 
     def _assert_conversation_execution(self, run: Run) -> None:
+        if self.evaluations is not None:
+            execution = self.evaluations.for_run(run.run_id)
+            if execution is not None:
+                evaluation_claim = self._evaluation_claims.get(execution.binding.root_run_id)
+                if evaluation_claim is None:
+                    raise self._evaluation_error()
+                self.evaluations.assert_claim(evaluation_claim)
         if self.conversations is None:
             return
         child = self.graphs.child_binding(run.run_id)
@@ -765,6 +900,19 @@ class WorkflowEngine:
             if claim is None:
                 raise ConversationOwnershipUnavailableError()
             self.conversations.assert_claim(claim)
+
+    async def _cancel_evaluation_execution(self, claim: EvaluationClaim) -> None:
+        if self.evaluations is None:
+            raise self._evaluation_error()
+        self.evaluations.assert_claim(claim)
+        service = CancellationService(self.state, self.resources, self.clock, self.graphs)
+        cleanup = asyncio.create_task(service.cancel(claim.root_run_id))
+        while not cleanup.done():
+            try:
+                await asyncio.wait({cleanup})
+            except asyncio.CancelledError:
+                continue
+        cleanup.result()
 
     async def _cancel_conversation_execution(self, claim: ConversationClaim) -> None:
         if self.conversations is None:
@@ -846,6 +994,7 @@ class WorkflowEngine:
         invocation_input: dict[str, JsonValue] = {
             "goal": run.goal,
             "available_roles": cast(JsonValue, sorted(role_templates)),
+            "available_workflows": cast(JsonValue, sorted(fleet_spec.spec.workflows)),
             "delegation_roles": cast(
                 JsonValue,
                 sorted(role for role, item in role_templates.items() if item.delegation_allowed),
@@ -869,6 +1018,22 @@ class WorkflowEngine:
             ),
             "max_parallel_agents": fleet_spec.spec.workflows["code-change"].max_parallel_agents,
         }
+        if self.evaluations is not None:
+            evaluation_context = self.evaluations.for_run(run.run_id)
+            if evaluation_context is not None:
+                manifest = self.evaluations.manifest(evaluation_context.binding.submission)
+                case = next(
+                    item
+                    for item in manifest.cases
+                    if item.case_id == evaluation_context.binding.submission.case_id
+                )
+                invocation_input["evaluation_constraints"] = {
+                    "task_kind": case.task_kind,
+                    "allowed_paths": list(case.allowed_paths),
+                    "required_command_ids": [item.command_id for item in case.commands],
+                    "instruction": "The scope must remain within these frozen constraints. "
+                    "They grant no permissions.",
+                }
         organization_context = self.organization.proposal_context(run, config_snapshot)
         invocation_input["organization_context"] = organization_context.input
         self._assert_conversation_execution(run)
@@ -924,7 +1089,9 @@ class WorkflowEngine:
                 tools=(
                     EMPTY_RUNTIME_TOOL_CATALOG
                     if runtime_configuration.runtime_name == "fake"
-                    else ProposalHashToolCatalog(self.redactor)
+                    else ProposalHashToolCatalog(
+                        self.redactor, visible_paths=organization_context.visible_paths
+                    )
                 ),
             ),
         )
@@ -954,6 +1121,28 @@ class WorkflowEngine:
             )
         else:
             decision = cast(ScopeDecision, result.output)
+        evaluation = self.evaluations.for_run(run.run_id) if self.evaluations is not None else None
+        if evaluation is not None:
+            assert self.evaluations is not None
+            manifest = self.evaluations.manifest(evaluation.binding.submission)
+            case = next(
+                item
+                for item in manifest.cases
+                if item.case_id == evaluation.binding.submission.case_id
+            )
+            if (
+                proposal is not None
+                or decision.change_kind != case.task_kind
+                or decision.workflow != "code-change"
+                or any(
+                    not any(
+                        path == allowed or path.startswith(allowed + "/")
+                        for allowed in case.allowed_paths
+                    )
+                    for path in decision.allowed_paths
+                )
+            ):
+                raise self._evaluation_error()
         if self.permission_policy is not None:
             self.permission_policy.validate_task_paths(project, decision.allowed_paths)
         if decision.workflow not in fleet_spec.spec.workflows:
@@ -1000,6 +1189,21 @@ class WorkflowEngine:
             ),
             created_at=self.clock.now(),
         )
+        if evaluation is not None and (
+            {item.command_id for item in evaluation.binding.commands}
+            != set(task.required_verification_command_ids)
+            or tuple(
+                EvaluationCommand(
+                    command_id=item.command_id,
+                    sha256=canonical_json_hash(item.model_dump(mode="json")),
+                )
+                for item in task.verification_commands
+                if item.command_id
+                in {command.command_id for command in evaluation.binding.commands}
+            )
+            != evaluation.binding.commands
+        ):
+            raise self._evaluation_error()
         strategy = FleetStrategy(decision.fleet_strategy)
         plan = self.planner.create(
             run,
@@ -1706,6 +1910,28 @@ class WorkflowEngine:
                     "repair_iterations": run.repair_iterations,
                     "patch_sha256": run.patch_sha256,
                     "patch": self._bounded_runtime_text(patch.decode()),
+                    "criterion_mapping_contract": {
+                        "criteria": "Use every exact task_spec.acceptance_criteria criterion_id "
+                        "once; do not change the requested outcomes to fit available proof.",
+                        "receipt_field": "content.command_evidence_artifact_id from your own "
+                        "current run_verification result, paired with that call's exact "
+                        "command_id.",
+                        "pairing": "Each passing code-change criterion needs nonempty "
+                        "evidence_artifact_ids and command_ids: one current independent receipt "
+                        "per distinct relevant command, from the same current Verifier instance, "
+                        "task/run/patch and verification workspace/sandbox. Include selected "
+                        "receipts "
+                        "in top-level evidence_artifact_ids. Use the uniquely latest receipt, "
+                        "never an earlier pass instead of a later failed or timed-out result.",
+                        "excluded": "Generic artifact_ids may include auxiliary artifacts. "
+                        "content.transcript_artifact_id, patches, Engineer records and stale or "
+                        "unsupported IDs are not independent command receipts.",
+                        "relevance": "The same current receipt may support multiple genuinely "
+                        "relevant behavior criteria; explain why it proves each outcome. Select "
+                        "relevant command subsets, not mechanically every admitted command.",
+                        "missing_proof": "Inspection alone or missing/inadequate receipts remain "
+                        "INCONCLUSIVE with proof gaps. Never infer IDs or fabricate coverage.",
+                    },
                 },
                 runtime_name=configuration.runtime_name,
             ),
@@ -1927,7 +2153,7 @@ class WorkflowEngine:
         except FleetError as error:
             if accounting is not None and not attempt_finished:
                 accounting.finish(RuntimeAttemptStatus.FAILED, error_code=error.code)
-            self._mark_agent_failed(run, agent, error.code)
+            self._mark_agent_failed(run, agent, error.code, details=error.details)
             raise
         except asyncio.CancelledError:
             if accounting is not None and not attempt_finished:
@@ -1961,6 +2187,8 @@ class WorkflowEngine:
         run: Run,
         agent: AgentInstance,
         error_code: ErrorCode,
+        *,
+        details: dict[str, JsonValue] | None = None,
     ) -> None:
         failed = agent.model_copy(
             update={"status": AgentStatus.FAILED, "completed_at": self.clock.now()}
@@ -1969,7 +2197,11 @@ class WorkflowEngine:
         self._emit(
             run,
             "agent.failed",
-            {"role": str(agent.role), "code": error_code.value},
+            {
+                "role": str(agent.role),
+                "code": error_code.value,
+                **runtime_diagnostic_payload(details or {}),
+            },
             agent_id=agent.agent_instance_id,
         )
 

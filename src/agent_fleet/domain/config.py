@@ -54,7 +54,9 @@ class RuntimeRequest(ConfigModel):
                 },
                 {
                     "if": {
-                        "properties": {"adapter": {"const": "pydantic-ai"}},
+                        "properties": {
+                            "adapter": {"enum": ["pydantic-ai", "openai-agents", "langgraph"]}
+                        },
                         "required": ["adapter"],
                     },
                     "then": {
@@ -62,11 +64,18 @@ class RuntimeRequest(ConfigModel):
                         "required": ["providerModel"],
                     },
                 },
+                {
+                    "if": {
+                        "properties": {"adapter": {"enum": ["openai-agents", "langgraph"]}},
+                        "required": ["adapter"],
+                    },
+                    "then": {"properties": {"providerModel": {"pattern": "^openai:"}}},
+                },
             ]
         },
     )
 
-    adapter: Literal["fake", "pydantic-ai"]
+    adapter: Literal["fake", "pydantic-ai", "openai-agents", "langgraph"]
     provider_model: ProviderModelId | None = Field(
         default=None,
         alias="providerModel",
@@ -99,8 +108,15 @@ class RuntimeRequest(ConfigModel):
             raise ValueError("runtime must require structured_output and tool_calling capabilities")
         if self.adapter == "fake" and self.provider_model is not None:
             raise ValueError("fake runtime cannot declare a provider model")
-        if self.adapter == "pydantic-ai" and self.provider_model is None:
-            raise ValueError("pydantic-ai runtime requires providerModel")
+        if (
+            self.adapter in {"pydantic-ai", "openai-agents", "langgraph"}
+            and self.provider_model is None
+        ):
+            raise ValueError(f"{self.adapter} runtime requires providerModel")
+        if self.adapter in {"openai-agents", "langgraph"} and (
+            self.provider_model is None or self.provider_model.partition(":")[0] != "openai"
+        ):
+            raise ValueError(f"{self.adapter} runtime requires an OpenAI Responses providerModel")
         return self
 
 

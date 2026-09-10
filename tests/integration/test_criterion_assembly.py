@@ -123,3 +123,56 @@ async def test_changed_path_metadata_cannot_widen_reviewed_directory_scope(
             run.model_copy(update={"patch_artifact_id": artifact.artifact_id}), task
         )
     assert caught.value.code is ErrorCode.ARTIFACT_INTEGRITY_FAILED
+
+
+@pytest.mark.parametrize("mapping", ["empty", "command-plus-transcript"])
+async def test_actual_receipt_and_transcript_mapping_shapes_remain_unverified_and_unmodified(
+    harness: FleetHarness, mapping: str
+) -> None:
+    run, task = await _multiple_criteria(harness)
+    assert run.verifier_verdict_artifact_id is not None
+    verdict = VerifierVerdict.model_validate_json(
+        harness.container.artifacts.read_text(run.verifier_verdict_artifact_id)
+    )
+    commands = [
+        CommandEvidence.model_validate_json(harness.container.artifacts.read_text(identifier))
+        for identifier in run.command_evidence_artifact_ids
+    ]
+    command = next(
+        item for item in commands if item.agent_instance_id == run.verifier_agent_instance_id
+    )
+    assert command.evidence_id != command.transcript_artifact_id
+    assert harness.container.artifacts.read_text(command.transcript_artifact_id)
+    references = [] if mapping == "empty" else [command.evidence_id, command.transcript_artifact_id]
+    verdict.evidence_artifact_ids = [command.evidence_id]
+    verdict.structured_criterion_results = [
+        CriterionResult(
+            criterion_id=item.criterion_id,
+            verdict=Verdict.PASS,
+            evidence_artifact_ids=references,
+            command_ids=[] if mapping == "empty" else [command.command_id],
+            explanation="Synthetic malformed claim; the assembler must not repair its references.",
+        )
+        for item in task.acceptance_criteria
+    ]
+    original = verdict.model_dump_json()
+    artifact = harness.container.artifacts.create_text(
+        kind=ArtifactKind.VERIFIER_VERDICT,
+        project_id=run.project_id,
+        run_id=run.run_id,
+        task_id=task.task_id,
+        content=original,
+        producer="test-fixture",
+    )
+    bundle = harness.container.workflow.evidence.assemble(
+        run.model_copy(update={"verifier_verdict_artifact_id": artifact.artifact_id}), task
+    )
+    assert harness.container.artifacts.read_text(artifact.artifact_id) == original
+    assert bundle.structured_criterion_results == verdict.structured_criterion_results
+    assert (
+        bundle.completion_decision is not None and not bundle.completion_decision.verified_complete
+    )
+    assert "STRUCTURED_CRITERION_MAPPING_INVALID" in bundle.completion_decision.reason_codes
+    assert all(item.verdict is Verdict.INCONCLUSIVE for item in bundle.criterion_assessments)
+    assert "SIMULATED_EXECUTION" in {item.code for item in bundle.proof_gaps}
+    assert harness.container.state.outstanding_leases(run.run_id) == []

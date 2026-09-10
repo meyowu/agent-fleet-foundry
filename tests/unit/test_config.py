@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import traceback
+from importlib import resources
 from pathlib import Path
 
 import pytest
 import yaml
+
+# The pinned schema validator ships no stubs; keep the existing adapter's narrow boundary.
+from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+from jsonschema import exceptions as jsonschema_exceptions
 
 from agent_fleet.adapters.config.yaml import (
     MAX_AGENT_GUIDANCE_BYTES,
@@ -97,6 +103,73 @@ def test_pydantic_ai_fleet_spec_requires_and_preserves_opaque_provider_model() -
     assert spec.spec.runtime.adapter == "pydantic-ai"
     assert spec.spec.runtime.provider_model == "openai:gpt-5-mini"
     assert "credential" not in files["fleet.yaml"].casefold()
+
+
+@pytest.mark.parametrize("runtime", ["openai-agents", "langgraph"])
+def test_openai_agents_defaults_preserve_explicit_responses_model_without_secrets(
+    runtime: str,
+) -> None:
+    files = default_fleet_files(
+        "sdk-project", runtime_name=runtime, provider_model="openai:exact-model"
+    )
+    spec = validate_fleet_files(files)
+    assert spec.spec.runtime.adapter == runtime
+    assert spec.spec.runtime.provider_model == "openai:exact-model"
+    assert "fixture.record_side_effect" not in spec.spec.agents["engineer"].allowed_tools
+    assert "credential" not in files["fleet.yaml"].casefold()
+
+
+@pytest.mark.parametrize(
+    "provider", [None, "openai-chat:model", "anthropic:model", "google:model", "other:model"]
+)
+@pytest.mark.parametrize("runtime", ["openai-agents", "langgraph"])
+def test_openai_agents_defaults_reject_unqualified_provider(
+    provider: str | None, runtime: str
+) -> None:
+    with pytest.raises(FleetError) as caught:
+        default_fleet_files("sdk-project", runtime_name=runtime, provider_model=provider)
+    assert caught.value.code is ErrorCode.CONFIG_INVALID
+
+
+@pytest.mark.parametrize("runtime", ["openai-agents", "langgraph"])
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "missing",
+        None,
+        "openai-chat:model",
+        "anthropic:model",
+        "google:model",
+        "other:model",
+        "openai:model",
+    ],
+)
+def test_edited_fleet_and_distributed_schema_agree_on_responses_only_harnesses(
+    runtime: str, provider: str | None
+) -> None:
+    fleet_files = default_fleet_files(
+        "direct-schema", runtime_name=runtime, provider_model="openai:valid-initial"
+    )
+    document = yaml.safe_load(fleet_files["fleet.yaml"])
+    selection = document["spec"]["runtime"]
+    if provider == "missing":
+        selection.pop("providerModel")
+    else:
+        selection["providerModel"] = provider
+    fleet_files["fleet.yaml"] = yaml.safe_dump(document)
+    distributed = json.loads(
+        resources.files("agent_fleet.schemas").joinpath("fleet.schema.json").read_text()
+    )
+    schema = Draft202012Validator(distributed)
+    if provider == "openai:model":
+        assert validate_fleet_files(fleet_files).spec.runtime.provider_model == provider
+        schema.validate(document)
+    else:
+        with pytest.raises(FleetError) as caught:
+            validate_fleet_files(fleet_files)
+        assert caught.value.code is ErrorCode.CONFIG_INVALID
+        with pytest.raises(jsonschema_exceptions.ValidationError):
+            schema.validate(document)
 
 
 @pytest.mark.parametrize(

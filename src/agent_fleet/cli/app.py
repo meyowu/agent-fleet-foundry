@@ -11,18 +11,27 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 
 import typer
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
 from agent_fleet import __version__
-from agent_fleet.bootstrap import build_container
+from agent_fleet.bootstrap import (
+    build_baseline_container,
+    build_container,
+    build_readiness_service,
+    build_role_bundle_service,
+)
+from agent_fleet.cli.baseline import register_baseline_commands
 from agent_fleet.cli.chat import register_chat_command
 from agent_fleet.cli.dashboard import register_dashboard_command
 from agent_fleet.cli.evolution import register_evolution_commands
 from agent_fleet.cli.models import register_models_commands
+from agent_fleet.cli.readiness import register_readiness_command
+from agent_fleet.cli.role_bundles import register_role_bundle_commands
+from agent_fleet.domain.budgets import RunBudgetLimits
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix, new_id
 from agent_fleet.domain.models import (
@@ -67,7 +76,7 @@ def version(json_output: JsonFlag = False) -> None:
             "version": __version__,
             "phase": "6",
             "runtime": "fake",
-            "runtimes": ["fake", "pydantic-ai"],
+            "runtimes": ["fake", "pydantic-ai", "openai-agents", "langgraph"],
             "sandbox": "fake",
             "sandboxes": ["docker", "fake", "local-unsafe"],
         },
@@ -114,13 +123,15 @@ def init_command(
     path: Annotated[Path, typer.Argument(help="Git repository to initialize")] = Path("."),
     runtime: Annotated[
         str,
-        typer.Option("--runtime", help="Runtime adapter: fake or pydantic-ai."),
+        typer.Option(
+            "--runtime", help="Runtime adapter: fake, pydantic-ai, openai-agents or langgraph."
+        ),
     ] = "fake",
     provider_model: Annotated[
         str | None,
         typer.Option(
             "--provider-model",
-            help="Explicit provider:model identifier required by pydantic-ai.",
+            help="Explicit provider:model identifier required by real-model runtimes.",
         ),
     ] = None,
     credential_ref: Annotated[
@@ -319,6 +330,29 @@ def run(
     review_plan: Annotated[
         bool, typer.Option("--review-plan", help="Pause after CoS planning, before execution.")
     ] = False,
+    max_agent_invocations: Annotated[
+        int | None,
+        typer.Option("--max-agent-invocations", help="Cumulative agent invocation ceiling."),
+    ] = None,
+    max_model_requests: Annotated[
+        int | None,
+        typer.Option("--max-model-requests", help="Cumulative model request ceiling."),
+    ] = None,
+    max_tool_calls: Annotated[
+        int | None,
+        typer.Option("--max-tool-calls", help="Cumulative tool call ceiling; zero forbids tools."),
+    ] = None,
+    max_total_tokens: Annotated[
+        int | None,
+        typer.Option(
+            "--max-total-tokens",
+            help="Cumulative reported-token ceiling, not a pre-spend billing cap.",
+        ),
+    ] = None,
+    max_active_seconds: Annotated[
+        int | None,
+        typer.Option("--max-active-seconds", help="Cumulative active runtime seconds ceiling."),
+    ] = None,
     json_output: JsonFlag = False,
 ) -> None:
     """Run the reviewed project through its exact registered sandbox boundary."""
@@ -326,6 +360,23 @@ def run(
     redactor = _environment_redactor()
 
     def operation() -> tuple[JsonValue, list[str]]:
+        requested_limits = {
+            "max_agent_invocations": max_agent_invocations,
+            "max_model_requests": max_model_requests,
+            "max_tool_calls": max_tool_calls,
+            "max_total_tokens": max_total_tokens,
+            "max_active_seconds": max_active_seconds,
+        }
+        try:
+            budget_limits = RunBudgetLimits(
+                **{name: value for name, value in requested_limits.items() if value is not None}
+            )
+        except ValidationError as exc:
+            raise FleetError(
+                ErrorCode.CONFIG_INVALID,
+                "The requested run budget limits are invalid.",
+                "Supply positive bounded integer limits; only --max-tool-calls may be zero.",
+            ) from exc
         container = build_container(redactor=redactor)
         result = asyncio.run(
             container.workflow.start(
@@ -338,6 +389,7 @@ def run(
                 fake_scenario=fake_scenario,
                 allow_unsafe_local=allow_unsafe_local,
                 review_plan=review_plan,
+                budget_limits=budget_limits,
             )
         )
         data = container.inspection.status(result.run_id)
@@ -823,23 +875,36 @@ def _environment_redactor() -> Redactor:
 
 
 def _runtime_warnings(status: dict[str, object]) -> list[str]:
-    runtime_clause = (
-        "The configured model provider was contacted from the control plane;"
-        if status.get("runtime") == "pydantic-ai"
-        else "The fake runtime made no model-provider call;"
-    )
-    sandbox = status.get("sandbox") or status.get("sandbox_name") or "fake"
+    runtime = status.get("runtime")
+    if type(runtime) is not str:
+        runtime = None
+    if runtime in {"pydantic-ai", "openai-agents", "langgraph"}:
+        runtime_clause = (
+            "A model-capable runtime is configured; actual provider contact requires run evidence."
+        )
+    elif runtime == "fake":
+        runtime_clause = "The fake runtime does not make model-provider calls."
+    else:
+        runtime_clause = "Runtime execution is not established by this configuration."
+    sandbox = status.get("sandbox")
+    if type(sandbox) is not str or not sandbox:
+        sandbox = status.get("sandbox_name")
+    if type(sandbox) is not str:
+        sandbox = None
     if sandbox == "docker":
         sandbox_clause = (
-            "project commands used the isolated Docker sandbox and remain subject to the "
-            "reported evidence and proof gaps."
+            "Docker is configured as the execution boundary; actual command execution and "
+            "isolation remain subject to run evidence and proof gaps."
         )
     elif sandbox == "local-unsafe":
         sandbox_clause = (
-            "local-unsafe executed project commands directly on the host without isolation."
+            "WARNING: local-unsafe permits project commands on the host without isolation; "
+            "configuration alone does not prove execution."
         )
+    elif sandbox == "fake":
+        sandbox_clause = "FakeSandbox cannot execute project code or provide OS isolation."
     else:
-        sandbox_clause = "FakeSandbox did not execute project code or provide OS isolation."
+        sandbox_clause = "No sandbox execution or isolation is established by this configuration."
     return [f"{runtime_clause} {sandbox_clause}"]
 
 
@@ -936,9 +1001,33 @@ _launch_chat = register_chat_command(
 
 register_dashboard_command(app)
 
+register_readiness_command(
+    app,
+    service_factory=lambda redactor: build_readiness_service(redactor=redactor),
+    redactor_factory=_environment_redactor,
+    presenter=_present_with_warnings,
+    error_presenter=_present_error,
+)
+
+register_baseline_commands(
+    app,
+    service_factory=lambda redactor: build_baseline_container(redactor=redactor).service,
+    redactor_factory=_environment_redactor,
+    presenter=_present_with_warnings,
+    error_presenter=_present_error,
+)
+
 register_models_commands(
     app,
     service_factory=lambda redactor: build_container(redactor=redactor).model_profiles,
+    redactor_factory=_environment_redactor,
+    presenter=_present_with_warnings,
+    error_presenter=_present_error,
+)
+
+register_role_bundle_commands(
+    app,
+    service_factory=lambda redactor: build_role_bundle_service(redactor=redactor),
     redactor_factory=_environment_redactor,
     presenter=_present_with_warnings,
     error_presenter=_present_error,

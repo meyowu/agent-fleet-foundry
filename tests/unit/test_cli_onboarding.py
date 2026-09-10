@@ -120,11 +120,15 @@ async def test_wrong_code_and_unbounded_input_fail_before_bootstrap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explicit_byok_reference_is_passed_without_any_provider_call() -> None:
+@pytest.mark.parametrize("runtime_name", ["pydantic-ai", "openai-agents"])
+async def test_explicit_byok_reference_is_passed_without_any_provider_call(
+    runtime_name: str,
+) -> None:
     client = SetupClient()
-    lines = ["yes", "pydantic-ai", "openai:chosen-model", "env:CHOSEN_KEY", *answers()[2:]]
+    lines = ["yes", runtime_name, "openai:chosen-model", "env:CHOSEN_KEY", *answers()[2:]]
     await onboard(client, Path("."), ChatExecutionOptions(), SetupInput(lines), emit=lambda _: None)
     assert client.options is not None
+    assert client.options.runtime_name == runtime_name
     assert client.options.provider_model == "openai:chosen-model"
     assert client.options.credential_ref == "env:CHOSEN_KEY"
 

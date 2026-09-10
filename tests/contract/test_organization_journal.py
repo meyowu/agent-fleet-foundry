@@ -21,6 +21,7 @@ from agent_fleet.adapters.persistence import sqlite as sqlite_adapter
 from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
 from agent_fleet.adapters.persistence.evolution import SqliteOrganizationStore
 from agent_fleet.adapters.persistence.graphs import SqliteGraphStore
+from agent_fleet.adapters.persistence.runtime_budgets import SqliteRuntimeBudgetStore
 from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.system import UuidIdGenerator
 from agent_fleet.application.artifacts import ArtifactService
@@ -929,6 +930,9 @@ def test_exact_graph_driver_lifecycle_controls_publication(
         }
     )
     h.state.create_run(parent, organization_admission=h.head.admission)
+    SqliteRuntimeBudgetStore(
+        h.state.database_path, h.state.clock, h.state.ids, h.state.redactor, h.state
+    ).initialize_run(parent.run_id, RunBudgetLimits())
     for stage in (WorkflowStage.INTAKE, WorkflowStage.SCOPING):
         parent = h.state.save_run(
             parent.model_copy(update={"status": RunStatus.RUNNING, "stage": stage}),

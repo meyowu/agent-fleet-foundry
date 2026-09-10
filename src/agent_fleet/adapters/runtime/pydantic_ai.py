@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from functools import lru_cache
 from importlib import resources
 from typing import Any, cast
 
 from openai import APITimeoutError, AsyncOpenAI, DefaultAsyncHttpxClient, OpenAIError
-from pydantic import JsonValue, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 from pydantic_ai import (
     Agent,
     DeferredToolRequests,
@@ -34,6 +33,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
+    UserError,
 )
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models import (
@@ -47,6 +47,28 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RunUsage
 from pydantic_core import to_jsonable_python
 
+from agent_fleet.adapters.runtime.anthropic_provider import (
+    open_anthropic_model,
+    require_anthropic_policy,
+)
+from agent_fleet.adapters.runtime.failure_diagnostics import runtime_failure_details
+from agent_fleet.adapters.runtime.google_provider import open_google_model, require_google_policy
+from agent_fleet.adapters.runtime.openai_client import (
+    _openai_request_guard as _openai_request_guard,
+)
+from agent_fleet.adapters.runtime.openai_client import (
+    _openai_response_guard as _openai_response_guard,
+)
+from agent_fleet.adapters.runtime.openai_client import (
+    open_openai_client,
+)
+from agent_fleet.adapters.runtime.openai_client import (
+    reject_ambient_openai_custom_headers as _reject_ambient_openai_custom_headers,
+)
+from agent_fleet.adapters.runtime.provider_selection import (
+    parse_provider_model,
+    provider_policy_issue,
+)
 from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.fleet_patch import validate_fleet_patch
 from agent_fleet.domain.models import (
@@ -68,6 +90,8 @@ from agent_fleet.domain.models import (
     UsageRecord,
     VerifierVerdict,
 )
+from agent_fleet.domain.runtime_contract import require_runtime_invocation
+from agent_fleet.domain.runtime_diagnostics import RuntimeFailureCategory
 from agent_fleet.domain.security import Redactor
 from agent_fleet.ports.runtime import RuntimeInvocationServices, RuntimeToolCatalog
 from agent_fleet.ports.runtime_accounting import RuntimeAccounting
@@ -82,32 +106,6 @@ from agent_fleet.ports.secret_store import (
 )
 
 _RUNTIME_NAME = "pydantic-ai"
-_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
-_OPENAI_API_HOST = "api.openai.com"
-_OPENAI_API_PATHS = frozenset({"/v1/chat/completions", "/v1/responses"})
-_OPENAI_SDK_REQUEST_HEADERS = frozenset(
-    {
-        "accept",
-        "accept-encoding",
-        "authorization",
-        "connection",
-        "content-length",
-        "content-type",
-        "host",
-        "openai-organization",
-        "openai-project",
-        "user-agent",
-        "x-stainless-arch",
-        "x-stainless-async",
-        "x-stainless-lang",
-        "x-stainless-os",
-        "x-stainless-package-version",
-        "x-stainless-read-timeout",
-        "x-stainless-retry-count",
-        "x-stainless-runtime",
-        "x-stainless-runtime-version",
-    }
-)
 _PROMPT_PACKAGE = "agent_fleet.adapters.runtime.prompts"
 _OUTPUT_BY_ROLE: dict[
     str,
@@ -295,16 +293,16 @@ class PydanticAIRuntimeAdapter:
         if selection is None:
             raise _runtime_error(
                 ErrorCode.PROVIDER_UNSUPPORTED,
-                "The provider model must use the supported openai or openai-chat prefix.",
-                "Use an explicit openai:<model> or openai-chat:<model> identifier.",
+                "The provider model must use an admitted provider prefix.",
+                "Use openai:<model>, openai-chat:<model>, anthropic:<model> or google:<model>.",
             )
         if (
             credential_check is not RuntimeCredentialCheck.NONE
-            and _ambient_openai_custom_headers_are_configured()
+            and (issue := provider_policy_issue(selection[0])) is not None
         ):
             return self._preflight_failure(
                 RuntimeCredentialStatus.INVALID,
-                "Ambient OpenAI custom headers are not permitted for the BYOK runtime.",
+                issue,
             )
         if configuration.credential_ref is None or self._secret_store is None:
             return self._preflight_failure(
@@ -384,53 +382,71 @@ class PydanticAIRuntimeAdapter:
         try:
             async with asyncio.timeout(configuration.timeout_seconds):
                 return await self._invoke_with_configuration(request, services)
-        except FleetError:
-            raise
-        except TimeoutError:
+        except FleetError as error:
+            # The SDK graph can attach an ExceptionGroup context even to our
+            # own safe error. Preserve its subtype/fields (e.g. approval IDs),
+            # but strip that unrelated raw chain at the public boundary below.
+            mapped_error = error
+        except TimeoutError as error:
             mapped_error = _runtime_error(
                 ErrorCode.RUNTIME_TIMEOUT,
                 "The bounded model invocation timed out.",
                 "Reduce the task context or increase the trusted runtime timeout and retry.",
-                details={"timeout_seconds": configuration.timeout_seconds},
+                details={
+                    "timeout_seconds": configuration.timeout_seconds,
+                    **runtime_failure_details(error, RuntimeFailureCategory.INVOCATION_TIMEOUT),
+                },
             )
-        except UsageLimitExceeded:
+        except UsageLimitExceeded as error:
             mapped_error = _runtime_error(
                 ErrorCode.RUNTIME_BUDGET_EXCEEDED,
                 "The model invocation exceeded its configured request or token budget.",
                 "Reduce the task context or start a new run with a larger trusted budget.",
+                details=runtime_failure_details(error, RuntimeFailureCategory.USAGE_LIMIT),
             )
-        except ContentFilterError:
+        except ContentFilterError as error:
             mapped_error = _runtime_error(
                 ErrorCode.PROVIDER_FAILED,
                 "The model provider declined to return a usable response.",
                 "Review the bounded task input and provider policy, then retry.",
+                details=runtime_failure_details(error, RuntimeFailureCategory.CONTENT_FILTER),
             )
         except ModelHTTPError as error:
             mapped_error = _runtime_error(
                 ErrorCode.PROVIDER_FAILED,
                 "The configured model provider returned an HTTP error.",
                 "Check provider availability, account access, and the selected model.",
-                details={"status_code": error.status_code},
+                details={
+                    **(
+                        {"status_code": error.status_code}
+                        if type(error.status_code) is int and 100 <= error.status_code <= 599
+                        else {}
+                    ),
+                    **runtime_failure_details(error, RuntimeFailureCategory.PROVIDER_HTTP),
+                },
             )
-        except ModelAPIError:
+        except ModelAPIError as error:
             mapped_error = _runtime_error(
                 ErrorCode.PROVIDER_FAILED,
                 "The configured model provider request failed.",
                 "Check provider availability and retry the bounded run.",
+                details=runtime_failure_details(error, RuntimeFailureCategory.PROVIDER_API),
             )
-        except APITimeoutError:
+        except APITimeoutError as error:
             mapped_error = _runtime_error(
                 ErrorCode.RUNTIME_TIMEOUT,
                 "The configured model provider request timed out.",
                 "Check provider availability or increase the trusted runtime timeout.",
+                details=runtime_failure_details(error, RuntimeFailureCategory.PROVIDER_TIMEOUT),
             )
-        except OpenAIError:
+        except OpenAIError as error:
             mapped_error = _runtime_error(
                 ErrorCode.PROVIDER_FAILED,
                 "The configured model provider request failed.",
                 "Check provider configuration and availability, then retry.",
+                details=runtime_failure_details(error, RuntimeFailureCategory.PROVIDER_SDK),
             )
-        except UnexpectedModelBehavior:
+        except UnexpectedModelBehavior as error:
             code = (
                 ErrorCode.RUNTIME_RETRY_EXHAUSTED
                 if configuration.max_retries > 0
@@ -445,21 +461,28 @@ class PydanticAIRuntimeAdapter:
                 code,
                 message,
                 "Refine the bounded task context or retry with a compatible model.",
+                details=runtime_failure_details(error, RuntimeFailureCategory.STRUCTURED_OUTPUT),
             )
-        except ValidationError:
+        except ValidationError as error:
             mapped_error = _runtime_error(
                 ErrorCode.RUNTIME_OUTPUT_INVALID,
                 "The model output failed the Agent Fleet schema.",
                 "Refine the bounded task context or retry with a compatible model.",
+                details=runtime_failure_details(error, RuntimeFailureCategory.OUTPUT_SCHEMA),
             )
-        except (TypeError, UnicodeError, ValueError):
+        except (TypeError, UnicodeError, ValueError, UserError) as error:
             mapped_error = _runtime_error(
                 ErrorCode.PROVIDER_FAILED,
                 "The configured model provider request could not be constructed safely.",
                 "Remove ambient provider customization and retry the bounded run.",
+                details=runtime_failure_details(error, RuntimeFailureCategory.REQUEST_CONSTRUCTION),
             )
         # Raise outside the exception handler so the raw SDK/Pydantic exception is
         # neither a cause nor an inspectable ``__context__`` on the Fleet error.
+        mapped_error.__context__ = None
+        mapped_error.__cause__ = None
+        if hasattr(mapped_error, "__notes__"):
+            del mapped_error.__notes__
         raise mapped_error from None
 
     async def _invoke_with_configuration(
@@ -468,18 +491,15 @@ class PydanticAIRuntimeAdapter:
         services: RuntimeInvocationServices,
     ) -> AgentInvocationResult:
         configuration = services.configuration
-        if configuration.runtime_name != _RUNTIME_NAME:
-            raise _runtime_error(
-                ErrorCode.RUNTIME_UNAVAILABLE,
-                "The PydanticAI adapter received a different runtime selection.",
-                "Select runtime pydantic-ai explicitly and retry.",
-            )
-        if request.checkpoint_ref is not None:
-            raise _runtime_error(
-                ErrorCode.RUNTIME_CAPABILITY_MISSING,
-                "Persisted PydanticAI checkpoint resume is not available in this phase.",
-                "Start a fresh bounded invocation; no tool action was replayed.",
-            )
+        require_runtime_invocation(
+            request,
+            selected_runtime=configuration.runtime_name,
+            adapter_runtime=_RUNTIME_NAME,
+            execution_kind=services.execution_kind,
+            supported_kinds=frozenset(AgentRole),
+            capabilities=self.capabilities,
+            has_tools=bool(services.tools.definitions),
+        )
         if self._model_override is not None:
             return await self._invoke_model(
                 request,
@@ -492,61 +512,88 @@ class PydanticAIRuntimeAdapter:
             )
 
         provider, model_name = self._require_provider_model(configuration.provider_model)
-        _reject_ambient_openai_custom_headers()
-        raw_credential = self._resolve_credential(configuration)
-        http_client = DefaultAsyncHttpxClient(
-            trust_env=False,
-            follow_redirects=False,
-            event_hooks={
-                "request": [_openai_request_guard(raw_credential, self._redactor)],
-                "response": [_openai_response_guard(self._redactor)],
-            },
-        )
-        try:
-            client = AsyncOpenAI(
-                api_key=raw_credential,
-                admin_api_key="",
-                organization="",
-                project="",
-                webhook_secret="",
-                base_url=_OPENAI_API_BASE_URL,
-                default_headers={
-                    "Authorization": f"Bearer {raw_credential}",
-                    "Host": _OPENAI_API_HOST,
-                },
-                http_client=http_client,
-                max_retries=0,
-                timeout=float(configuration.timeout_seconds),
+        if provider == "google":
+            require_google_policy()
+            kind = (
+                str(request.role)
+                if services.execution_kind is None
+                else services.execution_kind.value
             )
-            del raw_credential
-            async with client:
-                provider_adapter = OpenAIProvider(openai_client=client)
-                if provider == "openai":
-                    model: Model = OpenAIResponsesModel(
-                        cast(Any, model_name),
-                        provider=provider_adapter,
-                    )
-                else:
-                    model = OpenAIChatModel(
-                        cast(Any, model_name),
-                        provider=provider_adapter,
-                    )
+            output_model, output_name, _ = _OUTPUT_BY_ROLE[kind]
+            terminal_outputs: dict[str, type[BaseModel]] = {output_name: output_model}
+            if request.role == AgentRole.COS and isinstance(
+                request.input.get("organization_context"), dict
+            ):
+                terminal_outputs["submit_fleet_patch"] = FleetPatch
+            credential = self._resolve_credential(configuration)
+            async with open_google_model(
+                model_name,
+                credential,
+                self._redactor,
+                timeout_seconds=float(configuration.timeout_seconds),
+                terminal_outputs=terminal_outputs,
+            ) as google_model:
                 return await self._invoke_model(
                     request,
                     services.tools,
                     configuration,
-                    model,
-                    RuntimeProviderMetadata(
-                        provider=provider,
-                        model=configuration.provider_model,
-                    ),
+                    google_model,
+                    RuntimeProviderMetadata(provider=provider, model=configuration.provider_model),
                     services.accounting,
                     services.execution_kind,
                 )
-        finally:
-            # The transport is caller-owned when supplied to the SDK. Close it even
-            # if SDK construction or the model invocation fails before client exit.
-            await http_client.aclose()
+        if provider == "anthropic":
+            require_anthropic_policy()
+            credential = self._resolve_credential(configuration)
+            async with open_anthropic_model(
+                model_name,
+                credential,
+                self._redactor,
+                timeout_seconds=float(configuration.timeout_seconds),
+            ) as anthropic_model:
+                return await self._invoke_model(
+                    request,
+                    services.tools,
+                    configuration,
+                    anthropic_model,
+                    RuntimeProviderMetadata(provider=provider, model=configuration.provider_model),
+                    services.accounting,
+                    services.execution_kind,
+                )
+        _reject_ambient_openai_custom_headers()
+        raw_credential = self._resolve_credential(configuration)
+        async with open_openai_client(
+            raw_credential=raw_credential,
+            redactor=self._redactor,
+            timeout_seconds=float(configuration.timeout_seconds),
+            client_factory=AsyncOpenAI,
+            transport_factory=DefaultAsyncHttpxClient,
+        ) as client:
+            del raw_credential
+            provider_adapter = OpenAIProvider(openai_client=client)
+            if provider == "openai":
+                model: Model = OpenAIResponsesModel(
+                    cast(Any, model_name),
+                    provider=provider_adapter,
+                )
+            else:
+                model = OpenAIChatModel(
+                    cast(Any, model_name),
+                    provider=provider_adapter,
+                )
+            return await self._invoke_model(
+                request,
+                services.tools,
+                configuration,
+                model,
+                RuntimeProviderMetadata(
+                    provider=provider,
+                    model=configuration.provider_model,
+                ),
+                services.accounting,
+                services.execution_kind,
+                require_openai_verifier_strict=True,
+            )
 
     async def _invoke_model(
         self,
@@ -557,6 +604,8 @@ class PydanticAIRuntimeAdapter:
         provider_metadata: RuntimeProviderMetadata,
         accounting: RuntimeAccounting | None = None,
         execution_kind: AgentRole | None = None,
+        *,
+        require_openai_verifier_strict: bool = False,
     ) -> AgentInvocationResult:
         kind = str(request.role) if execution_kind is None else execution_kind.value
         if (request.role in _OUTPUT_BY_ROLE and kind != request.role) or (
@@ -576,6 +625,16 @@ class PydanticAIRuntimeAdapter:
                 details={"role": str(request.role)},
             )
         output_model, output_tool_name, prompt_name = output_contract
+        strict_verifier = require_openai_verifier_strict and output_model is VerifierVerdict
+        if (
+            strict_verifier
+            and model.profile.get("openai_supports_strict_tool_definition", True) is not True
+        ):
+            raise _runtime_error(
+                ErrorCode.RUNTIME_CAPABILITY_MISSING,
+                "The selected OpenAI model profile cannot enforce strict Verifier output.",
+                "Select a profile with strict tool support; Fleet did not dispatch a request.",
+            )
         fleet_patch_enabled = request.role == AgentRole.COS and isinstance(
             request.input.get("organization_context"), dict
         )
@@ -591,7 +650,9 @@ class PydanticAIRuntimeAdapter:
         )
         toolsets = _external_toolsets(definitions)
         output_spec = [
-            ToolOutput(output_model, name=output_tool_name),
+            ToolOutput(
+                output_model, name=output_tool_name, strict=True if strict_verifier else None
+            ),
             DeferredToolRequests,
         ]
         if fleet_patch_enabled:
@@ -650,13 +711,18 @@ class PydanticAIRuntimeAdapter:
                     retries=0 if side_effect_attempted else configuration.max_retries,
                     infer_name=False,
                 )
-            except UnexpectedModelBehavior:
+            except UnexpectedModelBehavior as error:
                 if not side_effect_attempted:
                     raise
                 post_side_effect_error = _runtime_error(
                     ErrorCode.RUNTIME_OUTPUT_INVALID,
                     "The model returned invalid output after a side-effecting tool attempt.",
                     "Inspect the run evidence and start a new invocation; Fleet did not retry it.",
+                    details=runtime_failure_details(
+                        error,
+                        RuntimeFailureCategory.STRUCTURED_OUTPUT_AFTER_SIDE_EFFECT,
+                        output_model=output_model if output_model is VerifierVerdict else None,
+                    ),
                 )
             if post_side_effect_error is not None:
                 raise post_side_effect_error from None
@@ -739,8 +805,20 @@ class PydanticAIRuntimeAdapter:
 
             # Catalog validation is pure and control-plane-owned. Validate the
             # complete batch before the first call can commit a side effect.
-            for _, call in validated_calls:
-                tools.validate(call)
+            argument_error: FleetError | None = None
+            try:
+                for _, call in validated_calls:
+                    tools.validate(call)
+            except ValidationError as error:
+                argument_error = _runtime_error(
+                    ErrorCode.RUNTIME_OUTPUT_INVALID,
+                    "The model's tool arguments failed the trusted catalog schema.",
+                    "Use every required argument from the bound tool schema and retry explicitly.",
+                    details=runtime_failure_details(error, RuntimeFailureCategory.TOOL_ARGUMENTS),
+                )
+            if argument_error is not None:
+                # Do not retain validation inputs, locations, or exception context.
+                raise argument_error from None
 
             if accounting is not None:
                 batch_sequence += 1
@@ -894,7 +972,7 @@ class PydanticAIRuntimeAdapter:
             raise _runtime_error(
                 ErrorCode.PROVIDER_UNSUPPORTED,
                 "The configured provider model is unsupported.",
-                "Use an explicit openai:<model> or openai-chat:<model> identifier.",
+                "Use openai:<model>, openai-chat:<model>, anthropic:<model> or google:<model>.",
             )
         return selection
 
@@ -913,108 +991,7 @@ class PydanticAIRuntimeAdapter:
 
 
 def _parse_provider_model(provider_model: str | None) -> tuple[str, str] | None:
-    if provider_model is None:
-        return None
-    provider, separator, model_name = provider_model.partition(":")
-    if separator != ":" or provider not in {"openai", "openai-chat"} or not model_name:
-        return None
-    return provider, model_name
-
-
-def _ambient_openai_custom_headers_are_configured() -> bool:
-    return "OPENAI_CUSTOM_HEADERS" in os.environ
-
-
-def _reject_ambient_openai_custom_headers() -> None:
-    if _ambient_openai_custom_headers_are_configured():
-        raise _runtime_error(
-            ErrorCode.PROVIDER_FAILED,
-            "Ambient OpenAI custom headers are not permitted for the BYOK runtime.",
-            "Unset OPENAI_CUSTOM_HEADERS for the Fleet process and retry; Fleet does not "
-            "mutate global environment state.",
-        )
-
-
-def _openai_request_guard(raw_credential: str, redactor: Redactor) -> Any:
-    """Validate and minimize the SDK's fully merged request before transmission."""
-
-    async def guard(request: Any) -> None:
-        try:
-            url_is_allowed = (
-                request.method == "POST"
-                and request.url.scheme == "https"
-                and request.url.host == _OPENAI_API_HOST
-                and request.url.port in {None, 443}
-                and request.url.path in _OPENAI_API_PATHS
-            )
-            header_items = list(request.headers.multi_items())
-            header_names = [name.casefold() for name, _ in header_items]
-            host_values = request.headers.get_list("host")
-            authorization_values = request.headers.get_list("authorization")
-            organization_values = request.headers.get_list("openai-organization")
-            project_values = request.headers.get_list("openai-project")
-            content_length_values = request.headers.get_list("content-length")
-            request_content_length = str(len(request.content))
-            headers_are_allowed = (
-                len(header_names) == len(set(header_names))
-                and set(header_names) <= _OPENAI_SDK_REQUEST_HEADERS
-                and organization_values in ([], [""])
-                and project_values in ([], [""])
-                and content_length_values == [request_content_length]
-            )
-            body_is_allowed = not redactor.contains_secret(request.content)
-        except (AttributeError, TypeError, ValueError):
-            url_is_allowed = False
-            headers_are_allowed = False
-            body_is_allowed = False
-            host_values = []
-            authorization_values = []
-            content_length_values = []
-        if (
-            not url_is_allowed
-            or not headers_are_allowed
-            or not body_is_allowed
-            or host_values != [_OPENAI_API_HOST]
-            or authorization_values != [f"Bearer {raw_credential}"]
-        ):
-            # Raise an SDK-family exception so its retry layer propagates this generic
-            # diagnostic unchanged. The outer adapter maps it to a cause-free FleetError.
-            raise OpenAIError("The provider request failed the pinned transport policy.")
-
-        safe_headers = {
-            "Accept": "application/json",
-            "Authorization": f"Bearer {raw_credential}",
-            "Content-Type": "application/json",
-            "Host": _OPENAI_API_HOST,
-            "User-Agent": "agent-fleet-pydantic-ai-runtime",
-        }
-        safe_headers["Content-Length"] = content_length_values[0]
-        request.headers.clear()
-        request.headers.update(safe_headers)
-
-    return guard
-
-
-def _openai_response_guard(redactor: Redactor) -> Any:
-    """Remove untrusted response headers before provider SDK logging or parsing."""
-
-    async def guard(response: Any) -> None:
-        policy_failed = False
-        header_items: list[tuple[str, str]] = []
-        try:
-            header_items = list(response.headers.multi_items())
-            policy_failed = redactor.contains_secret_data(header_items)
-            response.headers.clear()
-            # Phase 2 uses non-streaming JSON endpoints only. Supplying a constant
-            # content type preserves SDK parsing without retaining provider-controlled
-            # values such as x-request-id, Location, Set-Cookie, or tracing headers.
-            response.headers["Content-Type"] = "application/json"
-        except (AttributeError, TypeError, ValueError):
-            policy_failed = True
-        if policy_failed:
-            raise OpenAIError("The provider response failed the pinned transport policy.")
-
-    return guard
+    return parse_provider_model(provider_model)
 
 
 def _validated_definitions(
@@ -1035,6 +1012,9 @@ def _validated_definitions(
 def _external_toolsets(
     definitions: tuple[RuntimeToolDefinition, ...],
 ) -> list[ExternalToolset[Any]]:
+    # Shipped catalogs use flat, closed objects with all properties required.
+    # New optional/open/union shapes require explicit compatibility review: SDK
+    # strict-schema transformation is not a generic semantic-preservation claim.
     if not definitions:
         return []
     pydantic_definitions = [
@@ -1043,6 +1023,7 @@ def _external_toolsets(
             description=definition.description,
             parameters_json_schema=cast(Any, definition.parameters_json_schema),
             sequential=True,
+            strict=True,
         )
         for definition in definitions
     ]

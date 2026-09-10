@@ -1,0 +1,365 @@
+{
+  "$defs": {
+    "BundleCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "definition": {
+          "$ref": "#/$defs/CommandSpec"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "command_id",
+        "definition",
+        "sha256"
+      ],
+      "title": "BundleCommand",
+      "type": "object"
+    },
+    "BundleRole": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "execution_kind": {
+          "enum": [
+            "engineer",
+            "verifier",
+            "researcher",
+            "architect"
+          ],
+          "title": "Execution Kind",
+          "type": "string"
+        },
+        "guidance": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Guidance",
+          "type": "string"
+        },
+        "role_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Role Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role_id",
+        "execution_kind",
+        "description",
+        "guidance"
+      ],
+      "title": "BundleRole",
+      "type": "object"
+    },
+    "CommandSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Argv",
+          "type": "array"
+        },
+        "command_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_.-]*$",
+          "title": "Command Id",
+          "type": "string"
+        },
+        "environment": {
+          "maxProperties": 32,
+          "patternProperties": {
+            "^[A-Z][A-Z0-9_]{0,63}$": {
+              "maxLength": 4096,
+              "type": "string"
+            }
+          },
+          "title": "Environment",
+          "type": "object"
+        },
+        "executable": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^(?:[A-Za-z0-9._+-]+|\\./[A-Za-z0-9._+-]+)$",
+          "title": "Executable",
+          "type": "string"
+        },
+        "logical_cwd": {
+          "default": ".",
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Logical Cwd",
+          "type": "string"
+        },
+        "max_output_bytes": {
+          "default": 64000,
+          "maximum": 1000000,
+          "minimum": 1,
+          "title": "Max Output Bytes",
+          "type": "integer"
+        },
+        "network_requirement": {
+          "default": "none",
+          "enum": [
+            "none",
+            "required"
+          ],
+          "title": "Network Requirement",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 60,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command_id",
+        "executable"
+      ],
+      "title": "CommandSpec",
+      "type": "object"
+    },
+    "FleetPatchFileChange": {
+      "additionalProperties": false,
+      "properties": {
+        "after_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Sha256"
+        },
+        "before_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Before Sha256"
+        },
+        "content": {
+          "anyOf": [
+            {
+              "maxLength": 1000000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content"
+        },
+        "operation": {
+          "$ref": "#/$defs/FleetPatchOperation"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 8,
+          "pattern": "^\\.fleet/[^/\\\\\\x00][^\\\\\\x00]*$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "path"
+      ],
+      "title": "FleetPatchFileChange",
+      "type": "object"
+    },
+    "FleetPatchOperation": {
+      "enum": [
+        "add",
+        "replace",
+        "remove"
+      ],
+      "title": "FleetPatchOperation",
+      "type": "string"
+    },
+    "RoleBundleDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "bundle_id": {
+          "enum": [
+            "general-change",
+            "public-interface",
+            "stateful-change",
+            "design-guided"
+          ],
+          "title": "Bundle Id",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "roles": {
+          "items": {
+            "$ref": "#/$defs/BundleRole"
+          },
+          "maxItems": 4,
+          "minItems": 2,
+          "title": "Roles",
+          "type": "array"
+        },
+        "version": {
+          "maximum": 1,
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bundle_id",
+        "version",
+        "description",
+        "roles"
+      ],
+      "title": "RoleBundleDefinition",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "adoption_brief": {
+      "maxLength": 16384,
+      "minLength": 1,
+      "title": "Adoption Brief",
+      "type": "string"
+    },
+    "bundle": {
+      "$ref": "#/$defs/RoleBundleDefinition"
+    },
+    "bundle_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Bundle Sha256",
+      "type": "string"
+    },
+    "changes": {
+      "items": {
+        "$ref": "#/$defs/FleetPatchFileChange"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Changes",
+      "type": "array"
+    },
+    "commands": {
+      "items": {
+        "$ref": "#/$defs/BundleCommand"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Commands",
+      "type": "array"
+    },
+    "configuration_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Configuration Sha256",
+      "type": "string"
+    },
+    "execution_authorized": {
+      "const": false,
+      "default": false,
+      "title": "Execution Authorized",
+      "type": "boolean"
+    },
+    "patch": {
+      "maxLength": 1048576,
+      "title": "Patch",
+      "type": "string"
+    },
+    "proposed_configuration_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Proposed Configuration Sha256",
+      "type": "string"
+    },
+    "publication_authorized": {
+      "const": false,
+      "default": false,
+      "title": "Publication Authorized",
+      "type": "boolean"
+    },
+    "repository_identity": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repository Identity",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "scopes": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Scopes",
+      "type": "array"
+    },
+    "workflow_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Workflow Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "bundle",
+    "bundle_sha256",
+    "repository_identity",
+    "configuration_sha256",
+    "proposed_configuration_sha256",
+    "workflow_id",
+    "scopes",
+    "commands",
+    "changes",
+    "patch",
+    "adoption_brief"
+  ],
+  "title": "RoleBundlePreview",
+  "type": "object"
+}

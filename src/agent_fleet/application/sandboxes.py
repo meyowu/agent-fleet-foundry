@@ -13,16 +13,26 @@ from agent_fleet.domain.models import (
     SandboxRequirements,
 )
 from agent_fleet.domain.security import canonical_json_hash
+from agent_fleet.ports.baseline_resources import BaselineSandboxProvider
 from agent_fleet.ports.sandbox import SandboxProvider
 
 
 class SandboxRegistry:
     """Select sandbox providers by exact name without implicit fallback."""
 
-    def __init__(self, providers: Mapping[str, SandboxProvider]) -> None:
+    def __init__(
+        self,
+        providers: Mapping[str, SandboxProvider],
+        *,
+        baseline_providers: Mapping[str, BaselineSandboxProvider] | None = None,
+    ) -> None:
         if not providers:
             raise ValueError("at least one sandbox provider must be registered")
         self._providers = dict(providers)
+        self._baseline_providers = dict(baseline_providers or {})
+        for name, baseline in self._baseline_providers.items():
+            if name != "docker" or id(self._providers.get(name)) != id(baseline):
+                raise ValueError("baseline capability must explicitly bind the same Docker adapter")
         for name, provider in self._providers.items():
             if name != provider.capabilities.provider:
                 raise ValueError(
@@ -32,6 +42,33 @@ class SandboxRegistry:
     @property
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._providers))
+
+    def require_baseline(
+        self, configuration: SandboxConfiguration, requirements: SandboxRequirements
+    ) -> BaselineSandboxProvider:
+        from agent_fleet.domain.baseline import validate_configuration
+
+        try:
+            validate_configuration(configuration)
+        except ValueError:
+            raise FleetError(
+                ErrorCode.SANDBOX_CAPABILITY_MISSING,
+                "Baseline execution requires its bounded read-only Docker capability.",
+                "Review explicit isolated prerequisites; there is no unsafe or fake fallback.",
+            ) from None
+        ordinary = self.require(configuration, requirements)
+        selected = self._baseline_providers.get(configuration.provider)
+        if (
+            selected is None
+            or id(ordinary) != id(selected)
+            or not isinstance(selected, BaselineSandboxProvider)
+        ):
+            raise FleetError(
+                ErrorCode.SANDBOX_CAPABILITY_MISSING,
+                "The exact Docker baseline capability is not registered.",
+                "Use the model-free baseline composition before approving any command.",
+            )
+        return selected
 
     def get(self, provider_name: str) -> SandboxProvider:
         provider = self._providers.get(provider_name)

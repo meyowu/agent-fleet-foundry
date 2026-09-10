@@ -1,0 +1,88 @@
+{
+  "$defs": {
+    "BundleRole": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "execution_kind": {
+          "enum": [
+            "engineer",
+            "verifier",
+            "researcher",
+            "architect"
+          ],
+          "title": "Execution Kind",
+          "type": "string"
+        },
+        "guidance": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Guidance",
+          "type": "string"
+        },
+        "role_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Role Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role_id",
+        "execution_kind",
+        "description",
+        "guidance"
+      ],
+      "title": "BundleRole",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "bundle_id": {
+      "enum": [
+        "general-change",
+        "public-interface",
+        "stateful-change",
+        "design-guided"
+      ],
+      "title": "Bundle Id",
+      "type": "string"
+    },
+    "description": {
+      "maxLength": 512,
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "roles": {
+      "items": {
+        "$ref": "#/$defs/BundleRole"
+      },
+      "maxItems": 4,
+      "minItems": 2,
+      "title": "Roles",
+      "type": "array"
+    },
+    "version": {
+      "maximum": 1,
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "bundle_id",
+    "version",
+    "description",
+    "roles"
+  ],
+  "title": "RoleBundleDefinition",
+  "type": "object"
+}

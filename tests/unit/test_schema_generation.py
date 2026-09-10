@@ -22,6 +22,92 @@ def test_schema_regeneration_has_no_diff() -> None:
     assert generate(schema_root, check=True) == 0
 
 
+def test_reserved_execution_schemas_and_explicit_nullable_image() -> None:
+    schema = SCHEMAS["committed-source.schema.json"].model_json_schema()
+    assert schema["properties"]["entries"]["maxItems"] == 4096
+    case = SCHEMAS["evaluation-manifest.schema.json"].model_json_schema()["$defs"]["EvaluationCase"]
+    assert "image_identity" in case["required"]
+    assert {"type": "null"} in case["properties"]["image_identity"]["anyOf"]
+    record = SCHEMAS["evaluation-execution-record.schema.json"].model_json_schema()
+    assert record["properties"]["revision"]["maximum"] == 3
+    assert record["properties"]["status"]["enum"] == ["active", "settled", "fenced"]
+    assert record["additionalProperties"] is False
+
+
+def test_role_bundle_preview_schema_is_bounded_and_non_authorizing() -> None:
+    schema = SCHEMAS["role-bundle-preview.schema.json"].model_json_schema()
+    assert schema["additionalProperties"] is False
+    props = schema["properties"]
+    assert props["execution_authorized"]["const"] is False
+    assert props["publication_authorized"]["const"] is False
+    assert props["changes"]["maxItems"] == 8
+    assert props["adoption_brief"]["maxLength"] == 16384
+    assert props["commands"]["maxItems"] == 32
+    definition = SCHEMAS["role-bundle-definition.schema.json"].model_json_schema()
+    assert len(definition["properties"]["bundle_id"]["enum"]) == 4
+
+
+def test_readiness_schema_is_bounded_and_non_authorizing() -> None:
+    schema = SCHEMAS["readiness-report.schema.json"].model_json_schema()
+    assert schema["additionalProperties"] is False
+    props = schema["properties"]
+    assert props["environment_status"]["const"] == "unverified"
+    assert props["baseline_status"]["const"] == "not_checked"
+    assert props["execution_authorized"]["const"] is False
+    assert props["commands_executed"]["const"] == 0
+    assert props["detected_candidates"]["maxItems"] == 256
+    assert props["boundaries"]["maxItems"] == 64
+    metadata = schema["$defs"]["StaticReadinessMetadata"]["properties"]
+    assert metadata["manifests"]["maxItems"] == 64
+    assert metadata["declarations"]["maxItems"] == 512
+    for definition in schema["$defs"].values():
+        if definition.get("type") == "object":
+            assert definition["additionalProperties"] is False
+
+
+def test_evaluation_ledger_schemas_are_bounded_and_never_authorize_execution() -> None:
+    for name in (
+        "campaign-registration.schema.json",
+        "evaluation-reservation.schema.json",
+        "evaluation-ledger-snapshot.schema.json",
+    ):
+        schema = SCHEMAS[name].model_json_schema()
+        assert schema["additionalProperties"] is False
+        assert schema["properties"]["execution_authorized"]["const"] is False
+    snapshot = SCHEMAS["evaluation-ledger-snapshot.schema.json"].model_json_schema()
+    assert snapshot["properties"]["reservations"]["maxItems"] == 256
+    assert snapshot["properties"]["outcomes"]["maxItems"] == 256
+    assert snapshot["$defs"]["EvaluationCommitments"]["properties"]["attempts"]["minimum"] == 0
+
+
+def test_evaluation_schemas_are_bounded_and_non_authorizing() -> None:
+    names = {
+        "evaluation-manifest.schema.json",
+        "outcome-record.schema.json",
+        "evaluation-report.schema.json",
+    }
+    assert names <= SCHEMAS.keys()
+    for name in names:
+        schema = SCHEMAS[name].model_json_schema()
+        assert schema["additionalProperties"] is False
+        for definition in schema.get("$defs", {}).values():
+            if definition.get("type") == "object":
+                assert definition["additionalProperties"] is False
+    manifest = SCHEMAS["evaluation-manifest.schema.json"].model_json_schema()
+    assert manifest["properties"]["repositories"]["maxItems"] == 16
+    assert manifest["properties"]["cases"]["maxItems"] == 64
+    assert manifest["properties"]["slots"]["maxItems"] == 256
+    assert "sha256" not in manifest["properties"]
+    assert manifest["$defs"]["EvaluationSlot"]["properties"]["repetition"]["maximum"] == 2
+    assert manifest["$defs"]["EvaluationCase"]["properties"]["allowed_paths"]["maxItems"] == 128
+    outcome = SCHEMAS["outcome-record.schema.json"].model_json_schema()["properties"]
+    assert outcome["artifacts"]["maxItems"] == outcome["usage"]["maxItems"] == 64
+    assert outcome["reported_cost_microunits"]["default"] is None
+    report = SCHEMAS["evaluation-report.schema.json"].model_json_schema()["properties"]
+    assert report["assurance"]["const"] == "structural_only"
+    assert report["kr_status"]["const"] == "not_evaluated"
+
+
 def test_generated_wire_schemas_expose_representable_security_constraints() -> None:
     fleet = FleetSpec.model_json_schema()
     runtime = fleet["$defs"]["RuntimeRequest"]

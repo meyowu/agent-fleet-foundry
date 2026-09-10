@@ -15,6 +15,7 @@ from agent_fleet.adapters.persistence import evolution
 from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
 from agent_fleet.adapters.persistence.evolution import SqliteOrganizationStore
 from agent_fleet.adapters.persistence.graphs import SqliteGraphStore
+from agent_fleet.adapters.persistence.runtime_budgets import SqliteRuntimeBudgetStore
 from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.application.artifacts import ArtifactService
@@ -457,6 +458,9 @@ def _graph(
     admission = h.baseline() if admitted else None
     parent = h.run()
     h.state.create_run(parent, organization_admission=admission)
+    SqliteRuntimeBudgetStore(
+        h.state.database_path, h.state.clock, h.state.ids, h.state.redactor, h.state
+    ).initialize_run(parent.run_id, RunBudgetLimits())
     for stage in (WorkflowStage.INTAKE, WorkflowStage.SCOPING):
         parent = h.state.save_run(
             parent.model_copy(update={"status": RunStatus.RUNNING, "stage": stage}),

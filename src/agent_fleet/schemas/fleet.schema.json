@@ -225,7 +225,11 @@
           "if": {
             "properties": {
               "adapter": {
-                "const": "pydantic-ai"
+                "enum": [
+                  "pydantic-ai",
+                  "openai-agents",
+                  "langgraph"
+                ]
               }
             },
             "required": [
@@ -242,13 +246,37 @@
               "providerModel"
             ]
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "adapter": {
+                "enum": [
+                  "openai-agents",
+                  "langgraph"
+                ]
+              }
+            },
+            "required": [
+              "adapter"
+            ]
+          },
+          "then": {
+            "properties": {
+              "providerModel": {
+                "pattern": "^openai:"
+              }
+            }
+          }
         }
       ],
       "properties": {
         "adapter": {
           "enum": [
             "fake",
-            "pydantic-ai"
+            "pydantic-ai",
+            "openai-agents",
+            "langgraph"
           ],
           "title": "Adapter",
           "type": "string"

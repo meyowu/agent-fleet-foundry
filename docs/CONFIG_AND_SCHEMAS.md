@@ -1,8 +1,139 @@
 # Configuration and canonical schemas — Agent Fleet
 
-This document distinguishes implemented contracts from targets. Phase 0–3 provides repository intelligence, exact configuration/task/evidence bindings, bounded fake/Docker/local-unsafe execution, bootstrap canaries and shared fake/PydanticAI runtime contracts. Phase 4's current-policy intersection, user-owned trust store, exact once/run/project approvals and permission CLI were accepted on 2026-09-05: `1001 passed, 10 skipped` in the default suite, with nine separately passing real-Docker tests. Complete Phase 5 chat and Phase 6 organization evolution are locally accepted under E5.3/E6 in `MVP_ACCEPTANCE.md`. No live-provider acceptance was run. Phase 7 release hardening, fresh-install/Linux proof and live-provider/license prerequisites stay open.
+This document distinguishes implemented contracts from targets. Phase 0–3 provides repository intelligence, exact configuration/task/evidence bindings, bounded fake/Docker/local-unsafe execution, bootstrap canaries and shared fake/PydanticAI runtime contracts. Phase 4's current-policy intersection, user-owned trust store, exact once/run/project approvals and permission CLI were accepted on 2026-09-05: `1001 passed, 10 skipped` in the default suite, with nine separately passing real-Docker tests. Complete Phase 5 chat and Phase 6 organization evolution are locally accepted under E5.3/E6 in `MVP_ACCEPTANCE.md`. The bounded OpenAI nano canary recorded in README passed independent acceptance on2026-09-09; this is one unapplied guard-change journey, not general task/provider reliability or S1–S3 completion. Phase 7 release hardening, fresh-install/Linux proof and the remaining license/public-release prerequisites are separate.
 
 Phase 5 Milestone 1 (`ab28aaa`) accepted cumulative budgets and typed criterion mapping. Milestone 2 (`7a70b1a`) and complete persistent chat (`a46b688`) are accepted and pushed. Phase 6 exports82 schemas and migration `0008`, with operational proposal/publication/recovery and declarative skills described below. Its final default suite passed1973 tests with15 explicit skips; fourteen real-Docker cases passed separately. Metadata is6; archive/checkpoint refresh follows the behavioral gates. Exact identities and platform limitations are recorded in E6.
+
+## Evaluation contracts (S1 foundation; no execution authority)
+
+Three additional schemas define `EvaluationManifest`, `OutcomeRecord` and
+`EvaluationReport`. The corresponding Python entry points are
+`agent_fleet.domain.evaluation.EvaluationManifest`,
+`agent_fleet.domain.outcomes.OutcomeRecord` and
+`agent_fleet.domain.evaluation_metrics.evaluate_records(manifest, records)`.
+This first increment performs no I/O, persists no campaign and adds no execution
+CLI. Reports always say `assurance="structural_only"` and
+`kr_status="not_evaluated"`.
+
+The manifest freezes repositories, development/holdout membership, task and
+verification identities, all repetition slots and finite budget declarations.
+Its SHA-256 is derived from canonical content. Strict frozen scalar/tuple models
+reject unknown fields, mutable Python collections, duplicate identities and
+cross-cohort source reuse. Canonical JSON arrays are accepted as tuples.
+
+Every first-round slot stays in the denominator. Missing outcomes and explicit
+`not_run` differ from failed or uncertain execution; repeats and auxiliary work
+are reported separately. Percentages are null only when a group has no observed
+attempt. Usage is a reported lower bound, and absent cost remains unknown rather
+than zero. A Run that failed during CoS may legitimately have no bound Task yet;
+successful execution requires both actual identities. Neither type allows
+inventing a Task to fill a reporting gap.
+
+Evidence references bind IDs and hashes structurally, not physically. Consumers
+must recompute reports from the manifest and outcomes; parsing a report does not
+authenticate its provenance. Independent oracle execution, physical evidence
+auditing, campaign-to-Run execution admission and real task-campaign results remain later
+slices. See [ADR 0009](adr/0009-independent-evaluation-contracts.md) and the
+[S1–S3 ExecPlan](../.agent/plans/2026-09-09-s1-s3-system-development.md).
+
+The accepted S1.1b1 adds `CampaignRegistration`, `EvaluationReservation` and
+`EvaluationLedgerSnapshot` schemas, `EvaluationLedgerService` and the SQLite
+`EvaluationStore` adapter. Migration0011 adds four evaluation tables without
+changing historical rows. The store requires an already migrated database and
+uses immediate transactions for registration, immutable slot reservation and
+preflight outcomes. Exact idempotency returns the original reservation; a new
+manifest revision is a new campaign identity, not a spending reset. Budget
+commitments are permanent and bounded by the registered manifest in five dimensions.
+The raw idempotency key is not persisted. All three returned authority fields
+require exact Boolean false; integer0 is rejected rather than coerced.
+
+`record_preflight_outcome` accepts bounded non-executed outcomes only, with no
+Run/Task identity, positive usage/cost or successful product verdict. Missing slots
+remain missing. This service is not wired to a CLI dispatcher and cannot authorize
+a model, command or Run. Corrupt/future/stale state fails closed with safe errors.
+
+The later reserved-execution service uses a separate immutable execution binding
+and migration0012. Registration/reservation alone still cannot invoke it: an exact
+single-use claim binds the real Workflow Run and cumulative budget atomically.
+Uncertain execution is never replayed, re-reserved or refunded automatically.
+This service is Python-only; no public campaign CLI or external oracle is admitted.
+The successor observer is under security repair. Its `record_final_outcome` and
+`record_terminal` entries currently fail with `STATE_UNAVAILABLE` and the fixed
+reason `write_boundary_unqualified` before any state access. That is deliberate
+containment, not accepted finalization. Reports retain missing outcomes; callers
+must not manufacture successes to fill them.
+
+## Read-only repository readiness
+
+`fleet readiness [path] --json` produces the bounded `ReadinessReport` schema.
+Repository metadata capture reuses a single legacy profiling pass without changing
+its output; dependencies, extras, lockfile presence and unsupported overrides are
+projected rather than executed. Lockfile contents and credentials are not loaded.
+The report retains `unverified`, `not_checked`, false execution flags and zero
+executed commands. It does not instantiate the state store, doctor, runtime or
+sandbox. Existing database, index and repository bytes must remain unchanged.
+
+Limits are64 manifests,512 dependency declarations,256 commands,64 boundaries,
+128 diagnostics,64 lockfile paths and1MiB of actual serialized CLI output. Truncation
+has explicit omission counts and exit1; complete static inspection exits0; safe
+admission failure exits2. Exit0 is not proof of installed dependencies or passing
+business tests. Unicode/redaction/JSON escaping are included in the wire bound.
+
+## Reviewed model-free baseline contracts
+
+The integrated standalone `fleet baseline plan/run/show/revoke/recover` path adds
+seven public schemas: `baseline-review`, `baseline-authorization`,
+`baseline-execution`, `baseline-command-observation`, `baseline-report`,
+`baseline-show` and `baseline-stopped-owner-review`. There are now115 public
+schemas; the prior108 schema bytes and migrations1–12 remain unchanged.
+
+Migration0013 adds separate reviews, authorizations, executions, permanent owner
+and dispatch claims, resource leases, command observations, reports, cleanup
+receipts and events. It does not fabricate Run, Task, Agent, ToolIntent,
+CommandEvidence or EvidenceBundle records. Upgrades are forward-only: normal
+older migrating binaries refuse schema13, but this is not a claim that all
+low-level older reads reject or that refusal creates no transient WAL/SHM files.
+
+A review binds the entire clean committed regular-file source tree, existing
+command, configuration, user trust, installation, Docker image and daemon. It
+expires after five minutes and requires explicit exact once-only consent;
+ordinary run/project allow rules do not replace it. Canonical tagged bytes and
+recomputed hashes retain these bindings through storage, materialization,
+dispatch, observation and cleanup. The runtime has no baseline tool route.
+
+Review and observation JSON each have a128KiB ceiling; report JSON has256KiB.
+Captured/redacted stdout+stderr share a64000-byte bound; only final redacted bytes
+are hashed and persisted. Flags distinguish capture truncation, post-redaction
+truncation and decoding replacement. This cannot promise to detect every unknown
+secret in arbitrary command output. Command timeout is at most180 seconds and
+the attempt at most300 seconds; Docker is nonroot/no-network/read-only with
+at most1 CPU,512MiB memory,64 PIDs and256MiB aggregate scratch. Lower requested
+limits still apply. An unprepared image, unsupported adapter, dirty tree or deny
+is not silently repaired or bypassed.
+
+Observations/reports are immutable content-addressed records. Cleanup recovery
+can append a successor report with the previous report hash, never replace the
+history. The report remains `completion_assurance=baseline_observation_only` and
+`target_applied=false`; nonzero command exits are observations, not automatic
+product-fault diagnoses. Missing results remain unknown. These records do not
+enable the disabled S1 terminal finalizers. CLI composition initializes/migrates
+state but does not construct a SecretStore, RuntimeRegistry or model factory;
+shared bootstrap imports are not a no-SDK-import guarantee. The Session now exposes
+`/baseline plan COMMAND_ID`, `/confirm CODE`, `/baseline run` and `/baseline show`.
+Confirmation only records available authorization; run consumes its exact ID once.
+Internal frozen BaselineSessionBinding/Review/Focus and a trusted admission callback
+bind project/repository/conversation/revision/local generation. They add no public
+JSON schema or migration. Codes/focus are process-local; standalone recovery stays
+separate. Baseline operations after normal Session selection perform no additional
+secret/history/runtime access. Whole-Session credential-free composition is not
+implemented, and ordinary history redaction remains mandatory.
+
+`BaselineShow.recovery_scope_sha256` is null before an owner claim exists;
+after ownership it identifies the current typed execution/claim/dispatch/lease
+snapshot, including after successful observation and complete cleanup. It is not
+a pending-cleanup flag. It may differ from the report's earlier cleanup-scope
+digest. Presence of this field grants no recovery authority: explicit stopped-owner
+review and fresh identity/snapshot checks remain mandatory.
 
 ## 1. Configuration ownership
 
@@ -34,7 +165,17 @@ Phase 2 resolves only strict `env:NAME` references. The reference originates in 
 
 ## 2. Current FleetSpec fields and later extensions
 
-The checked-in `fleet.schema.json` accepts `runtime.adapter` as `fake` or `pydantic-ai`. `pydantic-ai` requires `runtime.providerModel`; `fake` forbids it. Both require the `structured_output` and `tool_calling` capabilities. Sandbox `provider` is exactly `fake`, `docker`, or `local-unsafe`: fake and Docker require `networkMode: none`, Docker additionally requires an already-local image reference and bounded CPU/memory/PID/shm/tmpfs values, while local-unsafe must honestly declare `approved-unrestricted`. A current real-runtime/isolated-worker fragment is:
+The checked-in `fleet.schema.json` accepts `runtime.adapter` as `fake`,
+`pydantic-ai`, `openai-agents` or `langgraph`. Every non-fake selection requires
+`runtime.providerModel`; `fake` forbids it. OpenAI Agents SDK and LangGraph admit
+only the `openai:` Responses prefix. These rules apply both to generated defaults
+and directly edited YAML/distributed JSON Schema. All require `structured_output`
+and `tool_calling` capabilities. Sandbox `provider` is exactly `fake`, `docker`,
+or `local-unsafe`: fake and Docker require `networkMode: none`, Docker requires an
+already-local image and bounded CPU/memory/PID/shm/tmpfs settings, while local-unsafe
+must declare `approved-unrestricted`. Configuration admission is not live
+qualification; exact current acceptance is recorded in README. A real-runtime
+configuration fragment is:
 
 ```yaml
 spec:
@@ -55,7 +196,14 @@ spec:
     tmpfsMb: 128
 ```
 
-The adapter-level live allowlist is narrower than the generic `providerModel` grammar: only `openai:<model>` and `openai-chat:<model>` are wired. Unknown prefixes fail closed before credential resolution or network. `credentialRef` is deliberately absent from FleetSpec.
+The adapter allowlist is narrower than the generic `providerModel` grammar:
+PydanticAI wires `openai:<model>`, `openai-chat:<model>`, `anthropic:<model>` and
+`google:<model>`. OpenAI Agents SDK and LangGraph wire only `openai:<model>`.
+`google-gla:` is not a public Fleet alias. Unknown combinations fail before
+credential resolution or network, and no automatic provider fallback exists.
+Only the bounded historical OpenAI/PydanticAI canary has live acceptance so far;
+offline SDK tests do not establish other combinations' live support.
+`credentialRef` is deliberately absent from FleetSpec.
 
 For a new registration before any admitted history, init accepts an identical generated `.fleet/` tree but never merges or overwrites a differing one. A runtime/provider-model/sandbox proposal that changes repository files fails before Project/artifact state or repository mutation. A new Docker registration remains staged until its disposable canary, cleanup and BootstrapReport pass. Before a head exists, a credential-reference-only state update remains compatible with the legacy path. Phase 6 adds a strict headed-project guard: once any organization admission/history exists, init cannot rebind that Project, including credentials, even with identical generated bytes. Moving `.fleet/` aside is not a bypass. Reviewed non-protected evolution uses FleetPatch; preserve old project/state and separately initialize a new registration when a different protected runtime/sandbox/credential setup is required.
 
@@ -187,7 +335,7 @@ Notes:
 - The `agents` mapping is a catalog of available role templates keyed by validated extensible `RoleId`; it is not the team instantiated for every run.
 - Phase 1 generated `chief-of-staff` and `software-engineer` role labels remain accepted only for the corresponding `cos` and `engineer` keys; other key/label mismatches fail validation.
 - The `workflows` mapping is keyed by validated extensible `WorkflowId`. A per-run FleetPlan selects a supported strategy and subset of roles.
-- CoS, Engineer, and Verifier are the current built-ins. The current schema accepts other validated role IDs/references, while specialist output schemas and execution remain roadmap work.
+- CoS, Engineer, Verifier, Researcher, and Architect are the current built-ins. SpecialistReport and bounded Researcher/Architect execution are implemented; custom role IDs still resolve to reviewed bounded execution kinds rather than creating unrestricted runtime capabilities.
 - Provider/model strings are bounded opaque values in the domain; the concrete adapter applies its explicit prefix allowlist.
 - `credentialRef` is a reference, never a secret value, and is intentionally stored outside repository FleetSpec in Phase 2.
 - Referenced paths must resolve under `.fleet/` and may not escape through symlinks.
@@ -362,6 +510,8 @@ class ScopeDecision(BaseModel):
 
 FakeRuntime and PydanticAI CoS return this same strict model. The control plane validates paths, protected boundaries, known workflow/roles, strategy support, evidence requirements, topology ceilings and, in Phase 4, the separately user-reviewed project path ceiling before constructing TaskSpec/FleetPlan. It also checks current scope before execution/resume. Fleet does not infer this user ceiling from natural-language intent. A model cannot expand the reviewed paths, persist its own FleetPlan or directly authorize target-checkout mutation; explicit patch review/apply remains required.
 
+CoS receives sorted `available_workflows` from the reviewed FleetSpec. `workflow` selects one of those identifiers (normally `code-change`), while `fleet_strategy` selects team topology (for example `engineer_verifier`). For every nonparallel strategy, `writer_assignments` must be empty; the trusted planner constructs its fixed role nodes. Only `parallel_engineers` supplies bounded disjoint Engineer shards, never a Verifier writer. Packaged prompt and JSON Schema descriptions explain these rules without relaxing existing validators. Ordinary code scoping does not require source contents; bounded Engineer inspection follows. Merely including organization context does not request a FleetPatch.
+
 ### 6.1.1 Runtime configuration, preflight, and usage
 
 ```python
@@ -397,6 +547,18 @@ class UsageRecord(BaseModel):
 ```
 
 The fake runtime forbids provider/credential metadata. PydanticAI requires both a provider/model ID and strict `env:NAME` reference. Preview uses credential-check `none`, doctor uses `inspect`, and init/run use `resolve`. Usage contains only reported provider-neutral facts; cost/currency must appear together, Fleet does not estimate price, and each reported invocation is stored as a content-addressed `runtime_usage` artifact. `max_total_tokens` is evaluated from provider-reported usage after responses and before continuations/tools rather than as a strict pre-spend ceiling. Provider metadata is similarly a bounded projection rather than a raw SDK response.
+
+Runtime failure JSON details may include `runtime_diagnostic` with fixed `category` and `cause_category` literals and an optional integer `http_status` in 100–599. The same allowlisted projection is retained in `agent.failed` events for `fleet logs`; other arbitrary error details are not copied into that event. Existing codes and exit behavior are unchanged. Classification inspects at most eight exception-chain nodes with cycle detection, using known SDK/Pydantic classes only. It reads no exception text, dynamic class names, provider bodies/headers/request IDs, validation records or hidden reasoning. Categories describe the observed boundary, not wire-dispatch certainty, actual billing or permission to retry. Unrecognized causes remain `unknown`. Human error presentation remains the existing concise code/message/remedy; use JSON errors or logs for the diagnostic fields.
+
+Trusted OpenAI transport-guard failures use the fixed causes `request_policy` or `response_policy`, still under `PROVIDER_FAILED`; they are not provider billing/authentication verdicts. The client rejects storage and replay of response cookies before its response-header hook. Deliberate Cookie headers remain outside the exact request allowlist. Removing response headers alone is not sufficient to prevent the HTTP client's earlier cookie-jar extraction.
+
+The action-tool correction explicitly requests strict external function arguments. The schema transformer operates on copies; local catalog constraints remain authoritative even when provider-incompatible string-length keywords become wire descriptions. `run_verification` requires both `command_id` (one exact TaskSpec-bound enum member) and `reason`; mentioning an ID in reason does not supply the field. No command is selected automatically, and no verification tool is advertised when none is admitted. Invalid catalog argument shapes retain `RUNTIME_OUTPUT_INVALID`/exit5 with fixed `tool_arguments` and `schema_validation` diagnostics, before tool-batch reservation or side effects. Incompatible provider schemas fail closed without a non-strict fallback. This covers the current built-in action schemas, not arbitrary third-party schemas or changed output-model strictness.
+
+The existing fake-only `offline-canary` command remains explicitly simulated. Empty-command omission applies when the effective catalog truly has no command, including real/Docker tasks without an admitted command; it does not add or use a fallback from real execution to fake or host execution.
+
+The criterion-guidance correction changes schema descriptions and a fixed bounded Verifier `criterion_mapping_contract` context entry, not persisted model fields, defaults, validation, permissions or evidence semantics. Packaged guidance instructs CoS to separate observable `acceptance_criteria` from `required_evidence` delivery types. For structured code-change verification, each result pairs distinct exact command IDs with their own current Verifier `content.command_evidence_artifact_id` receipts, one receipt per command. `transcript_artifact_id`, patches and generic `artifact_ids` are not substitutes. Receipt reuse across relevant criteria is allowed; stale, ambiguous, foreign and unsupported proof remains rejected. Actual receipt IDs still come only from real tool results, not the fixed contract. The correction adds no artifact-reading tool, ID inference, verdict cleanup or retry. Exact implementation and live acceptance status remains in README and the living canary plan.
+
+The one-shot `fleet run` CLI exposes the existing immutable cumulative `RunBudgetLimits` through optional `--max-agent-invocations`, `--max-model-requests`, `--max-tool-calls`, `--max-total-tokens` and `--max-active-seconds`. They map directly to the same-named underscore fields; omitted values retain current defaults. Validation failure returns `CONFIG_INVALID` before container/state/Run creation. Accepted limits are forwarded to the existing workflow and persist across approval/resume and child execution; this adds no schema, migration, reset mechanism or authority grant. Per-role RuntimeConfiguration/ModelProfile limits continue to apply independently.
 
 ### 6.2 TaskSpec
 
@@ -851,6 +1013,16 @@ For `fleet doctor --json`, `ok: true` means the diagnostic command completed and
 - During `v1alpha1`, incompatible changes are allowed only with explicit migration/documentation in the same change.
 - Snapshot the exact bounded UTF-8 contents and individual hashes of FleetSpec plus every referenced configuration file; never bind only the parsed top-level YAML.
 
+Runtime `repo.read_file.path` definitions may add a bounded scope-prefix hint from
+the immutable task. Supported ASCII paths use a conservative portable pattern;
+unsupported or broad inputs retain the generic schema, and non-ASCII candidates
+still require normal permission validation. This is not a file inventory or an
+authorization enum. PydanticAI's OpenAI paths, Agents SDK and Google preserve the wire pattern;
+Anthropic strict conversion retains it as descriptive guidance only. Local
+Harness enforcement also differs: LangGraph validates the pattern before catalog
+dispatch, while PydanticAI external tools still rely on the authoritative Broker.
+These runtime definitions do not change the115 checked-in public schemas.
+
 ## 10. Prompt files
 
 Repository role instruction files should be versioned and concise. The Phase 2 PydanticAI adapter also packages project-owned `cos.md`, `engineer.md`, and `verifier.md` system prompts with the wheel and source distribution. They specify goals, responsibilities, strict output contracts, and restrictions. Neither repository nor packaged prompt text grants permission or overrides system security policy.
@@ -908,6 +1080,27 @@ stores profiles, selections, immutable run bindings and mutation audit records.
 Inspection never returns references or values. Removal preserves historical
 versions and fails while active selections refer to the profile.
 
+S2.2 management adds `/models`, `/models use <alias> --default|--role <role>`,
+`/roles`, `/readiness`, `/tasks [before-sequence]`, `/tasks select <sequence>` and
+`/tasks current`. Model changes require a new exact `/confirm` review and affect
+future Runs only. Catalog, future selection and inspected Run bindings are separate
+views. `ModelSelectionReview` binds profile/revision/configuration, project
+selection revision and Session generation; database publication checks these
+identities atomically with its existing selection write. No provider call occurs
+during selection. External configuration is rechecked but is not locked by SQLite.
+No new migration is required for these management commands.
+
+Task history pages contain at most20 summaries. The historical inspection cursor
+is process-local and separate from active turn ownership; mutating historical
+reviews are denied, cancellation still targets the actual owned active Run, and
+changing the cursor invalidates prepared reviews. Role summaries omit guidance
+and grants. Session readiness measures the final redacted, ASCII-escaped pretty
+JSON including newline against1MiB, with explicit omissions; it retains the static
+report's unverified/not_checked semantics. No shell history, completion daemon or
+new persistent raw input log is introduced. The independently accepted S2.2
+inventory is efda1d9c (209 unique tests); later runtime registration is a separate
+integration gate.
+
 An optional `.fleet/agents/roles.yaml` uses this shape:
 
 ```yaml
@@ -953,6 +1146,27 @@ bindings accompany each revision. Human approval changes no execution state;
 single-winner consumption and the resume event are atomic. Missing required
 records or uncertain consumed ownership fail closed. Cancellation retains the
 journal, and pending plans block organization publication.
+
+### Packaged role-bundle previews
+
+`role-bundle-definition.schema.json` describes four immutable version1 package
+definitions with2–4 bounded responsibilities. `role-bundle-preview.schema.json`
+contains exact bundle/configuration digests, repository identity, selected existing
+workflow,1–32 scopes/commands, complete1–8 proposed FleetPatch file changes, unified
+diff and a single-line16KiB adoption brief. Its execution/publication authorization
+fields are exactly false. The CLI checks the actual escaped/redacted JSON envelope
+including its newline against1MiB; an oversized brief is rejected, not truncated.
+
+`fleet role-bundles list` and `preview` use a dedicated composition without state
+or credential stores. They never initialize a project, call a model or write files.
+Rendering preserves the base FleetSpec, existing roles, workflow requirements and
+permission ceilings. Additional roles intersect existing tools with kind ceilings;
+fixture side effects and deletion are excluded. Existing referenced or unreferenced
+target files and unsafe/symlink parents cause rejection. Verification uses existing
+exact command IDs and hashed definitions, not commands invented by the template.
+Current config is reread before returning. Preview is not a publication CAS receipt:
+the adoption brief must enter a new ordinary CoS task, then existing FleetPatch
+proposal/review/apply/rollback performs authoritative current-generation validation.
 
 ## 13. Local dashboard observation contract
 

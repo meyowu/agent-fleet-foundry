@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "attempt_id": {
+      "pattern": "^attempt_[0-9a-f]{32}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "campaign_id": {
+      "pattern": "^campaign_[0-9a-f]{32}$",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "case_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "repetition": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Repetition",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "campaign_id",
+    "manifest_sha256",
+    "case_id",
+    "repetition",
+    "attempt_id"
+  ],
+  "title": "EvaluationSubmission",
+  "type": "object"
+}

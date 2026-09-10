@@ -1,0 +1,589 @@
+{
+  "$defs": {
+    "ReadinessBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "ecosystems": {
+          "items": {
+            "enum": [
+              "python",
+              "node",
+              "go",
+              "rust",
+              "maven",
+              "gradle",
+              "make",
+              "github-actions"
+            ],
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Ecosystems",
+          "type": "array"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^:\\\\\\x00]+$",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "ecosystems"
+      ],
+      "title": "ReadinessBoundary",
+      "type": "object"
+    },
+    "ReadinessCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "title": "Argv",
+          "type": "array"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "enum": [
+                "high",
+                "medium",
+                "low"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "cwd": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^:\\\\\\x00]+$",
+          "title": "Cwd",
+          "type": "string"
+        },
+        "executable": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Executable",
+          "type": "string"
+        },
+        "execution_authorized": {
+          "const": false,
+          "default": false,
+          "title": "Execution Authorized",
+          "type": "boolean"
+        },
+        "name": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "profile_required": {
+          "default": false,
+          "title": "Profile Required",
+          "type": "boolean"
+        },
+        "provenance_path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^[^:\\\\\\x00]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provenance Path"
+        },
+        "purpose": {
+          "enum": [
+            "test",
+            "lint",
+            "build",
+            "check",
+            "other"
+          ],
+          "title": "Purpose",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "purpose",
+        "executable",
+        "argv",
+        "cwd",
+        "sha256"
+      ],
+      "title": "ReadinessCommand",
+      "type": "object"
+    },
+    "ReadinessDiagnostic": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "profile_incomplete",
+            "manifest_limit",
+            "declaration_limit",
+            "command_limit",
+            "boundary_limit",
+            "diagnostic_limit",
+            "invalid_declaration",
+            "dynamic_declaration",
+            "unsupported_dependency_source",
+            "unsupported_metadata",
+            "unsafe_projection",
+            "configuration_invalid",
+            "verification_commands_missing",
+            "metadata_capture_failed",
+            "report_byte_limit"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^[^:\\\\\\x00]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "ReadinessDiagnostic",
+      "type": "object"
+    },
+    "StaticDeclaration": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "requires_python",
+            "dependency",
+            "optional_dependency",
+            "dependency_group",
+            "dynamic",
+            "package_manager",
+            "engine",
+            "dev_dependency"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "constraint": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9.*<>=!~^|, +_-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Constraint"
+        },
+        "ecosystem": {
+          "enum": [
+            "python",
+            "node"
+          ],
+          "title": "Ecosystem",
+          "type": "string"
+        },
+        "group": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_@./+-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Group"
+        },
+        "manifest_path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^:\\\\\\x00]+$",
+          "title": "Manifest Path",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_@./+-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "source_type": {
+          "enum": [
+            "registry",
+            "url",
+            "vcs",
+            "path",
+            "workspace",
+            "dynamic",
+            "unsupported"
+          ],
+          "title": "Source Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "manifest_path",
+        "ecosystem",
+        "category",
+        "source_type"
+      ],
+      "title": "StaticDeclaration",
+      "type": "object"
+    },
+    "StaticManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "ecosystem": {
+          "enum": [
+            "python",
+            "node"
+          ],
+          "title": "Ecosystem",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^:\\\\\\x00]+$",
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "ecosystem",
+        "sha256"
+      ],
+      "title": "StaticManifest",
+      "type": "object"
+    },
+    "StaticReadinessMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "declarations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/StaticDeclaration"
+          },
+          "maxItems": 512,
+          "title": "Declarations",
+          "type": "array"
+        },
+        "diagnostics": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ReadinessDiagnostic"
+          },
+          "maxItems": 128,
+          "title": "Diagnostics",
+          "type": "array"
+        },
+        "manifests": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/StaticManifest"
+          },
+          "maxItems": 64,
+          "title": "Manifests",
+          "type": "array"
+        },
+        "omitted_declarations": {
+          "default": 0,
+          "maximum": 512000,
+          "minimum": 0,
+          "title": "Omitted Declarations",
+          "type": "integer"
+        },
+        "omitted_diagnostics": {
+          "default": 0,
+          "maximum": 512000,
+          "minimum": 0,
+          "title": "Omitted Diagnostics",
+          "type": "integer"
+        },
+        "omitted_manifests": {
+          "default": 0,
+          "maximum": 20000,
+          "minimum": 0,
+          "title": "Omitted Manifests",
+          "type": "integer"
+        }
+      },
+      "title": "StaticReadinessMetadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "api_version": {
+      "const": "agentfleet.dev/v1alpha1",
+      "default": "agentfleet.dev/v1alpha1",
+      "title": "Api Version",
+      "type": "string"
+    },
+    "baseline_status": {
+      "const": "not_checked",
+      "default": "not_checked",
+      "title": "Baseline Status",
+      "type": "string"
+    },
+    "boundaries": {
+      "items": {
+        "$ref": "#/$defs/ReadinessBoundary"
+      },
+      "maxItems": 64,
+      "title": "Boundaries",
+      "type": "array"
+    },
+    "commands_executed": {
+      "const": 0,
+      "default": 0,
+      "title": "Commands Executed",
+      "type": "integer"
+    },
+    "config_snapshot_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Config Snapshot Sha256"
+    },
+    "configuration_status": {
+      "enum": [
+        "absent",
+        "valid",
+        "invalid"
+      ],
+      "title": "Configuration Status",
+      "type": "string"
+    },
+    "configured_commands": {
+      "items": {
+        "$ref": "#/$defs/ReadinessCommand"
+      },
+      "maxItems": 256,
+      "title": "Configured Commands",
+      "type": "array"
+    },
+    "detected_candidates": {
+      "items": {
+        "$ref": "#/$defs/ReadinessCommand"
+      },
+      "maxItems": 256,
+      "title": "Detected Candidates",
+      "type": "array"
+    },
+    "diagnostics": {
+      "items": {
+        "$ref": "#/$defs/ReadinessDiagnostic"
+      },
+      "maxItems": 128,
+      "title": "Diagnostics",
+      "type": "array"
+    },
+    "dirty": {
+      "title": "Dirty",
+      "type": "boolean"
+    },
+    "ecosystems": {
+      "items": {
+        "enum": [
+          "python",
+          "node",
+          "go",
+          "rust",
+          "maven",
+          "gradle",
+          "make",
+          "github-actions"
+        ],
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Ecosystems",
+      "type": "array"
+    },
+    "environment_status": {
+      "const": "unverified",
+      "default": "unverified",
+      "title": "Environment Status",
+      "type": "string"
+    },
+    "execution_authorized": {
+      "const": false,
+      "default": false,
+      "title": "Execution Authorized",
+      "type": "boolean"
+    },
+    "head_revision": {
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+      "title": "Head Revision",
+      "type": "string"
+    },
+    "inspection_complete": {
+      "title": "Inspection Complete",
+      "type": "boolean"
+    },
+    "kind": {
+      "const": "ReadinessReport",
+      "default": "ReadinessReport",
+      "title": "Kind",
+      "type": "string"
+    },
+    "lock_files": {
+      "default": [],
+      "items": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^[^:\\\\\\x00]+$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Lock Files",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/StaticReadinessMetadata"
+    },
+    "next_steps": {
+      "items": {
+        "enum": [
+          "review_static_issues",
+          "prepare_reviewed_environment",
+          "run_approved_baseline_later"
+        ],
+        "type": "string"
+      },
+      "maxItems": 3,
+      "minItems": 2,
+      "title": "Next Steps",
+      "type": "array"
+    },
+    "omitted_boundaries": {
+      "default": 0,
+      "maximum": 20000,
+      "minimum": 0,
+      "title": "Omitted Boundaries",
+      "type": "integer"
+    },
+    "omitted_commands": {
+      "default": 0,
+      "maximum": 1000000,
+      "minimum": 0,
+      "title": "Omitted Commands",
+      "type": "integer"
+    },
+    "omitted_diagnostics": {
+      "default": 0,
+      "maximum": 1000000,
+      "minimum": 0,
+      "title": "Omitted Diagnostics",
+      "type": "integer"
+    },
+    "omitted_lock_files": {
+      "default": 0,
+      "maximum": 20000,
+      "minimum": 0,
+      "title": "Omitted Lock Files",
+      "type": "integer"
+    },
+    "profile_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Profile Sha256",
+      "type": "string"
+    },
+    "repository_identity": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Repository Identity",
+      "type": "string"
+    },
+    "status_fingerprint": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Status Fingerprint",
+      "type": "string"
+    }
+  },
+  "required": [
+    "repository_identity",
+    "head_revision",
+    "status_fingerprint",
+    "dirty",
+    "profile_sha256",
+    "configuration_status",
+    "ecosystems",
+    "boundaries",
+    "metadata",
+    "detected_candidates",
+    "configured_commands",
+    "diagnostics",
+    "inspection_complete",
+    "next_steps"
+  ],
+  "title": "ReadinessReport",
+  "type": "object"
+}

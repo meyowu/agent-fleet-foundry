@@ -36,11 +36,17 @@ def configuration_hash(configuration: RuntimeConfiguration) -> str:
 
 def validate_profile_configuration(configuration: RuntimeConfiguration) -> None:
     """A profile is not an endpoint configuration or extensible adapter registry."""
-    if configuration.runtime_name not in {"fake", "pydantic-ai"}:
+    if configuration.runtime_name not in {"fake", "pydantic-ai", "openai-agents", "langgraph"}:
         raise ValueError("model profile runtime is unsupported")
     if configuration.runtime_name == "pydantic-ai" and (
         configuration.provider_model is None
-        or configuration.provider_model.partition(":")[0] not in {"openai", "openai-chat"}
+        or configuration.provider_model.partition(":")[0]
+        not in {"openai", "openai-chat", "anthropic", "google"}
+    ):
+        raise ValueError("model profile provider is unsupported")
+    if configuration.runtime_name in {"openai-agents", "langgraph"} and (
+        configuration.provider_model is None
+        or configuration.provider_model.partition(":")[0] != "openai"
     ):
         raise ValueError("model profile provider is unsupported")
 

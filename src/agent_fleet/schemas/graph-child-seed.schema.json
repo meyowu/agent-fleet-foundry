@@ -4,6 +4,7 @@
       "additionalProperties": false,
       "properties": {
         "criterion_id": {
+          "description": "Stable identifier for one requested task outcome.",
           "maxLength": 100,
           "minLength": 1,
           "pattern": "^[a-z][a-z0-9_-]*$",
@@ -11,6 +12,7 @@
           "type": "string"
         },
         "description": {
+          "description": "Observable task outcome, not a delivery-evidence category copied from required_evidence. For code changes, describe requested behavior that admitted independent checks can support; preserve requested scope and report unsupported proof rather than invent it.",
           "maxLength": 4096,
           "minLength": 1,
           "title": "Description",

@@ -15,13 +15,33 @@ from agent_fleet.domain.conversation import (
     ConversationSummary,
     ConversationTurn,
 )
-from agent_fleet.domain.models import Run
+from agent_fleet.domain.models import LeaseStatus, Run
+from agent_fleet.domain.recovery_binding import (
+    RecoveryBinding,
+    RecoveryLeaseClaim,
+    ReviewedRecoveryPlan,
+)
+from agent_fleet.domain.session_review import SessionSelection
 
 if TYPE_CHECKING:
     from agent_fleet.domain.evolution import OrganizationAdmission
 
 
 class ConversationStore(Protocol):
+    def capture_recovery(self, selection: SessionSelection) -> RecoveryBinding: ...
+
+    def prepare_reviewed_recovery(self, binding: RecoveryBinding) -> ReviewedRecoveryPlan:
+        """Compare original review and fence its complete ownership in one transaction."""
+        ...
+
+    def claim_recovery_lease(
+        self, plan: ReviewedRecoveryPlan, lease_id: str
+    ) -> RecoveryLeaseClaim: ...
+
+    def finish_recovery_lease(self, claim: RecoveryLeaseClaim, status: LeaseStatus) -> None: ...
+
+    def reconcile_reviewed_recovery(self, plan: ReviewedRecoveryPlan) -> Run: ...
+
     def create(self, project_id: str, repository_identity: str) -> Conversation: ...
 
     def latest(self, project_id: str, repository_identity: str) -> Conversation | None: ...

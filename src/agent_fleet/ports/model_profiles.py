@@ -1,5 +1,6 @@
 """Trusted profile persistence; no provider or repository-controlled settings."""
 
+from collections.abc import Callable
 from typing import Protocol
 
 from agent_fleet.domain.model_profiles import (
@@ -8,6 +9,7 @@ from agent_fleet.domain.model_profiles import (
     ProjectModelSelection,
     RunModelBindings,
 )
+from agent_fleet.domain.session_review import ModelSelectionReview
 
 
 class ModelProfileStore(Protocol):
@@ -24,7 +26,12 @@ class ModelProfileStore(Protocol):
     def get_selection(self, project_id: str) -> ProjectModelSelection | None: ...
 
     def save_selection(
-        self, selection: ProjectModelSelection, *, expected_revision: int
+        self,
+        selection: ProjectModelSelection,
+        *,
+        expected_revision: int,
+        expected_review: ModelSelectionReview | None = None,
+        validate_review: Callable[[], None] | None = None,
     ) -> None: ...
 
     def save_bindings(self, bindings: RunModelBindings) -> None: ...

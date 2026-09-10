@@ -6,9 +6,11 @@ import json
 import os
 import secrets
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 
 import yaml
 from pydantic import ValidationError
@@ -16,8 +18,9 @@ from yaml.nodes import MappingNode
 from yaml.tokens import AliasToken, AnchorToken
 
 from agent_fleet.domain.errors import ErrorCode, FleetError
-from agent_fleet.domain.security import Redactor
+from agent_fleet.domain.security import Redactor, sha256_bytes
 from agent_fleet.domain.trust import UserTrustPolicy
+from agent_fleet.ports.trust_store import TrustReadGuard
 
 try:
     import fcntl
@@ -25,6 +28,62 @@ except ImportError:  # pragma: no cover - unsupported platforms fail closed
     fcntl = None  # type: ignore[assignment]
 
 _MAX_POLICY_BYTES = 2_000_000
+_ReservationKey = tuple[int, int, str, int, int]
+_reservations_lock = Lock()
+_reservations: dict[_ReservationKey, dict[object, str]] = {}
+
+
+def _after_fork() -> None:
+    # A fork cannot inherit the parent's Python-thread bookkeeping as authority.
+    global _reservations_lock, _reservations
+    _reservations_lock = Lock()
+    _reservations = {key: {object(): "inherited"} for key in _reservations}
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork)
+
+
+@contextmanager
+def _reservation(key: _ReservationKey, kind: str) -> Iterator[None]:
+    token = object()
+    if not _reservations_lock.acquire(blocking=False):
+        raise _conflict()
+    try:
+        related = [
+            (other, tokens) for other, tokens in _reservations.items() if other[:3] == key[:3]
+        ]
+        if any(
+            other != key
+            or kind == "guard"
+            or "guard" in tokens.values()
+            or "inherited" in tokens.values()
+            for other, tokens in related
+        ):
+            raise _conflict()
+        _reservations.setdefault(key, {})[token] = kind
+    finally:
+        _reservations_lock.release()
+    try:
+        yield
+    finally:
+        # Bookkeeping only: no I/O, flock or user code while this mutex is held.
+        with _reservations_lock:
+            tokens = _reservations.get(key)
+            if tokens is not None:
+                tokens.pop(token, None)
+                if not tokens:
+                    del _reservations[key]
+
+
+@dataclass(frozen=True)
+class _TrustReadGuard:
+    canonical_policy_utf8: bytes
+    policy_sha256: str
+    _check: Callable[[], None]
+
+    def assert_current(self) -> None:
+        self._check()
 
 
 class _UniqueSafeLoader(yaml.SafeLoader):
@@ -58,6 +117,94 @@ class FilesystemTrustStore:
                 policy, _ = self._read_policy(descriptor, self.path.name)
                 self._check_directory(descriptor)
                 return policy if policy is not None else UserTrustPolicy()
+        except FleetError:
+            raise
+        except (OSError, ValueError, TypeError, RecursionError, yaml.YAMLError):
+            raise _unavailable() from None
+
+    @contextmanager
+    def read_guard(self, *, expected_sha256: str | None = None) -> Iterator[TrustReadGuard]:
+        """Fail-fast cooperating read reservation; may create only directory/lock.
+
+        Caller lock order is project publication, then this guard, then short
+        SQLite transactions. No policy revision/backup is written by the guard.
+        Ordinary load stays nonmutating. A retained guard excludes all same-
+        process saves before they can block on its flock, including other store
+        instances. Cross-process legacy saves still use their existing flock.
+        """
+        active = False
+        creator_pid = os.getpid()
+        try:
+            if fcntl is None:
+                raise _unavailable()
+            if expected_sha256 is not None and (
+                type(expected_sha256) is not str
+                or len(expected_sha256) != 64
+                or any(char not in "0123456789abcdef" for char in expected_sha256)
+            ):
+                raise _conflict()
+            with self._directory(create=True) as descriptor:
+                if descriptor is None:
+                    raise _unavailable()
+                name = f".{self.path.name}.lock"
+                lock = self._open_lock(descriptor, name)
+                try:
+                    opened = os.fstat(lock)
+                    _validate_file(opened)
+                    directory = os.fstat(descriptor)
+                    key = (*_binding(directory), name.casefold(), *_binding(opened))
+                    with _reservation(key, "guard"):
+                        try:
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            raise _conflict() from None
+                        self._assert_binding(descriptor, name, opened)
+                        self._check_directory(descriptor)
+
+                        def policy_bytes() -> bytes:
+                            policy, _ = self._read_policy(descriptor, self.path.name)
+                            checked = UserTrustPolicy.model_validate_json(
+                                (
+                                    policy if policy is not None else UserTrustPolicy()
+                                ).model_dump_json()
+                            )
+                            content = checked.model_dump(mode="json")
+                            if self.redactor.contains_secret_data(content):
+                                raise _unavailable()
+                            raw = json.dumps(
+                                content,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                                ensure_ascii=False,
+                                allow_nan=False,
+                            ).encode("utf-8")
+                            if len(raw) > _MAX_POLICY_BYTES:
+                                raise _unavailable()
+                            return raw
+
+                        raw = policy_bytes()
+                        digest = sha256_bytes(raw)
+                        if expected_sha256 is not None and digest != expected_sha256:
+                            raise _conflict()
+                        active = True
+
+                        def check() -> None:
+                            if not active or os.getpid() != creator_pid:
+                                raise _unavailable()
+                            self._assert_binding(descriptor, name, opened)
+                            self._check_directory(descriptor)
+                            if policy_bytes() != raw:
+                                raise _conflict()
+                            self._assert_binding(descriptor, name, opened)
+                            self._check_directory(descriptor)
+
+                        guard = _TrustReadGuard(raw, digest, check)
+                        check()
+                        yield guard
+                        check()
+                finally:
+                    active = False
+                    os.close(lock)
         except FleetError:
             raise
         except (OSError, ValueError, TypeError, RecursionError, yaml.YAMLError):
@@ -215,12 +362,15 @@ class FilesystemTrustStore:
         name = f".{self.path.name}.lock"
         lock = self._open_lock(descriptor, name)
         try:
-            _validate_file(os.fstat(lock))
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            self._assert_binding(descriptor, name, os.fstat(lock))
-            self._check_directory(descriptor)
-            yield
-            self._assert_binding(descriptor, name, os.fstat(lock))
+            opened = os.fstat(lock)
+            _validate_file(opened)
+            key = (*_binding(os.fstat(descriptor)), name.casefold(), *_binding(opened))
+            with _reservation(key, "save"):
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                self._assert_binding(descriptor, name, os.fstat(lock))
+                self._check_directory(descriptor)
+                yield
+                self._assert_binding(descriptor, name, os.fstat(lock))
         finally:
             os.close(lock)
 

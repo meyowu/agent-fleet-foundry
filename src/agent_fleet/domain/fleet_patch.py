@@ -19,6 +19,7 @@ from agent_fleet.domain.models import (
     FleetPatchPath,
     FleetPatchRationale,
 )
+from agent_fleet.domain.organization_tree import validate_organization_path
 from agent_fleet.domain.security import Redactor
 
 __all__ = [
@@ -30,12 +31,27 @@ __all__ = [
     "FleetPatchRationale",
     "parse_and_validate_fleet_patch",
     "validate_fleet_patch",
+    "validate_organization_proposal_path",
 ]
 
 MAX_RAW_FLEET_PATCH_DEPTH = 64
 MAX_RAW_FLEET_PATCH_NODES = 10_000
 MAX_RAW_FLEET_PATCH_STRING_BYTES = 4_000_000
 _SKILL_FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.yaml")
+
+
+def validate_organization_proposal_path(value: str) -> str:
+    """Validate a pure proposal-tool target, not existence or publication authority."""
+    if type(value) is not str or not 8 <= len(value) <= 4096:
+        raise _invalid("The organization proposal target is invalid or protected.")
+    valid = False
+    with suppress(ValueError, TypeError, UnicodeError):
+        FleetPatchFileChange.validate_path(value)
+        validate_organization_path(value.removeprefix(".fleet/"))
+        valid = _is_allowed_organization_path(value)
+    if not valid:
+        raise _invalid("The organization proposal target is invalid or protected.")
+    return value
 
 
 def parse_and_validate_fleet_patch(

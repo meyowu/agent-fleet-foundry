@@ -70,6 +70,53 @@ def test_configuration_projection_omits_reference_and_preserves_limits() -> None
     assert profile == ModelProfile.model_validate_json(profile.model_dump_json())
 
 
+@pytest.mark.parametrize(
+    ("runtime_name", "provider"),
+    [
+        ("pydantic-ai", "openai"),
+        ("pydantic-ai", "openai-chat"),
+        ("pydantic-ai", "anthropic"),
+        ("pydantic-ai", "google"),
+        ("openai-agents", "openai"),
+        ("langgraph", "openai"),
+    ],
+)
+def test_qualified_profile_combinations_round_trip(runtime_name: str, provider: str) -> None:
+    configuration = RuntimeConfiguration(
+        runtime_name=runtime_name,
+        provider_model=f"{provider}:exact-model",
+        credential_ref="env:EXACT_SELECTED_KEY",
+    )
+    profile = ModelProfile(name="qualified", revision=1, configuration=configuration)
+    assert ModelProfile.model_validate_json(profile.model_dump_json()) == profile
+    assert "EXACT_SELECTED_KEY" not in json.dumps(profile.safe_projection())
+
+
+@pytest.mark.parametrize("provider", ["openai-chat", "anthropic", "google", "other"])
+@pytest.mark.parametrize("runtime", ["openai-agents", "langgraph"])
+def test_agents_profile_rejects_unqualified_provider(provider: str, runtime: str) -> None:
+    configuration = RuntimeConfiguration(
+        runtime_name=runtime,
+        provider_model=f"{provider}:exact-model",
+        credential_ref="env:KEY",
+    )
+    with pytest.raises(ValidationError):
+        ModelProfile(name="unqualified", revision=1, configuration=configuration)
+
+
+@pytest.mark.parametrize("missing", ["provider_model", "credential_ref"])
+@pytest.mark.parametrize("runtime", ["openai-agents", "langgraph"])
+def test_agents_configuration_requires_explicit_model_and_key(missing: str, runtime: str) -> None:
+    fields = {
+        "runtime_name": runtime,
+        "provider_model": "openai:exact-model",
+        "credential_ref": "env:KEY",
+    }
+    del fields[missing]
+    with pytest.raises(ValidationError):
+        RuntimeConfiguration.model_validate(fields)
+
+
 @pytest.mark.parametrize("permitted", [(), ("other",), ("coding", "coding"), ("z", "coding")])
 def test_selection_requires_exact_sorted_unique_approval(permitted: tuple[str, ...]) -> None:
     with pytest.raises(ValidationError):

@@ -32,6 +32,9 @@ from agent_fleet.domain.models import (
 from agent_fleet.domain.security import canonical_json_hash
 from agent_fleet.domain.session_review import (
     ApprovalReview,
+    BaselineSessionBinding,
+    BaselineSessionReview,
+    ModelSelectionReview,
     OrganizationReview,
     PatchReview,
     PlanReview,
@@ -48,8 +51,15 @@ _MAX_ISSUED_CODES = 4096
 
 @dataclass(frozen=True)
 class _Ticket:
-    selection: SessionSelection
-    expected: PatchReview | OrganizationReview | ApprovalReview | PlanReview
+    selection: SessionSelection | BaselineSessionBinding
+    expected: (
+        PatchReview
+        | OrganizationReview
+        | ApprovalReview
+        | PlanReview
+        | ModelSelectionReview
+        | BaselineSessionReview
+    )
     issued_at: datetime
     expires_at: datetime
 
@@ -84,6 +94,7 @@ class SessionReviewService:
         self.code_factory = code_factory
         self._tickets: dict[str, _Ticket] = {}
         self._issued_codes: set[str] = set()
+        self._baseline_codes: set[str] = set()
         self._lock = Lock()
 
     def _run(self, selection: SessionSelection) -> Run:
@@ -279,8 +290,13 @@ class SessionReviewService:
 
     def _issue(
         self,
-        selection: SessionSelection,
-        expected: PatchReview | OrganizationReview | ApprovalReview | PlanReview,
+        selection: SessionSelection | BaselineSessionBinding,
+        expected: PatchReview
+        | OrganizationReview
+        | ApprovalReview
+        | PlanReview
+        | ModelSelectionReview
+        | BaselineSessionReview,
     ) -> View:
         now = self.clock.now()
         with self._lock:
@@ -304,6 +320,11 @@ class SessionReviewService:
             ):
                 raise _invalid("A unique bounded review code could not be created.")
             expires_at = now + _REVIEW_LIFETIME
+            if isinstance(expected, BaselineSessionReview):
+                expires_at = min(expires_at, expected.expires_at)
+                if expires_at <= now:
+                    raise _invalid("The original baseline review has expired.")
+                self._baseline_codes.add(code)
             self._tickets[code] = _Ticket(selection, expected, now, expires_at)
             self._issued_codes.add(code)
         return {
@@ -315,6 +336,38 @@ class SessionReviewService:
             ),
         }
 
+    def confirmation_family(self, code: str) -> Literal["baseline", "ordinary", "unknown"]:
+        """Classify consumed codes too, so they never fall through into history."""
+        with self._lock:
+            if code in self._baseline_codes:
+                return "baseline"
+            return "ordinary" if code in self._issued_codes else "unknown"
+
+    def prepare_baseline(self, expected: BaselineSessionReview) -> View:
+        return self._issue(expected.binding, expected)
+
+    def confirm_baseline(
+        self,
+        code: str,
+        *,
+        authorize: Callable[[BaselineSessionReview, Callable[[], None]], View],
+        validate_selection: Callable[[BaselineSessionBinding], None],
+    ) -> View:
+        with self._lock:
+            ticket = self._tickets.pop(code, None)
+        if ticket is None or not isinstance(ticket.expected, BaselineSessionReview):
+            raise _invalid("The exact baseline review is unknown, consumed or dismissed.")
+        expected = ticket.expected
+
+        def validate() -> None:
+            now = self.clock.now()
+            if not ticket.issued_at <= now < ticket.expires_at:
+                raise _invalid("The original baseline review has expired.")
+            validate_selection(expected.binding)
+
+        validate()
+        return authorize(expected, validate)
+
     def confirm(
         self,
         selection: SessionSelection,
@@ -322,6 +375,8 @@ class SessionReviewService:
         *,
         current_selection: Callable[[], SessionSelection],
         approve_request: Callable[[str, ApprovalChoice], View] | None = None,
+        select_model: Callable[[ModelSelectionReview, Callable[[], None]], View] | None = None,
+        current_model_selection: Callable[[], SessionSelection] | None = None,
     ) -> View:
         with self._lock:
             ticket = self._tickets.pop(code, None)
@@ -335,6 +390,25 @@ class SessionReviewService:
                 "Review code is unknown, expired, consumed or belongs to another selection."
             )
         expected = ticket.expected
+
+        if isinstance(expected, BaselineSessionReview):
+            raise _invalid("Baseline reviews require the separate baseline controller.")
+
+        if isinstance(expected, ModelSelectionReview):
+            if select_model is None or current_model_selection is None:
+                raise _invalid("The exact model selection service is unavailable.")
+
+            def validate_model_selection() -> None:
+                checked_at = self.clock.now()
+                if (
+                    current_model_selection() != ticket.selection
+                    or not ticket.issued_at <= checked_at < ticket.expires_at
+                ):
+                    raise _invalid(
+                        "The reviewed session changed or expired before model selection."
+                    )
+
+            return select_model(expected, validate_model_selection)
 
         def validate_selection() -> None:
             # Invoked under the same publication guard used by new Run
@@ -387,6 +461,27 @@ class SessionReviewService:
             expected.proposal_id, expected_review=expected, validate_review=validate_selection
         ).model_dump(mode="json")
 
+    def prepare_model_selection(
+        self,
+        selection: SessionSelection,
+        expected: ModelSelectionReview,
+        profile: dict[str, object],
+    ) -> View:
+        if expected.selection != selection:
+            raise _invalid("The model review belongs to a different session selection.")
+        return {
+            **selection.model_dump(mode="json"),
+            "action": "model_selection",
+            "target_role": expected.role_id,
+            "target_default": expected.role_id is None,
+            "expected_selection_revision": expected.expected_selection_revision,
+            "profile": jsonable(profile),
+            "config_snapshot_sha256": expected.config_snapshot_sha256,
+            "notice": "Future tasks only; historical Run model bindings remain immutable. "
+            "No provider was contacted.",
+            **self._issue(selection, expected),
+        }
+
     def prepare_approval(
         self, selection: SessionSelection, request_id: str, choice: ApprovalChoice
     ) -> View:
@@ -420,7 +515,7 @@ class SessionReviewService:
             **self._issue(selection, expected),
         }
 
-    def dismiss(self, selection: SessionSelection) -> View:
+    def dismiss(self, selection: SessionSelection | BaselineSessionBinding) -> View:
         with self._lock:
             codes = [
                 code

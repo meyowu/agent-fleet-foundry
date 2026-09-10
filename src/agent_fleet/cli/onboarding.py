@@ -112,13 +112,14 @@ async def _onboard(
     if options.sandbox_name not in {None, "docker"} or options.allow_unsafe_local:
         raise _invalid()
     runtime = options.runtime_name or await ask(
-        "Runtime [fake]: fake (scripted learning only), or pydantic-ai (BYOK).", default="fake"
+        "Runtime [fake]: fake (scripted learning only), pydantic-ai or openai-agents (BYOK).",
+        default="fake",
     )
-    if runtime not in {"fake", "pydantic-ai"}:
+    if runtime not in {"fake", "pydantic-ai", "openai-agents"}:
         raise _invalid()
     provider_model = options.provider_model
     credential_ref = options.credential_ref
-    if runtime == "pydantic-ai":
+    if runtime in {"pydantic-ai", "openai-agents"}:
         provider_model = provider_model or await ask("Explicit provider:model identifier:")
         credential_ref = credential_ref or await ask(
             "Credential reference [env:OPENAI_API_KEY], never its value:",

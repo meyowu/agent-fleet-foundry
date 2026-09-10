@@ -12,11 +12,14 @@ from platformdirs import user_data_path
 
 from agent_fleet.adapters.artifacts.local import LocalArtifactStore
 from agent_fleet.adapters.config.publication import NativeOrganizationFileSystem
+from agent_fleet.adapters.config.role_bundle_assets import PackagedRoleBundles
 from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
 from agent_fleet.adapters.diagnostics.system import LocalSystemDiagnostics
 from agent_fleet.adapters.executable_resolution import resolve_fixed_executable
 from agent_fleet.adapters.filesystem.workspace import BoundedWorkspaceFileSystem
+from agent_fleet.adapters.persistence.baseline import SqliteBaselineStore
 from agent_fleet.adapters.persistence.conversations import SqliteConversationStore
+from agent_fleet.adapters.persistence.evaluation_execution import SqliteEvaluationExecutionStore
 from agent_fleet.adapters.persistence.evolution import SqliteOrganizationStore
 from agent_fleet.adapters.persistence.graphs import SqliteGraphStore
 from agent_fleet.adapters.persistence.model_profiles import SqliteModelProfileStore
@@ -26,6 +29,8 @@ from agent_fleet.adapters.persistence.sqlite import SqliteStateStore
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.repository.profile import StaticRepositoryProfiler
 from agent_fleet.adapters.runtime.fake import FakeRuntimeAdapter
+from agent_fleet.adapters.runtime.langgraph import LangGraphRuntimeAdapter
+from agent_fleet.adapters.runtime.openai_agents import OpenAIAgentsRuntimeAdapter
 from agent_fleet.adapters.runtime.pydantic_ai import PydanticAIRuntimeAdapter
 from agent_fleet.adapters.sandbox.docker import DockerSandboxProvider
 from agent_fleet.adapters.sandbox.fake import FakeSandboxProvider
@@ -36,9 +41,11 @@ from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
 from agent_fleet.adapters.trust.filesystem import FilesystemTrustStore
 from agent_fleet.application.approvals import ApprovalService
 from agent_fleet.application.artifacts import ArtifactService
+from agent_fleet.application.baseline import BaselineAdmissionService, BaselineService
 from agent_fleet.application.bootstrap import BootstrapService
 from agent_fleet.application.conversations import ConversationService
 from agent_fleet.application.doctor import DoctorService
+from agent_fleet.application.evaluation_execution import EvaluationExecutionService
 from agent_fleet.application.evidence import EvidenceAssembler
 from agent_fleet.application.evolution import OrganizationService
 from agent_fleet.application.gateway import ToolGateway
@@ -52,12 +59,19 @@ from agent_fleet.application.permission_policy import (
 from agent_fleet.application.plan_review import PlanReviewService
 from agent_fleet.application.planning import FleetPlanner
 from agent_fleet.application.projects import ProjectService
+from agent_fleet.application.readiness import ReadinessService
 from agent_fleet.application.resources import CancellationService, RecoveryService, ResourceService
+from agent_fleet.application.role_bundles import RoleBundleService
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.application.sandboxes import SandboxRegistry
+from agent_fleet.application.session_recovery import SessionRecoveryService
 from agent_fleet.application.session_review import SessionReviewService
 from agent_fleet.application.workflow import WorkflowEngine
 from agent_fleet.domain.security import Redactor
+from agent_fleet.ports.baseline_resources import (
+    BaselineGatewayDependencies,
+    BaselineResourceDependencies,
+)
 
 _FIXED_DOCKER_EXECUTABLES = (
     Path("/usr/local/bin/docker"),
@@ -81,6 +95,7 @@ class ApplicationContainer:
     projects: ProjectService
     bootstrap: BootstrapService
     workflow: WorkflowEngine
+    evaluation_execution: EvaluationExecutionService
     approvals: ApprovalService
     permissions: PermissionPolicyService
     patches: PatchService
@@ -185,6 +200,119 @@ def _validate_installation_id_stat(file_stat: os.stat_result) -> None:
         raise RuntimeError("Fleet installation identity ownership or permissions are unsafe")
 
 
+@dataclass(frozen=True)
+class BaselineContainer:
+    service: BaselineService
+    state: SqliteStateStore
+    store: SqliteBaselineStore
+    repository: GitRepositoryAdapter
+    sandboxes: SandboxRegistry
+    resources: ResourceService
+    gateway: ToolGateway
+    permissions: PermissionPolicyService
+
+
+def build_baseline_container(
+    state_root: Path | None = None, *, redactor: Redactor | None = None
+) -> BaselineContainer:
+    """No SecretStore, RuntimeRegistry, model factories, agents or Workflow engine."""
+    root = (state_root or resolve_state_root()).resolve()
+    clock = SystemClock()
+    ids = UuidIdGenerator()
+    active_redactor = redactor or Redactor()
+    state = SqliteStateStore(root / "state.db", clock, ids, active_redactor)
+    state.migrate()
+    installation = _load_or_create_installation_id(root)
+    store = SqliteBaselineStore(state, installation_id=installation)
+    config = YamlConfigurationAdapter(active_redactor)
+    repository = GitRepositoryAdapter(root, ids)
+    docker = DockerSandboxProvider(
+        runner=BoundedProcessRunner(),
+        clock=clock,
+        ids=ids,
+        redactor=active_redactor,
+        docker_executable=resolve_fixed_executable(
+            _FIXED_DOCKER_EXECUTABLES, expected_name="docker"
+        ),
+        installation_id=installation,
+        git_shadow_path=root / "sandbox" / "git-shadow",
+    )
+    sandboxes = SandboxRegistry({"docker": docker}, baseline_providers={"docker": docker})
+    resources = ResourceService(
+        state,
+        repository,
+        sandboxes,
+        clock,
+        ids,
+        baseline=BaselineResourceDependencies(store, repository),
+    )
+    trust = FilesystemTrustStore(root / "trust" / "trust.yaml", active_redactor)
+    permissions = PermissionPolicyService(
+        state, trust, config, repository, clock, ids, active_redactor, baseline=store
+    )
+    admission = BaselineAdmissionService(
+        state=state,
+        state_root=root,
+        config=config,
+        repository=repository,
+        baseline_repository=repository,
+        organization_files=NativeOrganizationFileSystem(active_redactor),
+        trust=trust,
+        permissions=permissions,
+        sandboxes=sandboxes,
+        clock=clock,
+        ids=ids,
+        redactor=active_redactor,
+        installation_id=installation,
+    )
+    # The ordinary Gateway dependencies are real but unused by its baseline branch.
+    artifacts = ArtifactService(
+        LocalArtifactStore(root / "artifacts"), state, clock, ids, active_redactor
+    )
+    gateway = ToolGateway(
+        state,
+        artifacts,
+        sandboxes,
+        PolicyPermissionBroker(permissions),
+        clock,
+        ids,
+        active_redactor,
+        BoundedWorkspaceFileSystem(),
+        repository=repository,
+        baseline=BaselineGatewayDependencies(store, repository, admission.guard),
+    )
+    service = BaselineService(admission, store, resources, gateway, clock)
+    return BaselineContainer(
+        service, state, store, repository, sandboxes, resources, gateway, permissions
+    )
+
+
+def build_readiness_service(
+    *, redactor: Redactor | None = None, state_root: Path | None = None
+) -> ReadinessService:
+    """Read-only composition: no stores, migrations, credentials, runtime or sandbox."""
+    active_redactor = redactor or Redactor()
+    return ReadinessService(
+        GitRepositoryAdapter(state_root or resolve_state_root(), UuidIdGenerator()),
+        StaticRepositoryProfiler(),
+        YamlConfigurationAdapter(active_redactor),
+        active_redactor,
+    )
+
+
+def build_role_bundle_service(
+    *, redactor: Redactor | None = None, state_root: Path | None = None
+) -> RoleBundleService:
+    """No stores, migrations, credential lookup, runtime or sandbox construction."""
+    active_redactor = redactor or Redactor()
+    return RoleBundleService(
+        GitRepositoryAdapter(state_root or resolve_state_root(), UuidIdGenerator()),
+        YamlConfigurationAdapter(active_redactor),
+        PackagedRoleBundles(),
+        active_redactor,
+    )
+
+
 def build_container(
     state_root: Path | None = None,
     *,
@@ -211,7 +339,7 @@ def build_container(
         root / "state.db", clock, ids, active_redactor, local_artifacts, config=config
     )
     conversation_store = SqliteConversationStore(
-        root / "state.db", clock, ids, active_redactor, state
+        root / "state.db", clock, ids, active_redactor, state, graphs=graphs
     )
     repository = GitRepositoryAdapter(root, ids)
     profiler = StaticRepositoryProfiler()
@@ -221,6 +349,8 @@ def build_container(
         {
             "fake": FakeRuntimeAdapter(),
             "pydantic-ai": PydanticAIRuntimeAdapter(secrets, active_redactor),
+            "openai-agents": OpenAIAgentsRuntimeAdapter(secrets, active_redactor),
+            "langgraph": LangGraphRuntimeAdapter(secrets, active_redactor),
         }
     )
     model_profiles = ModelProfileService(
@@ -299,6 +429,7 @@ def build_container(
         BoundedWorkspaceFileSystem(),
         repository=repository,
     )
+    evaluation_store = SqliteEvaluationExecutionStore(state)
     workflow = WorkflowEngine(
         state,
         repository,
@@ -320,6 +451,7 @@ def build_container(
         conversations=conversation_store,
         model_profiles=model_profiles,
         plan_reviews=plan_reviews,
+        evaluations=evaluation_store,
     )
     projects = ProjectService(
         root,
@@ -356,6 +488,7 @@ def build_container(
     cancellation = CancellationService(
         state, resources, clock, graphs, conversations=conversation_store
     )
+    recovery = RecoveryService(state, resources, graphs, conversations=conversation_store)
     patches = PatchService(
         state, artifacts, repository, config, secrets, clock, graphs, organization
     )
@@ -378,6 +511,9 @@ def build_container(
         reviews,
         bootstrap_service,
         model_profiles=model_profiles,
+        readiness=ReadinessService(repository, profiler, config, active_redactor),
+        recovery=SessionRecoveryService(recovery, conversation_store, clock),
+        baseline_factory=lambda: build_baseline_container(root, redactor=active_redactor).service,
     )
     return ApplicationContainer(
         state_root=root,
@@ -391,12 +527,13 @@ def build_container(
         projects=projects,
         bootstrap=bootstrap_service,
         workflow=workflow,
+        evaluation_execution=EvaluationExecutionService(evaluation_store, workflow),
         approvals=approvals,
         permissions=permissions,
         patches=patches,
         inspection=inspection,
         cancellation=cancellation,
-        recovery=RecoveryService(state, resources, graphs, conversations=conversation_store),
+        recovery=recovery,
         doctor=DoctorService(
             root,
             state,

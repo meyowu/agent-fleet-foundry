@@ -1,0 +1,397 @@
+{
+  "$defs": {
+    "OutcomeArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "pattern": "^art_[0-9a-f]{32}$",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "source_baseline",
+            "patch",
+            "verification",
+            "apply",
+            "post_apply",
+            "oracle",
+            "cleanup",
+            "answer",
+            "diagnostic"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "pattern": "^run_[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Run Id"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "category",
+        "run_id",
+        "sha256"
+      ],
+      "title": "OutcomeArtifactRef",
+      "type": "object"
+    },
+    "OutcomeUsage": {
+      "additionalProperties": false,
+      "description": "One disjoint usage segment; None remains unreported, never zero.",
+      "properties": {
+        "active_milliseconds": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Milliseconds"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "model_requests": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Requests"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "segment_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "tool_calls": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Calls"
+        },
+        "unknown_requests": {
+          "default": 0,
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "title": "Unknown Requests",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "segment_id"
+      ],
+      "title": "OutcomeUsage",
+      "type": "object"
+    },
+    "RunStatus": {
+      "enum": [
+        "created",
+        "running",
+        "waiting_for_children",
+        "paused_for_approval",
+        "paused_for_plan",
+        "ready_for_review",
+        "applying",
+        "completed",
+        "failed",
+        "cancelled",
+        "rejected",
+        "abandoned"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    },
+    "Verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "apply_status": {
+      "enum": [
+        "applied",
+        "not_applied",
+        "failed",
+        "not_applicable",
+        "unknown"
+      ],
+      "title": "Apply Status",
+      "type": "string"
+    },
+    "artifacts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/OutcomeArtifactRef"
+      },
+      "maxItems": 64,
+      "title": "Artifacts",
+      "type": "array"
+    },
+    "attempt_id": {
+      "pattern": "^attempt_[0-9a-f]{32}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "campaign_id": {
+      "pattern": "^campaign_[0-9a-f]{32}$",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "case_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "configuration_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Configuration Sha256",
+      "type": "string"
+    },
+    "currency": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Z]{3}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Currency"
+    },
+    "external_result": {
+      "enum": [
+        "verified_success",
+        "functional_failure",
+        "environment_failure",
+        "provider_failure",
+        "budget_exhausted",
+        "timeout",
+        "cancelled",
+        "inconclusive",
+        "not_run",
+        "dispatch_unknown"
+      ],
+      "title": "External Result",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "oracle_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Oracle Sha256",
+      "type": "string"
+    },
+    "outcome_id": {
+      "pattern": "^outcome_[0-9a-f]{32}$",
+      "title": "Outcome Id",
+      "type": "string"
+    },
+    "product_status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunStatus"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "product_verdict": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Verdict"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "product_verified_complete": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Product Verified Complete"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "repetition": {
+      "maximum": 2,
+      "minimum": 0,
+      "title": "Repetition",
+      "type": "integer"
+    },
+    "reported_cost_microunits": {
+      "anyOf": [
+        {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reported Cost Microunits"
+    },
+    "root_run_id": {
+      "anyOf": [
+        {
+          "pattern": "^run_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Root Run Id"
+    },
+    "schema_version": {
+      "default": 1,
+      "maximum": 1,
+      "minimum": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "scoring_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Scoring Sha256",
+      "type": "string"
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "pattern": "^task_[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Task Id"
+    },
+    "usage": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/OutcomeUsage"
+      },
+      "maxItems": 64,
+      "title": "Usage",
+      "type": "array"
+    },
+    "user_acceptance": {
+      "default": "not_observed",
+      "enum": [
+        "accepted",
+        "rejected",
+        "not_observed"
+      ],
+      "title": "User Acceptance",
+      "type": "string"
+    }
+  },
+  "required": [
+    "outcome_id",
+    "campaign_id",
+    "manifest_sha256",
+    "case_id",
+    "repetition",
+    "attempt_id",
+    "recorded_at",
+    "configuration_sha256",
+    "oracle_sha256",
+    "scoring_sha256",
+    "external_result",
+    "apply_status"
+  ],
+  "title": "OutcomeRecord",
+  "type": "object"
+}

@@ -316,6 +316,21 @@ def _legacy_credential_state(harness: FleetHarness) -> Path:
         original.backup(legacy)
         legacy.execute("PRAGMA foreign_keys=OFF")
         for table in (
+            "baseline_events",
+            "baseline_cleanup_receipts",
+            "baseline_reports",
+            "baseline_command_observations",
+            "baseline_resource_leases",
+            "baseline_dispatch_claims",
+            "baseline_owner_claims",
+            "baseline_authorizations",
+            "baseline_reviews",
+            "baseline_executions",
+            "evaluation_executions",
+            "evaluation_outcomes",
+            "evaluation_reservations",
+            "evaluation_slots",
+            "evaluation_campaigns",
             "plan_review_heads",
             "plan_review_versions",
             "run_model_bindings",
