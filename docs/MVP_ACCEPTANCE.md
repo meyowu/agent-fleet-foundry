@@ -4,6 +4,55 @@ This is a living review ledger, not a release declaration or a user guide. It ma
 
 ## Evidence boundary and update rules
 
+### Post-H mixed-Harness live06 observation, 2026-09-12
+
+One separately preregistered attempt ran on clean delivered PR16 mergea4747de,
+using unchanged selection, tests, prompts, limits and Docker image. It stopped
+normally NOT_PASSED at16:37:23.899443 UTC after35.962s; pytest1 failed/34.14s,
+13 dependency deprecation warnings. Target Run
+run_9c678a1c3a904040a9223b52ae69e14e failed with COMMAND_DENIED because canonical
+changed_paths was empty. Its schema-valid Engineer report falsely claimed a
+modification and passing tests; actual sole Docker python-test receipt exited1
+against an empty patch. No independent Verifier ran. CoS reported7740 tokens
+and Engineer5221:3 reported requests/12961 tokens, zero unknown/reserved/outstanding
+requests/tokens,1 tool call, actual charge unknown. A valid terminal schema is not
+truthful task completion or mixed-Harness qualification.
+
+The original evidence bundle remains inconclusive and the target unapplied;
+standalone command evidence is not a Run-attached accepted command result.
+Original finalizer reports cleanup_complete=true, recovery_withheld=false and
+no diagnostics. Independent original-evidence/physical readback passed at
+16:48:22.612139 UTC, verdict SHA256
+`9b9ffa77aee04107fce49debcdb6999c3120de08a0962b3a44ee023471d4edca`.
+All38 artifacts (26 Run-exported plus12 project), original bundle decisions,
+accounting and false report/failed-command contradiction validate;9 leases are
+released and3 exact workspaces/native IDs absent in the matching installation.
+All145 original fixture-file hashes and five captures remain unchanged. Original
+cleanup=false/inconclusive bundle is not promoted by this later cleanup proof.
+Two private postprocessor mistakes were retained and corrected against identical
+evidence without model/test/resource replay. Final whole-tree exact-secret-form
+assertions were not reached by the failed test; the keyless audit does not claim
+to have rerun them. No further paid attempt is authorized by this plan. Exact selection,
+commands, limits, results and remaining gaps are in the
+[pre-dispatch plan](../.agent/plans/2026-09-12-engineer-terminal-live-canary.md).
+H itself was independently accepted and normally merged in PR16; the H plan now
+records its actual head/tree/ref/zero-Actions and129-pass postmerge readback.
+
+Final-README documentation package passed1/3.578s (wrapper5.763942957s); original
+fresh installation passed3/279.48s (wrapper281.632112980s), zero failure/error/skip.
+Both current556-input maps remain unchanged, with554 source inputs and guide
+identical to accepted H. Independent package and installed readbacks passed;
+installed verdict SHA256
+`df28d432c7999141f93c4245c4f4012b0fec6184a5ad680447394efb47f3a5fe`.
+Current six archives/three332-resource installs,115 schemas,80 distribution
+metadata entries per install, six immutable journals,215 artifacts and exact
+public/replay/cleanup evidence validate. These are fake-runtime/offline installation
+cases, not live06 success or three model cold starts. Corrected final-doc review
+passed at16:58:31.901972 UTC, verdict SHA256
+`8a0a23398dd89950af29d28c1d133a3ea7d0c441143d44f59be43bf52ea82f8d`;
+the initial chronology finding remains retained. Scoped Git delivery remains
+pending at this pre-publication entry.
+
 ### P1-H — Engineer terminal contract, 2026-09-12
 
 The closed seven-field Engineer ImplementationReport uses strict terminal wire
