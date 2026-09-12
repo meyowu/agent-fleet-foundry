@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import socket
 import subprocess
 from collections.abc import Iterator
@@ -9,6 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from live_provider_support import (
+    SELECTION_ENV,
+    parse_live_canary_selection,
+    resolve_live_canary_credentials,
+)
 from pydantic_ai.models import override_allow_model_requests
 
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
@@ -17,11 +21,8 @@ from agent_fleet.bootstrap import ApplicationContainer, build_container
 from agent_fleet.domain.models import FakeScenario, Run
 
 _LIVE_PROVIDER_FLAG = "AGENT_FLEET_ENABLE_LIVE_PROVIDER_TESTS"
-_LIVE_PROVIDER_MODEL = "AGENT_FLEET_LIVE_PROVIDER_MODEL"
-_LIVE_PROVIDER_CREDENTIAL_REF = "AGENT_FLEET_LIVE_PROVIDER_CREDENTIAL_REF"
 _DOCKER_TEST_FLAG = "AGENT_FLEET_ENABLE_DOCKER_TESTS"
 _DOCKER_TEST_IMAGE = "AGENT_FLEET_DOCKER_TEST_IMAGE"
-_ENV_CREDENTIAL_REF = re.compile(r"env:([A-Za-z_][A-Za-z0-9_]*)\Z")
 
 
 def _live_provider_inputs_are_ready() -> bool:
@@ -29,14 +30,12 @@ def _live_provider_inputs_are_ready() -> bool:
         return False
     if os.environ.get(_DOCKER_TEST_FLAG) != "1" or not os.environ.get(_DOCKER_TEST_IMAGE):
         return False
-    provider_model = os.environ.get(_LIVE_PROVIDER_MODEL, "")
-    provider, separator, model_name = provider_model.partition(":")
-    if separator != ":" or provider not in {"openai", "openai-chat"} or not model_name:
+    try:
+        selection = parse_live_canary_selection(os.environ.get(SELECTION_ENV, ""))
+        resolve_live_canary_credentials(selection, os.environ)
+    except ValueError:
         return False
-    credential_match = _ENV_CREDENTIAL_REF.fullmatch(
-        os.environ.get(_LIVE_PROVIDER_CREDENTIAL_REF, "")
-    )
-    return credential_match is not None and bool(os.environ.get(credential_match.group(1)))
+    return True
 
 
 @pytest.fixture
@@ -73,7 +72,7 @@ def enforce_external_request_boundary(
                 pytest.fail("explicit live opt-in requires all provider and Docker inputs")
             pytest.skip(
                 "live provider canary requires both live and Docker opt-ins, a local image, "
-                "supported model, credential reference and its configured environment value"
+                "strict role selection and each configured credential value"
             )
         with override_allow_model_requests(True):
             yield

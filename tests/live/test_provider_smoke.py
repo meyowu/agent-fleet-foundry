@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import socket
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -12,10 +14,15 @@ from live_provider_support import (
     EVIDENCE_DIRECTORY_ENV,
     PROFILE_LIMITS,
     ROOT_LIMITS,
+    SELECTION_ENV,
     CanaryEvidence,
+    LiveCanarySelection,
     assert_live_canary_verification,
-    credential_forms,
+    default_live_canary_selection,
+    parse_live_canary_selection,
     prepare_live_canary_fixture,
+    resolve_live_canary_credentials,
+    selected_credential_forms,
 )
 from typer.testing import CliRunner
 
@@ -23,10 +30,6 @@ from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.system import UuidIdGenerator
 from agent_fleet.bootstrap import build_container
 from agent_fleet.cli.app import app
-from agent_fleet.ports.secret_store import SecretRef
-
-_LIVE_PROVIDER_MODEL = "AGENT_FLEET_LIVE_PROVIDER_MODEL"
-_LIVE_PROVIDER_CREDENTIAL_REF = "AGENT_FLEET_LIVE_PROVIDER_CREDENTIAL_REF"
 
 _CANARY_GOAL = (
     "Use the engineer_verifier code-change workflow and modify only "
@@ -39,9 +42,14 @@ _CANARY_GOAL = (
     "modify .fleet or any other path."
 )
 
+CANARY_INITIALIZED_ROLES = ("architect", "cos", "engineer", "researcher", "verifier")
 
-def _credential_forms(secret: str) -> tuple[bytes, ...]:
-    return credential_forms(secret)
+
+@dataclass(frozen=True)
+class LiveCanaryProfileSetup:
+    primary_profiles: dict[str, str]
+    default_profile: str | None
+    selection_revision: int
 
 
 def _assert_no_credential_leak(
@@ -123,6 +131,108 @@ def _items(value: object, label: str) -> list[object]:
     return cast(list[object], value)
 
 
+def configure_live_canary_profiles(
+    selection: LiveCanarySelection,
+    repository: Path,
+    invoke: Callable[[list[str]], object],
+    *,
+    complete_role_closure: bool,
+) -> LiveCanaryProfileSetup:
+    """Configure the live fixture through the same public CLI path used by the canary."""
+    legacy_selection = selection.canonical_json == default_live_canary_selection().canonical_json
+    if legacy_selection:
+        selected_profiles = {"live-canary": selection.cos}
+        primary_profiles = dict.fromkeys(selection.roles, "live-canary")
+    else:
+        selected_profiles = {
+            f"live-canary-{role}": selected for role, selected in selection.roles.items()
+        }
+        primary_profiles = {role: f"live-canary-{role}" for role in selection.roles}
+
+    for profile_name, selected in selected_profiles.items():
+        configured = _mapping(
+            invoke(
+                [
+                    "models",
+                    "set",
+                    profile_name,
+                    "--runtime",
+                    selected.runtime_name,
+                    "--provider-model",
+                    selected.provider_model,
+                    "--credential-ref",
+                    selected.credential_ref,
+                    *[
+                        argument
+                        for name, value in PROFILE_LIMITS.items()
+                        for argument in ("--" + name.replace("_", "-"), str(value))
+                    ],
+                    "--json",
+                ]
+            ),
+            "model profile",
+        )
+        assert configured["name"] == profile_name and configured["revision"] == 1
+
+    if legacy_selection:
+        invoke(
+            [
+                "models",
+                "bind",
+                "live-canary",
+                "--path",
+                str(repository),
+                "--default",
+                "--json",
+            ]
+        )
+        return LiveCanaryProfileSetup(
+            primary_profiles=primary_profiles,
+            default_profile="live-canary",
+            selection_revision=1,
+        )
+
+    selection_revision = 0
+    default_profile: str | None = None
+    if complete_role_closure:
+        default_profile = primary_profiles["cos"]
+        invoke(
+            [
+                "models",
+                "bind",
+                default_profile,
+                "--path",
+                str(repository),
+                "--default",
+                "--revision",
+                str(selection_revision),
+                "--json",
+            ]
+        )
+        selection_revision += 1
+    for role, profile_name in primary_profiles.items():
+        invoke(
+            [
+                "models",
+                "bind",
+                profile_name,
+                "--path",
+                str(repository),
+                "--role",
+                role,
+                "--revision",
+                str(selection_revision),
+                "--json",
+            ]
+        )
+        selection_revision += 1
+    return LiveCanaryProfileSetup(
+        primary_profiles=primary_profiles,
+        default_profile=default_profile,
+        selection_revision=selection_revision,
+    )
+
+
 def test_ordinary_suite_denies_network_and_live_model_requests() -> None:
     assert pydantic_ai_models.ALLOW_MODEL_REQUESTS is False
     with pytest.raises(AssertionError, match="must not perform network access"):
@@ -138,13 +248,10 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     real_docker_image: str,
     request: pytest.FixtureRequest,
 ) -> None:
-    provider_model = os.environ[_LIVE_PROVIDER_MODEL]
-    credential_ref = os.environ[_LIVE_PROVIDER_CREDENTIAL_REF]
-    credential_name = SecretRef.parse(credential_ref).name
-    credential = os.environ[credential_name]
-    if len(credential.encode("utf-8")) < 16:
-        pytest.fail("live provider credential must be at least 16 bytes", pytrace=False)
-    forms = _credential_forms(credential)
+    selection = parse_live_canary_selection(os.environ[SELECTION_ENV])
+    credentials = resolve_live_canary_credentials(selection, os.environ)
+    forms = selected_credential_forms(credentials)
+    cos_selection = selection.cos
 
     state_root = tmp_path / "live-provider-state"
     evidence_directory = os.environ.get(EVIDENCE_DIRECTORY_ENV)
@@ -153,7 +260,9 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
         repository=tmp_path / "live-provider-repository",
         forms=forms,
         directory=Path(evidence_directory) if evidence_directory else None,
-        selected_model=provider_model,
+        selected_model=cos_selection.provider_model,
+        selection_sha256=selection.sha256,
+        selected_roles=cast(dict[str, object], selection.safe_projection()["roles"]),
     )
     # CliRunner owns synchronous invocations: every call has exited before teardown.
     # Register before init so bootstrap failures also retain evidence and clean leases.
@@ -180,11 +289,11 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
                 "init",
                 str(repository),
                 "--runtime",
-                "pydantic-ai",
+                cos_selection.runtime_name,
                 "--provider-model",
-                provider_model,
+                cos_selection.provider_model,
                 "--credential-ref",
-                credential_ref,
+                cos_selection.credential_ref,
                 "--sandbox",
                 "docker",
                 "--docker-image",
@@ -197,41 +306,34 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
         ),
         "initialization data",
     )
-    assert initialized["runtime"] == "pydantic-ai"
-    assert initialized["provider_model"] == provider_model
+    assert initialized["runtime"] == cos_selection.runtime_name
+    assert initialized["provider_model"] == cos_selection.provider_model
     assert initialized["sandbox"] == "docker"
     assert initialized["security_level"] == "isolated"
     assert initialized["bootstrap_verified"] is True
     assert initialized["bootstrap_cleanup_complete"] is True
     assert_live_canary_verification(repository)
 
-    invoke(
-        runner,
-        [
-            "models",
-            "set",
-            "live-canary",
-            "--runtime",
-            "pydantic-ai",
-            "--provider-model",
-            provider_model,
-            "--credential-ref",
-            credential_ref,
-            *[
-                argument
-                for name, value in PROFILE_LIMITS.items()
-                for argument in ("--" + name.replace("_", "-"), str(value))
-            ],
-            "--json",
-        ],
-        environment,
-        forms,
+    profile_setup = configure_live_canary_profiles(
+        selection,
+        repository,
+        lambda arguments: invoke(runner, arguments, environment, forms),
+        complete_role_closure=True,
     )
-    invoke(
-        runner,
-        ["models", "bind", "live-canary", "--path", str(repository), "--default", "--json"],
-        environment,
-        forms,
+    persisted_selection = _mapping(
+        invoke(
+            runner,
+            ["models", "selection", str(repository), "--json"],
+            environment,
+            forms,
+        ),
+        "persisted model selection",
+    )
+    legacy_selection = selection.canonical_json == default_live_canary_selection().canonical_json
+    assert persisted_selection["revision"] == profile_setup.selection_revision
+    assert persisted_selection["default_profile"] == profile_setup.default_profile
+    assert persisted_selection["role_overrides"] == (
+        {} if legacy_selection else profile_setup.primary_profiles
     )
     baseline = git.inspect(repository)
 
@@ -288,8 +390,8 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
     )
 
     assert status["status"] == "ready_for_review"
-    assert status["runtime"] == "pydantic-ai"
-    assert status["provider_model"] == provider_model
+    assert status["runtime"] == cos_selection.runtime_name
+    assert status["provider_model"] == cos_selection.provider_model
     assert status["fleet_strategy"] == "engineer_verifier"
     assert status["sandbox"] == "docker"
     assert status["security_level"] == "isolated"
@@ -319,13 +421,25 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
         used = budget[usage_name]
         assert isinstance(used, (int, float)) and 0 < used <= ROOT_LIMITS[limit_name]
     bindings = _mapping(status.get("model_bindings"), "frozen model bindings")
+    assert bindings["selection_revision"] == profile_setup.selection_revision
     bound_roles = _mapping(bindings.get("roles"), "model role bindings")
-    for bound_role in ("cos", "engineer", "verifier"):
+    expected_profiles = {
+        role: profile_setup.primary_profiles.get(role, profile_setup.default_profile)
+        for role in CANARY_INITIALIZED_ROLES
+    }
+    assert set(bound_roles) == set(CANARY_INITIALIZED_ROLES)
+    assert all(profile is not None for profile in expected_profiles.values())
+    for bound_role, profile_name in expected_profiles.items():
         binding = _mapping(bound_roles.get(bound_role), "model binding")
-        assert binding["profile_name"] == "live-canary" and binding["profile_revision"] == 1
+        assert binding["profile_name"] == profile_name
+        assert binding["profile_revision"] == 1
+        assert binding["source"] == (
+            "override" if not legacy_selection and bound_role in selection.roles else "default"
+        )
+        selected = selection.roles.get(bound_role, cos_selection)
         configuration = _mapping(binding.get("configuration"), "role configuration")
-        assert configuration["runtime_name"] == "pydantic-ai"
-        assert configuration["provider_model"] == provider_model
+        assert configuration["runtime_name"] == selected.runtime_name
+        assert configuration["provider_model"] == selected.provider_model
         for name, value in PROFILE_LIMITS.items():
             assert configuration[name] == value
     reason_codes = _items(evidence.get("completion_reason_codes"), "completion reasons")
@@ -341,13 +455,22 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
         assert command["sandbox_inspection_artifact_id"] is not None
 
     completed_roles: list[object] = []
+    selected_events: list[tuple[object, object, object]] = []
     for event_value in log_items:
         event = _mapping(event_value, "event")
         payload = event.get("payload")
         if event.get("event_type") == "agent.completed" and isinstance(payload, dict):
             completed_roles.append(payload.get("role"))
+        if event.get("event_type") == "runtime.model_selected" and isinstance(payload, dict):
+            selected_events.append(
+                (payload.get("role"), payload.get("runtime"), payload.get("provider_model"))
+            )
     assert completed_roles[0] == "cos" and completed_roles.count("cos") == 1
     assert completed_roles.index("engineer") < completed_roles.index("verifier")
+    for role, selected in selection.roles.items():
+        assert (role, selected.runtime_name, selected.provider_model) in selected_events
+    assert set(completed_roles) == set(selection.roles)
+    assert {role for role, _, _ in selected_events} == set(selection.roles)
 
     usage_ids = _items(status.get("runtime_usage_artifact_ids"), "runtime usage bindings")
     assert len(usage_ids) >= 3
@@ -368,18 +491,26 @@ def test_live_provider_cli_cos_engineer_verifier_canary(
             "runtime usage artifact",
         )
         observation_data = _mapping(observation, "runtime usage artifact")
-        selected = _mapping(observation_data.get("selected_model"), "invoked model binding")
-        assert selected["provider_model"] == provider_model
-        assert selected["max_retries"] == PROFILE_LIMITS["max_retries"]
-        role = observation_data.get("role")
-        assert isinstance(role, str)
-        usage_roles.append(role)
+        configuration_view = _mapping(
+            observation_data.get("selected_model"), "invoked model binding"
+        )
+        role_value = observation_data.get("role")
+        assert isinstance(role_value, str)
+        expected_role = selection.roles[role_value]
+        assert configuration_view["runtime_name"] == expected_role.runtime_name
+        assert configuration_view["provider_model"] == expected_role.provider_model
+        assert configuration_view["max_retries"] == PROFILE_LIMITS["max_retries"]
+        metadata = _mapping(observation_data.get("provider_metadata"), "provider metadata")
+        expected_provider = expected_role.provider_model.partition(":")[0]
+        assert metadata["provider"] == expected_provider
+        assert metadata["model"] == expected_role.provider_model
+        usage_roles.append(role_value)
         usage = _mapping(observation_data.get("usage"), "runtime usage record")
         requests = usage.get("requests")
         total_tokens = usage.get("total_tokens")
         assert isinstance(requests, int) and requests >= 1
         assert isinstance(total_tokens, int) and total_tokens > 0
-    assert usage_roles[0] == "cos" and {"cos", "engineer", "verifier"} <= set(usage_roles)
+    assert usage_roles[0] == "cos" and set(usage_roles) == set(selection.roles)
     assert not container.state.outstanding_leases()
 
     artifact_kinds = {

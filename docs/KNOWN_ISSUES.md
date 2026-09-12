@@ -1,5 +1,29 @@
 # Known issues
 
+## Mixed-Harness real OpenAI Canary is not yet qualified
+
+The bounded 2026-09-12 selection using PydanticAI for CoS, OpenAI Agents SDK for
+Engineer and LangGraph for Verifier, all selecting `openai:gpt-5-nano`, failed
+at the Engineer response boundary. The target CoS completed one real request
+with 8,758 reported tokens; the Engineer's first request was reserved and then
+marked unknown. The result is `PROVIDER_FAILED` with
+`provider_sdk/response_policy`, not successful end-to-end delivery. No target
+tool call, command evidence, patch or Verifier invocation occurred. The separate
+scripted bootstrap's real Docker receipts are not target-task evidence.
+
+The current fixed diagnostic does not distinguish SDK failed/incomplete output,
+response model/terminal-state rejection, and invalid raw JSON/usage. Exact model
+identity checking also rejects an alias if the provider returns a dated model
+name; this is an offline hypothesis, **not the proven cause of this attempt**.
+Do not weaken these checks, infer unknown usage as zero, or automatically retry.
+The total invoice cannot be derived from the retained local usage records.
+
+The launcher stopped normally and reported complete cleanup with zero outstanding
+leases. The failed run and its evidence remain retained. Per-role selection
+infrastructure passed its independent offline gate, but this does not qualify
+the mixed-Harness path or Anthropic/Google providers. See the [selection guide](LIVE_CANARY_SELECTION.md)
+and [acceptance ledger](MVP_ACCEPTANCE.md#p1-b--explicit-canary-selection-infrastructure-2026-09-12).
+
 ## Interactive Docker resume can fail in the same Session
 
 Reproduced during the public quickstart review on 2026-09-12, against base
