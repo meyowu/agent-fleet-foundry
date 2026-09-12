@@ -330,7 +330,17 @@ implementation of strict mode, not admission of a relaxed or alternate schema.
   timezone.utc finalization exited0 on the same checked bytes without tests,
   DB/resource/Git replay or candidate changes. Post-release changes only record
   this actual review and later Git bookkeeping; package inputs remain frozen.
-- [ ] Exact H Git delivery and authoritative remote readback.
+- [x] Exact H Git delivery: PR16 merged2026-09-12T16:26:33Z. Head
+  2324e4690fa41da0bd2aa136853a8c13383c8e95, merge/remote main
+  a4747deba988f9b8caa2169509fd0e774e7656ac; identical tree
+  9d22fb00bb268d78c9c5395a6ddc48e7ff66c8c0. Normal exact-head merge,
+  unprotected main/no rulesets, no force/admin/protection change or branch deletion.
+  Head checks/status count0, aggregate pending means none, not CI success;
+  Actions0 for head and merge. Commit and merge use [skip ci]. Root/delivery
+  worktrees fast-forwarded cleanly, all556 inputs unchanged; accepted-root
+  imports/pinned SDKs verified and129 postmerge original contracts passed/3.06s.
+  Actual PR body was updated with this evidence and read back exactly. No model
+  request, package publication, fixture deletion or all-P0/P1 claim in this slice.
 
 ## Discoveries
 
@@ -352,8 +362,11 @@ guidance is not proof of the installed SDK's schema transformation or live05 cau
 Implemented after the construction proof; writer-focused and retained independent
 runtime, full/source/static, package, adversarial, standard Docker/cohort physical
 and fresh-install/public-journey acceptance passed. Counts from overlapping gates
-must not be added. Final independent review passed; Git delivery is pending at
-this pre-publication record. No live qualification is claimed.
+must not be added. Final independent review and exact PR16 Git delivery passed,
+as recorded above after the original pre-publication entry. No live qualification
+is claimed. A subsequent live experiment has its own pre-dispatch ExecPlan.
 Native P0, actual external-repository/cold-start
 and Provider/Harness campaigns remain incomplete. Additional-provider credentials
-are absent in the current trusted process; no new paid request has been made.
+are absent in the current trusted process. No paid request was dispatched under
+this H implementation plan; the separately preregistered live06 outcome is
+recorded in its own plan.

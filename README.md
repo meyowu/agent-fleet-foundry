@@ -326,13 +326,13 @@ and the [security model](docs/SECURITY_MODEL.md) before using sensitive code.
 
 ## Current verification snapshot
 
-The current Engineer terminal-contract candidate sends its unchanged, closed
+The Engineer terminal contract delivered in [PR #16](https://github.com/meyowu/agent-fleet-foundry/pull/16) sends its unchanged, closed
 ImplementationReport schema in strict wire mode. Other terminal compatibility
 modes and all local semantic validation remain unchanged. A fixed local
 terminal-schema error message distinguishes that stage from malformed call
 envelopes without exposing raw provider error data. Focused actual-SDK offline
 tests passed **129 cases**, with independent retained-fixture verification.
-This is not a claim that the latest live failure has been diagnosed or fixed.
+Offline tests alone do not establish successful live task completion.
 
 The current full local offline suite passed **4,296 tests, with 32 skipped**;
 all 4,328 test identities reconcile and all 554 source inputs stayed unchanged.
@@ -375,17 +375,20 @@ independent evidence readback passed; no target code or model ran. See the
 [real-repository report](docs/PUBLIC_REPOSITORY_READINESS.md) for exact discovery
 limitations. These are not six passing business projects or cold starts.
 
-The latest completed real OpenAI mixed-Harness attempt (live05, delivered-source
-PR #13) **did not pass**: CoS/PydanticAI used `openai:gpt-5-nano`, with Engineer/
+The latest completed real OpenAI mixed-Harness attempt (live06, delivered-source
+PR #16) **did not pass**: CoS/PydanticAI used `openai:gpt-5-nano`, with Engineer/
 OpenAI Agents SDK and the uninvoked Verifier/LangGraph explicitly assigned
-`openai:gpt-4.1-nano-2025-04-14`. Five requests reported **17,487 tokens** with
-zero unknown requests. Three Engineer tools ran, including one real Docker pytest
-command that passed, but structured-output validation failed before an accepted
-Engineer report or independent Verifier result. The original bundle remains
-inconclusive and the target patch unapplied; later proven resource cleanup does
-not promote that bundle. The exact invalid field/stage was not retained, and the
-actual charge is unconfirmed. Earlier failed/unknown attempts remain recorded in
-the [canary plan](.agent/plans/2026-09-12-low-cost-harness-canary.md).
+`openai:gpt-4.1-nano-2025-04-14`. Three requests reported **12,961 tokens** with
+zero unknown requests. The Engineer's final report passed structural validation,
+but claimed an edit and passing tests that the evidence did not support: the actual
+patch was empty and its sole real Docker pytest command exited **1**. The control
+plane rejected delivery with `COMMAND_DENIED` before invoking the Verifier.
+This is an evidence-backed rejection, not successful task completion. The original
+bundle remains inconclusive and the target unapplied; later cleanup cannot promote
+it. Actual charge is unconfirmed. See the [post-H canary plan](.agent/plans/2026-09-12-engineer-terminal-live-canary.md)
+for exact observations and independent readback. Failed live05 (five reported
+requests/17,487 tokens, terminal validation failure) and earlier failed/unknown
+attempts remain in the [prior canary plan](.agent/plans/2026-09-12-low-cost-harness-canary.md).
 This does not invalidate the earlier bounded PydanticAI-only qualification, but
 does not qualify mixed Harnesses or other providers. Native P0 finalization remains
 `NOT_GO`; actual external-repository, cold-start and provider/Harness campaigns
