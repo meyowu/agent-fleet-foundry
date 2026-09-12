@@ -4,6 +4,27 @@ This is a living review ledger, not a release declaration or a user guide. It ma
 
 ## Evidence boundary and update rules
 
+### P1 — six real public-repository readiness observations, 2026-09-12
+
+Six immutable original Python/Node repositories were each acquired and statically
+inspected once from delivered c13a3f6. Observed exits1/1/1/1/1/0 mean five incomplete
+and one complete static inspection, not six runnable environments or business-test
+successes. All reports retain environment unverified, baseline not_checked,
+commands0 and execution_authorized=false; no source or Fleet state mutation.
+No model, dependency install, project command or Docker run was performed.
+
+The separate normally completed focused regression passed61 cases/22.993s,
+process exit0/27.410s, with all556 source/README/guide inputs unchanged. Its earlier
+30-second watchdog-aborted trial also recorded61 passing JUnit cases but exited-9;
+it remains an incomplete process gate, not another success. Independent readback
+passed at15:42:41 UTC; Git delivery is pending at this publication record.
+Exact pins, command-discovery limitations, retained
+failures and acceptance records are in the [observation report](PUBLIC_REPOSITORY_READINESS.md)
+and [pre-execution plan](../.agent/plans/2026-09-12-public-repository-readiness.md).
+This does not close native P0 finalization, the24-task campaign, real cold starts
+or wider Provider/Harness qualification; generated Docker baselines below remain
+a separate evidence set.
+
 ### P1-D and P1-E — baseline observations, 2026-09-12
 
 The current candidate adds the existing typed retained observation to
