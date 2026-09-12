@@ -21,6 +21,7 @@ from pydantic_ai.models import Model, override_allow_model_requests
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from typer.testing import CliRunner
 
+import agent_fleet.adapters.runtime.openai_client as openai_transport_module
 import agent_fleet.adapters.runtime.pydantic_ai as runtime_module
 import agent_fleet.cli.app as cli_module
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
@@ -1016,6 +1017,98 @@ def test_cli_runtime_diagnostic_survives_reopened_logs_without_provider_contents
         if path.is_file():
             content = path.read_bytes()
             assert sentinel.encode() not in content and encoded.encode() not in content
+
+
+def test_cli_agents_response_message_matches_reopened_run_failure_without_expanding_agent_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    repository = _repository(tmp_path)
+    state_root = tmp_path / "agents-response-diagnostic-state"
+    variable_name = "FLEET_AGENTS_CLI_DIAGNOSTIC_KEY"
+    sentinel = "agents-cli-diagnostic-secret+/="
+    provider_marker = "raw-provider-response-marker"
+    expected_message = "The Agents SDK response model did not match the selected model."
+    environment = {"AGENT_FLEET_HOME": str(state_root), variable_name: sentinel}
+    monkeypatch.setenv(variable_name, sentinel)
+    for name in (
+        "OPENAI_LOG",
+        "OPENAI_CUSTOM_HEADERS",
+        "OPENAI_AGENTS_DONT_LOG_MODEL_DATA",
+        "OPENAI_AGENTS_DONT_LOG_TOOL_DATA",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    _register_test_project(
+        repository,
+        state_root,
+        runtime_name="openai-agents",
+        provider_model="openai:gpt-test",
+        credential_ref=f"env:{variable_name}",
+        environment={variable_name: sentinel},
+    )
+    sends: list[httpx2.Request] = []
+    clients: list[httpx2.AsyncClient] = []
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        sends.append(received)
+        assert received.url.path == "/v1/responses"
+        assert received.headers["authorization"] == f"Bearer {sentinel}"
+        return httpx2.Response(
+            200,
+            request=received,
+            json={
+                "id": provider_marker,
+                "object": "response",
+                "created_at": 0,
+                "status": "completed",
+                "model": "gpt-test-2026-09-12",
+                "output": [],
+                "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            },
+        )
+
+    def create_client(**kwargs: Any) -> httpx2.AsyncClient:
+        assert kwargs["trust_env"] is False and kwargs["follow_redirects"] is False
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond), **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(openai_transport_module, "DefaultAsyncHttpxClient", create_client)
+    result = runner.invoke(
+        app,
+        ["run", "Fix the bounded fixture", "--project", str(repository), "--json"],
+        env=environment,
+    )
+    assert result.exit_code == 5
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "PROVIDER_FAILED"
+    assert payload["error"]["message"] == expected_message
+    assert payload["error"]["details"]["runtime_diagnostic"] == {
+        "category": "provider_sdk",
+        "cause_category": "response_policy",
+    }
+    run_id = payload["error"]["details"]["run_id"]
+
+    reopened = build_container(state_root)
+    events = reopened.state.list_events(run_id)
+    run_failed = next(event for event in events if event.event_type == "run.failed")
+    agent_failed = next(event for event in events if event.event_type == "agent.failed")
+    assert run_failed.payload["message"] == expected_message
+    assert agent_failed.payload == {
+        "role": "cos",
+        "code": "PROVIDER_FAILED",
+        "runtime_diagnostic": {
+            "category": "provider_sdk",
+            "cause_category": "response_policy",
+        },
+    }
+    snapshot = reopened.budgets.snapshot(run_id)
+    assert snapshot.model_requests == snapshot.unknown_requests == len(sends) == 1
+    assert snapshot.tool_calls == snapshot.outstanding_requests == snapshot.reserved_tokens == 0
+    assert clients and all(client.is_closed for client in clients)
+    assert sentinel not in result.stdout and provider_marker not in result.stdout
+    assert sentinel not in repr(events) and provider_marker not in repr(events)
 
 
 def test_cli_tool_argument_diagnostic_survives_reopened_logs_and_settled_accounting(

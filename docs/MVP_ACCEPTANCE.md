@@ -4,6 +4,62 @@ This is a living review ledger, not a release declaration or a user guide. It ma
 
 ## Evidence boundary and update rules
 
+### P1-G — bounded SDK response diagnostics, 2026-09-12
+
+This separate slice builds on PR10 mergea96eb29 and changes only two runtime
+boundary modules, their two contract suites and CLI diagnostic regressions.
+No new schema, migration, dependency, endpoint, authority, budget or retry is added.
+Fixed messages identify existing response rejection branches through CLI
+error.message and durable run.failed; agent.failed keeps its restricted projection.
+The receipt clears its request-note pointer on context exit while the current
+request retains only the finite local note for projection. Later requests start
+with a new empty note. Original code/category/remediation and timeout/approval/
+cancellation/unknown-accounting behavior remain unchanged.
+
+The first candidate was independently rejected for changing error classification
+and inspecting exception chains. The repair passed fresh independent review at
+10:36:45Z:240 runtime contracts,6 CLI cases,34 actual-SDK differential runs,
+request-note/hostile/precedence probes and two independent raw JSON/usage CLI
+durability cases. LangGraph221 paired/120 precedence/four parse cases remained
+unchanged except allowed messages. All code/test bytes remained identical when
+root fast-forwarded onto PR10. A later documentation-only FAIL identified stale
+review status and imprecise pointer-lifecycle wording; both were corrected without
+changing the accepted code. All failed sources/reports/fixtures remain retained.
+
+The complete current offline gate used a cleared no-key environment with Docker,
+live and fresh-install opt-ins disabled. Expanded argv, JUnit, timestamps and
+source maps are retained privately in sdk-diagnostics-full-01. Counts overlap
+with the focused reviews; do not add them as extra distinct tests.
+
+| Gate | Exact result |
+| --- | --- |
+| `.venv/bin/python -B -m pytest -p pytest_asyncio.plugin -q`, exhaustive disjoint selection | 4211 passed,23 skipped;4234 collected/JUnit identities,0 missing/extra/duplicate/failure/error;548 source inputs unchanged. Collection-to-final-test10:38:46.421Z–11:07:34.823Z,1728.402139s. |
+| Integration partitions | 249/251/265 passed; pytest1689.78/1190.73/1569.24s; process1692.147728/1193.75/1572.03s. |
+| Default-other partition | 3444 passed,23 skipped;1580.73s pytest,1584.00s process. |
+| Original serial cancellation / baseline Session cases | One pass each, process11.032361/20.072817s; original deadlines/assertions unchanged. |
+| `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .` | 473 files formatted; lint passed. |
+| `.venv/bin/mypy src tests scripts/run_live_canary.py` | 392 files passed. |
+| `python -B -m agent_fleet.schemas.generate --check`; `uv lock --check --offline --python .venv/bin/python`; `git diff --check` | All passed; lock99 packages. |
+
+The23 skips are19 explicit Docker,3 fresh-install and1 live-provider cases, not
+passes. Existing JUnit record_property and SDK deprecation warnings are retained.
+Summary SHA256 `9c8a69b729f686be909f9ccc61161c14645826259f66029cf4ab0e1d7ed5cc65`;
+both source maps SHA256
+`3ac12ca38e29123ef48e8e64a4853f6efa2914edb27f2536847443e182801f2b`.
+Final current-README package refresh passed1/2.82s; wheel/sdist/JUnit/README
+identities are recorded in the diagnostics plan. Independent terminal/archive
+readback passed at11:19:00Z in sdk-final-verifier.xX3CAM: fresh collection and all
+six JUnit files reconciled,548 source inputs matched,332 archive/installed runtime
+resources and current README matched,115 schemas and migration journal1–13
+passed. GitHub delivery remains a separate pending gate. This post-release
+bookkeeping leaves accepted code, README and archive bytes unchanged.
+
+No new live request was made by this slice. The mixed-Harness live02 below remains
+failed with unknown Engineer usage; new diagnostics cannot reconstruct its missing
+field-level cause. Same-process Session repair, baseline D/E integration, native
+P0 finalization and broader Provider/Harness campaigns remain separate. No hosted
+CI success, full P0/P1 completion or package publication is implied.
+
 ### P1-B — explicit Canary-selection infrastructure, 2026-09-12
 
 This continuation record supplements, rather than rewrites, the historical

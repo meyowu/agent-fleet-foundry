@@ -11,10 +11,13 @@ marked unknown. The result is `PROVIDER_FAILED` with
 tool call, command evidence, patch or Verifier invocation occurred. The separate
 scripted bootstrap's real Docker receipts are not target-task evidence.
 
-The current fixed diagnostic does not distinguish SDK failed/incomplete output,
-response model/terminal-state rejection, and invalid raw JSON/usage. Exact model
-identity checking also rejects an alias if the provider returns a dated model
-name; this is an offline hypothesis, **not the proven cause of this attempt**.
+The newer finite diagnostics distinguish SDK processing, response model/status/
+error and raw JSON/usage rejection without changing validation or error classes.
+They cannot retroactively identify the field rejected in this older attempt.
+SDK failed/incomplete response processing shares one fixed message because raw
+exception text is not inspected. Exact model identity checking still rejects an
+alias if the provider returns a dated model name; this is an offline hypothesis,
+**not the proven cause of this attempt**.
 Do not weaken these checks, infer unknown usage as zero, or automatically retry.
 The total invoice cannot be derived from the retained local usage records.
 

@@ -752,6 +752,16 @@ Do not record:
 - hidden chain-of-thought;
 - arbitrary host paths when a logical path suffices.
 
+SDK response-policy messages are selected from private finite constants. A fresh
+request-scoped note may retain only the JSON/usage failure enum; it contains no
+provider body, header, model value or exception. The receipt clears its pointer on
+context exit; the current request retains its local note for projection, and the
+next request starts with a new empty note. Original error mapping runs first.
+Only a current `PROVIDER_FAILED` message may be replaced;
+code/category/remediation, timeout/approval/cancellation and usage accounting stay
+unchanged. The message path does not read raw exception chains, grant a retry or
+infer which field failed in an older run that lacked this message.
+
 Runtime failure diagnostics are a finite projection, not raw debugging output.
 The trusted adapter may classify up to eight exception causes with cycle detection
 into fixed categories and a strict numeric HTTP status. Generic diagnostics never

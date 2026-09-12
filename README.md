@@ -303,13 +303,16 @@ and the [security model](docs/SECURITY_MODEL.md) before using sensitive code.
 
 ## Current verification snapshot
 
-On 2026-09-12 the Canary-selection candidate passed the complete local offline
-suite: **4,181 passed, 23 skipped**, with all 4,204 test identities reconciled.
+On 2026-09-12 the bounded SDK-diagnostics candidate passed the complete local
+offline suite: **4,211 passed, 23 skipped**, with all 4,234 test identities reconciled
+and all 548 source inputs unchanged.
 The skips are 19 opt-in Docker, three fresh-install and one live-provider case;
 they are not passes. Formatting, lint, type checking (392 source files), generated
 schemas, offline lock validation and whitespace checks also passed. Exact commands,
-retained failures and evidence identities are in the [continuation plan](.agent/plans/2026-09-11-p0-p1-completion.md)
-and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-b--explicit-canary-selection-infrastructure-2026-09-12).
+retained failures and evidence identities are in the [diagnostics plan](.agent/plans/2026-09-12-sdk-response-diagnostics.md)
+and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-g--bounded-sdk-response-diagnostics-2026-09-12).
+OpenAI Agents SDK and LangGraph now provide fixed response-failure messages without
+changing validation, error codes, permissions, retries or unknown-usage accounting.
 
 A separate real OpenAI mixed-Harness attempt **did not pass**: CoS/PydanticAI
 completed one request, then Engineer/OpenAI Agents SDK failed response-policy

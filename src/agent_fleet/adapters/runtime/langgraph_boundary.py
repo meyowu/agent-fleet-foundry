@@ -8,6 +8,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, TypeVar
 
 from openai import APITimeoutError, OpenAIError
@@ -23,15 +24,26 @@ MAX_ENVELOPE_BYTES = 2 * 1024 * 1024
 _T = TypeVar("_T")
 
 
+class _ResponsePolicyFailure(StrEnum):
+    ENVELOPE = "The LangGraph response envelope did not satisfy the trusted contract."
+    MODEL = "The LangGraph response model did not match the selected model."
+    STATUS = "The LangGraph response status was not completed."
+    ERROR = "The LangGraph response reported an error."
+    USAGE = "The LangGraph response usage did not satisfy the trusted contract."
+
+
 def boundary_error(
     code: ErrorCode = ErrorCode.RUNTIME_OUTPUT_INVALID,
     *,
     category: str = "structured_output",
     cause: str = "unknown",
+    response_failure: _ResponsePolicyFailure | None = None,
 ) -> FleetError:
     return FleetError(
         code,
-        "The bounded LangGraph invocation did not satisfy its trusted contract.",
+        response_failure.value
+        if response_failure is not None
+        else "The bounded LangGraph invocation did not satisfy its trusted contract.",
         "Inspect retained Fleet evidence; no automatic replay is authorized.",
         details={"runtime_diagnostic": {"category": category, "cause_category": cause}},
     )
@@ -229,10 +241,36 @@ def raw_response(encoded: bytes, model: str, redactor: Redactor) -> RawResponse:
         or data.get("object") != "response"
         or type(data.get("id")) is not str
         or not 1 <= len(data["id"]) <= 256
-        or data.get("model") != model
-        or data.get("status") != "completed"
-        or data.get("error") is not None
-        or (data.get("background") is not None and data.get("background") is not False)
+    ):
+        raise boundary_error(
+            ErrorCode.PROVIDER_FAILED,
+            category="provider_sdk",
+            cause="response_policy",
+            response_failure=_ResponsePolicyFailure.ENVELOPE,
+        )
+    if data.get("model") != model:
+        raise boundary_error(
+            ErrorCode.PROVIDER_FAILED,
+            category="provider_sdk",
+            cause="response_policy",
+            response_failure=_ResponsePolicyFailure.MODEL,
+        )
+    if data.get("status") != "completed":
+        raise boundary_error(
+            ErrorCode.PROVIDER_FAILED,
+            category="provider_sdk",
+            cause="response_policy",
+            response_failure=_ResponsePolicyFailure.STATUS,
+        )
+    if data.get("error") is not None:
+        raise boundary_error(
+            ErrorCode.PROVIDER_FAILED,
+            category="provider_sdk",
+            cause="response_policy",
+            response_failure=_ResponsePolicyFailure.ERROR,
+        )
+    if (
+        (data.get("background") is not None and data.get("background") is not False)
         or (data.get("store") is not None and data.get("store") is not False)
         or (
             data.get("parallel_tool_calls") is not None
@@ -242,7 +280,10 @@ def raw_response(encoded: bytes, model: str, redactor: Redactor) -> RawResponse:
         or data.get("previous_response_id") is not None
     ):
         raise boundary_error(
-            ErrorCode.PROVIDER_FAILED, category="provider_sdk", cause="response_policy"
+            ErrorCode.PROVIDER_FAILED,
+            category="provider_sdk",
+            cause="response_policy",
+            response_failure=_ResponsePolicyFailure.ENVELOPE,
         )
     raw = data.get("usage")
     details = {
@@ -261,7 +302,10 @@ def raw_response(encoded: bytes, model: str, redactor: Redactor) -> RawResponse:
         or raw["total_tokens"] < raw["input_tokens"] + raw["output_tokens"]
     ):
         raise boundary_error(
-            ErrorCode.PROVIDER_FAILED, category="provider_sdk", cause="response_policy"
+            ErrorCode.PROVIDER_FAILED,
+            category="provider_sdk",
+            cause="response_policy",
+            response_failure=_ResponsePolicyFailure.USAGE,
         )
     for name, fields in details.items():
         if name in raw and (
@@ -273,7 +317,10 @@ def raw_response(encoded: bytes, model: str, redactor: Redactor) -> RawResponse:
             )
         ):
             raise boundary_error(
-                ErrorCode.PROVIDER_FAILED, category="provider_sdk", cause="response_policy"
+                ErrorCode.PROVIDER_FAILED,
+                category="provider_sdk",
+                cause="response_policy",
+                response_failure=_ResponsePolicyFailure.USAGE,
             )
     usage = UsageRecord(requests=1, **{key: raw[key] for key in counters})
     output = data.get("output")

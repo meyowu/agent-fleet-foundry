@@ -9,8 +9,9 @@ import logging
 import re
 import threading
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,7 @@ import httpx2
 import pytest
 from action_tool_fixtures import make_action_tools, persist_action_tools
 from agents import Agent, FunctionTool, RunState
-from agents.exceptions import UserError
+from agents.exceptions import ModelBehaviorError, UserError
 from agents.models.openai_responses import OpenAIResponsesModel
 from agents.tool_context import ToolContext
 from agents.tracing import processors as trace_processors
@@ -39,7 +40,7 @@ import agent_fleet.adapters.runtime.openai_client as transport_module
 from agent_fleet.adapters.runtime.openai_agents import OpenAIAgentsRuntimeAdapter
 from agent_fleet.application.proposal_tools import ProposalHashToolCatalog
 from agent_fleet.domain.budgets import RunBudgetLimits, RuntimeAttemptStatus
-from agent_fleet.domain.errors import ErrorCode, FleetError
+from agent_fleet.domain.errors import ApprovalRequiredError, ErrorCode, FleetError
 from agent_fleet.domain.models import (
     AgentRole,
     FleetPatch,
@@ -520,6 +521,20 @@ async def test_real_request_accounting_and_unknowns_are_durable(
         if fault.startswith("http"):
             assert isinstance(caught.value, FleetError)
             assert caught.value.details["runtime_diagnostic"]["http_status"] == int(fault[4:])
+        if fault in {
+            "missing",
+            "boolean",
+            "numeric-string",
+            "float",
+            "missing-input",
+            "negative",
+            "inconsistent",
+        }:
+            assert isinstance(caught.value, FleetError)
+            assert (
+                caught.value.message
+                == "The Agents SDK response usage did not satisfy the trusted contract."
+            )
         accounting.finish(
             RuntimeAttemptStatus.CANCELLED if fault == "cancel" else RuntimeAttemptStatus.FAILED
         )
@@ -775,12 +790,37 @@ async def test_hostile_sdk_error_and_notes_never_cross_public_boundary(
 
 
 @pytest.mark.parametrize(
-    "fault", ["model-mismatch", "model-missing", "incomplete", "failed", "status-missing", "error"]
+    ("fault", "expected_message"),
+    [
+        (
+            "model-mismatch",
+            "The Agents SDK response model did not match the selected model.",
+        ),
+        ("model-missing", "The Agents SDK response model did not match the selected model."),
+        ("model-alias", "The Agents SDK response model did not match the selected model."),
+        ("model-dated", "The Agents SDK response model did not match the selected model."),
+        ("incomplete", "The Agents SDK rejected response processing."),
+        ("failed", "The Agents SDK rejected response processing."),
+        ("status-missing", "The Agents SDK response status was not completed."),
+        ("queued", "The Agents SDK response status was not completed."),
+        ("in_progress", "The Agents SDK response status was not completed."),
+        ("error", "The Agents SDK response reported an error."),
+        ("model-and-failed", "The Agents SDK rejected response processing."),
+        (
+            "model-and-invalid-usage",
+            "The Agents SDK response usage did not satisfy the trusted contract.",
+        ),
+        (
+            "model-and-queued",
+            "The Agents SDK response model did not match the selected model.",
+        ),
+    ],
 )
 async def test_response_identity_and_terminal_status_are_checked_before_sdk_projection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     fault: str,
+    expected_message: str,
 ) -> None:
     ledger = _ledger(tmp_path, RunBudgetLimits(max_total_tokens=8192))
     accounting = ledger.store.begin_attempt(ledger.request)
@@ -791,16 +831,31 @@ async def test_response_identity_and_terminal_status_are_checked_before_sdk_proj
         sends += 1
         initial = output(received, [final_call(json.loads(received.content))])
         payload = json.loads(initial.content)
-        if fault == "model-mismatch":
+        if fault in {
+            "model-mismatch",
+            "model-and-failed",
+            "model-and-invalid-usage",
+            "model-and-queued",
+        }:
             payload["model"] = "not-selected"
         elif fault == "model-missing":
             del payload["model"]
+        elif fault == "model-alias":
+            payload["model"] = "gpt-test-alias"
+        elif fault == "model-dated":
+            payload["model"] = "gpt-test-2026-09-12"
         elif fault == "status-missing":
             del payload["status"]
         elif fault == "error":
             payload["error"] = {"code": "server_error", "message": _KEY}
-        else:
+        elif fault in {"incomplete", "failed", "queued", "in_progress"}:
             payload["status"] = fault
+        if fault == "model-and-failed":
+            payload["status"] = "failed"
+        elif fault == "model-and-invalid-usage":
+            payload["usage"]["total_tokens"] = 1
+        elif fault == "model-and-queued":
+            payload["status"] = "queued"
         return httpx2.Response(200, request=received, json=payload)
 
     clients = configure_transport(monkeypatch, respond)
@@ -812,6 +867,18 @@ async def test_response_identity_and_terminal_status_are_checked_before_sdk_proj
             ),
         )
     assert caught.value.code is ErrorCode.PROVIDER_FAILED
+    assert caught.value.message == expected_message
+    assert caught.value.details["runtime_diagnostic"] == {
+        "category": "provider_sdk",
+        "cause_category": (
+            "api_connection" if fault == "model-and-invalid-usage" else "response_policy"
+        ),
+    }
+    assert caught.value.remediation == (
+        "Inspect request accounting and provider availability before retrying explicitly."
+        if fault == "model-and-invalid-usage"
+        else "Inspect the retained Fleet evidence; no automatic replay is authorized."
+    )
     assert _KEY not in str(caught.value) + str(caught.value.details)
     assert caught.value.__cause__ is caught.value.__context__ is None
     accounting.finish(RuntimeAttemptStatus.FAILED)
@@ -821,6 +888,99 @@ async def test_response_identity_and_terminal_status_are_checked_before_sdk_proj
         snapshot.outstanding_requests == snapshot.tool_calls == snapshot.reported_total_tokens == 0
     )
     assert snapshot.unknown_tokens == 4096 and all(client.is_closed for client in clients)
+
+
+@pytest.mark.parametrize(
+    ("encoded", "expected_message"),
+    [
+        (b"{", "The Agents SDK response JSON was invalid."),
+        (b'{"model":"a","model":"b"}', "The Agents SDK response JSON was invalid."),
+        (b'{"usage":NaN}', "The Agents SDK response JSON was invalid."),
+        (b"null", "The Agents SDK response usage did not satisfy the trusted contract."),
+        (b"[]", "The Agents SDK response usage did not satisfy the trusted contract."),
+        (b"{}", "The Agents SDK response usage did not satisfy the trusted contract."),
+    ],
+)
+async def test_raw_json_and_usage_failures_have_fixed_diagnostics_before_sdk_processing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    encoded: bytes,
+    expected_message: str,
+) -> None:
+    ledger = _ledger(tmp_path, RunBudgetLimits(max_total_tokens=8192))
+    accounting = ledger.store.begin_attempt(ledger.request)
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        return httpx2.Response(200, request=received, content=encoded)
+
+    clients = configure_transport(monkeypatch, respond)
+    with pytest.raises(FleetError) as caught:
+        await adapter().invoke(
+            ledger.request,
+            RuntimeInvocationServices(
+                configuration=_CONFIG,
+                tools=EMPTY_RUNTIME_TOOL_CATALOG,
+                accounting=accounting,
+            ),
+        )
+    assert caught.value.code is ErrorCode.PROVIDER_FAILED
+    assert caught.value.message == expected_message
+    assert caught.value.details["runtime_diagnostic"] == {
+        "category": "provider_sdk",
+        "cause_category": "api_connection",
+    }
+    assert (
+        caught.value.remediation
+        == "Inspect request accounting and provider availability before retrying explicitly."
+    )
+    assert caught.value.__cause__ is caught.value.__context__ is None
+    accounting.finish(RuntimeAttemptStatus.FAILED)
+    snapshot = ledger.reopen().snapshot(ledger.run.run_id)
+    assert snapshot.model_requests == snapshot.unknown_requests == sends == 1
+    assert (
+        snapshot.tool_calls == snapshot.outstanding_requests == snapshot.reported_total_tokens == 0
+    )
+    assert snapshot.unknown_tokens == 4096 and all(client.is_closed for client in clients)
+
+
+async def test_hostile_model_behavior_error_is_never_inspected_for_response_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class HostileModelBehaviorError(ModelBehaviorError):
+        def __str__(self) -> str:
+            pytest.fail("ModelBehaviorError text must not be inspected")
+
+        def __repr__(self) -> str:
+            pytest.fail("ModelBehaviorError repr must not be inspected")
+
+    async def reject(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        try:
+            raise ValueError(_KEY)
+        except ValueError as cause:
+            error = HostileModelBehaviorError(_KEY)
+            error.add_note(_KEY)
+            raise error from cause
+
+    monkeypatch.setattr(OpenAIResponsesModel, "_fetch_response", reject)
+    clients = configure_transport(monkeypatch, lambda _: pytest.fail("No request expected"))
+    with pytest.raises(FleetError) as caught:
+        await adapter().invoke(
+            request("cos"),
+            RuntimeInvocationServices(configuration=_CONFIG, tools=EMPTY_RUNTIME_TOOL_CATALOG),
+        )
+    assert caught.value.message == "The Agents SDK rejected response processing."
+    assert caught.value.details["runtime_diagnostic"] == {
+        "category": "provider_sdk",
+        "cause_category": "response_policy",
+    }
+    assert caught.value.__cause__ is caught.value.__context__ is None
+    assert not hasattr(caught.value, "__notes__")
+    assert _KEY not in caught.value.message + str(caught.value.details)
+    assert len(clients) == 1 and clients[0].is_closed
 
 
 async def test_secret_tool_result_never_reaches_sdk_continuation(
@@ -929,20 +1089,117 @@ async def test_raw_usage_receipt_is_request_scoped_and_consumed_once() -> None:
     )
     with pytest.raises(FleetError):
         await receipt.observe(response)
-    with receipt.request():
+    with receipt.request() as accepted_note:
+        assert accepted_note.failure is None
         await receipt.observe(response)
         assert receipt.consume().total_tokens == 3
         with pytest.raises(FleetError):
             receipt.consume()
         with pytest.raises(FleetError):
             await receipt.observe(response)
-    with receipt.request():
+    assert receipt._note is None
+    with receipt.request() as rejected_note:
+        assert rejected_note is not accepted_note and rejected_note.failure is None
         with pytest.raises(FleetError):
             receipt.consume()
         with pytest.raises(FleetError):
             await receipt.observe(httpx2.Response(200, json={"usage": {"total_tokens": 0}}))
+        assert rejected_note.failure is boundary._ResponsePolicyFailure.USAGE
+    assert receipt._note is None
+    with receipt.request() as fresh_note:
+        assert fresh_note is not rejected_note and fresh_note.failure is None
     with pytest.raises(FleetError):
         receipt.consume()
+
+
+def test_safe_error_does_not_read_hostile_exception_chains_and_keeps_precedence() -> None:
+    class HostileApprovalError(ApprovalRequiredError):
+        def __getattribute__(self, name: str) -> Any:
+            if name in {"__cause__", "__context__"}:
+                raise AssertionError("Exception chains must not be read")
+            return super().__getattribute__(name)
+
+    approval = HostileApprovalError("apr_offline")
+    assert boundary.safe_error(approval) is approval
+    assert approval.code is ErrorCode.APPROVAL_REQUIRED
+    assert approval.message == "Run paused for approval request apr_offline."
+    assert not hasattr(boundary, "_ResponsePolicyError")
+    assert not hasattr(boundary, "_trusted_response_policy_error")
+
+    timeout = TimeoutError(_KEY)
+    timeout.__cause__ = boundary.boundary_error(
+        ErrorCode.PROVIDER_FAILED,
+        category="provider_sdk",
+        cause="response_policy",
+        response_failure=boundary._ResponsePolicyFailure.JSON,
+    )
+    mapped_timeout = boundary.safe_error(timeout)
+    assert mapped_timeout.code is ErrorCode.RUNTIME_TIMEOUT
+    assert mapped_timeout.message == (
+        "The bounded Agents SDK invocation did not satisfy its trusted contract."
+    )
+    assert mapped_timeout.details["runtime_diagnostic"] == {
+        "category": "provider_timeout",
+        "cause_category": "unknown",
+    }
+
+    behavior = ModelBehaviorError(_KEY)
+    behavior.__cause__ = timeout.__cause__
+    mapped_behavior = boundary.safe_error(behavior)
+    assert mapped_behavior.code is ErrorCode.RUNTIME_OUTPUT_INVALID
+    assert mapped_behavior.message == (
+        "The bounded Agents SDK invocation did not satisfy its trusted contract."
+    )
+    assert mapped_behavior.details["runtime_diagnostic"] == {
+        "category": "structured_output",
+        "cause_category": "unknown",
+    }
+
+
+@pytest.mark.parametrize("failure", ["timeout", "approval"])
+async def test_current_raw_note_never_overrides_timeout_or_approval(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    original_request = boundary.RawUsageReceipt.request
+
+    @contextmanager
+    def request_with_note(
+        receipt: boundary.RawUsageReceipt,
+    ) -> Iterator[Any]:
+        with original_request(receipt) as note:
+            note.failure = boundary._ResponsePolicyFailure.JSON
+            yield note
+
+    monkeypatch.setattr(boundary.RawUsageReceipt, "request", request_with_note)
+    approval = ApprovalRequiredError("apr_offline")
+
+    async def fail(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise TimeoutError(_KEY) if failure == "timeout" else approval
+
+    monkeypatch.setattr(OpenAIResponsesModel, "get_response", fail)
+    clients = configure_transport(monkeypatch, lambda _: pytest.fail("No request expected"))
+    with pytest.raises(FleetError) as caught:
+        await adapter().invoke(
+            request("cos"),
+            RuntimeInvocationServices(configuration=_CONFIG, tools=EMPTY_RUNTIME_TOOL_CATALOG),
+        )
+    if failure == "timeout":
+        assert caught.value.code is ErrorCode.RUNTIME_TIMEOUT
+        assert caught.value.message == (
+            "The bounded Agents SDK invocation did not satisfy its trusted contract."
+        )
+        assert caught.value.details["runtime_diagnostic"] == {
+            "category": "provider_timeout",
+            "cause_category": "unknown",
+        }
+    else:
+        assert caught.value.code is ErrorCode.APPROVAL_REQUIRED
+        assert caught.value.message == approval.message
+        assert caught.value.remediation == approval.remediation
+        assert caught.value.details == approval.details
+    assert caught.value.message != "The Agents SDK response JSON was invalid."
+    assert len(clients) == 1 and clients[0].is_closed
 
 
 @pytest.mark.parametrize("kind", ["gateway", "proposal"])
@@ -1222,6 +1479,10 @@ async def test_nested_wire_usage_never_reaches_value_bearing_sdk_serializers(
     assert not any(issubclass(item.category, UserWarning) for item in captured)
     assert all(_KEY not in str(item.message) for item in captured)
     assert _KEY not in str(caught.value) + str(caught.value.details) + caplog.text
+    assert (
+        caught.value.message
+        == "The Agents SDK response usage did not satisfy the trusted contract."
+    )
     assert caught.value.__cause__ is caught.value.__context__ is None
     accounting.finish(RuntimeAttemptStatus.FAILED)
     snapshot = ledger.reopen().snapshot(ledger.run.run_id)
