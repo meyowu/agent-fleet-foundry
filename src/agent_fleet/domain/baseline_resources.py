@@ -12,6 +12,7 @@ from agent_fleet.domain.baseline import (
     BaselineAuthorizationId,
     BaselineCanonicalSnapshot,
     BaselineClaimId,
+    BaselineCommandObservation,
     BaselineExecution,
     BaselineExecutionId,
     BaselineId,
@@ -570,4 +571,60 @@ class BaselineShow(BaselineModel):
     review: BaselineReview
     execution: BaselineExecution
     report: BaselineReport | None
+    observation: BaselineCommandObservation | None
     recovery_scope_sha256: Sha256 | None
+
+    @model_validator(mode="after")
+    def exact_evidence(self) -> Self:
+        review = self.review
+        execution = self.execution
+        report = self.report
+        observation = self.observation
+        if (
+            execution.baseline_id != review.baseline_id
+            or execution.project_id != review.project_id
+            or execution.review_id != review.review_id
+            or execution.review_sha256 != review.digest
+            or (report is None) != (execution.current_report_sha256 is None)
+            or (
+                report is not None
+                and (
+                    execution.current_report_sha256 != report.digest
+                    or report.baseline_id != review.baseline_id
+                    or report.project_id != review.project_id
+                    or report.review_id != review.review_id
+                    or report.review_sha256 != review.digest
+                    or report.command_sha256 != review.command.sha256
+                    or report.approved_source_sha256 != review.approved_source_sha256
+                )
+            )
+            or (
+                observation is not None
+                and (
+                    observation.baseline_id != review.baseline_id
+                    or observation.project_id != review.project_id
+                    or observation.review_id != review.review_id
+                    or observation.review_sha256 != review.digest
+                    or observation.command_sha256 != review.command.sha256
+                    or observation.approved_source_sha256 != review.approved_source_sha256
+                    or execution.owner_claim_id != observation.claim_id
+                )
+            )
+        ):
+            raise ValueError("baseline show evidence identities are inconsistent")
+        reference = None if report is None else report.observation
+        if reference is None:
+            if report is not None and observation is not None:
+                raise ValueError("baseline show report omits its retained observation")
+        elif observation is None or (
+            reference.observation_id != f"bobs_{observation.digest}"
+            or reference.baseline_id != observation.baseline_id
+            or reference.execution_id != observation.execution_id
+            or reference.record_sha256 != observation.digest
+            or report is None
+            or report.authorization_id != observation.authorization_id
+            or report.claim_id != observation.claim_id
+            or report.observed_exit_code != observation.exit_code
+        ):
+            raise ValueError("baseline show observation reference is inconsistent")
+        return self

@@ -147,10 +147,12 @@ jobs:
           docker build --pull -t agent-fleet-runner:0.1.0-py314-v1 src/agent_fleet/assets/runner
           docker image inspect agent-fleet-runner:0.1.0-py314-v1 --format '{{.Id}}'
           uv run python scripts/prepare_release_dependencies.py --destination "${RUNNER_TEMP}/fleet-wheelhouse"
-      - name: Native Docker boundary and fresh installed public journey
+      - name: Standard Docker coverage and fresh installed public journey
         env:
           AGENT_FLEET_ENABLE_DOCKER_TESTS: "1"
           AGENT_FLEET_DOCKER_TEST_IMAGE: agent-fleet-runner:0.1.0-py314-v1
           AGENT_FLEET_ENABLE_INSTALL_TESTS: "1"
           AGENT_FLEET_TEST_WHEELHOUSE: ${{ runner.temp }}/fleet-wheelhouse
-        run: uv run --offline pytest -q -m docker_integration tests/docker tests/release
+        run: >-
+          uv run --offline pytest -q -m docker_integration tests/docker tests/release
+          --ignore=tests/docker/test_business_baseline_cohort.py

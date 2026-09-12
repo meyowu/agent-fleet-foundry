@@ -2,7 +2,7 @@
 
 ## Mixed-Harness real OpenAI Canary is not yet qualified
 
-The bounded 2026-09-12 selection using PydanticAI for CoS, OpenAI Agents SDK for
+The retained live02 attempt on 2026-09-12 used PydanticAI for CoS, OpenAI Agents SDK for
 Engineer and LangGraph for Verifier, all selecting `openai:gpt-5-nano`, failed
 at the Engineer response boundary. The target CoS completed one real request
 with 8,758 reported tokens; the Engineer's first request was reserved and then
@@ -27,7 +27,36 @@ infrastructure passed its independent offline gate, but this does not qualify
 the mixed-Harness path or Anthropic/Google providers. See the [selection guide](LIVE_CANARY_SELECTION.md)
 and [acceptance ledger](MVP_ACCEPTANCE.md#p1-b--explicit-canary-selection-infrastructure-2026-09-12).
 
-## Resolved in the current candidate: same-process Docker resume
+A separately authorized live03 replay on delivered PR12 also failed. Its new
+finite CLI and durable failure message agree: "The Agents SDK response model did
+not match the selected model." CoS completed two requests with21,449 reported
+tokens; Engineer usage remains unknown, and the target still has no tools,
+commands, patch or Verifier result. This identifies the rejected field for03,
+not the actual returned model name or the cause of02. Exact terminal/independent
+readback status is recorded in the acceptance ledger. No validation was relaxed
+and no automatic retry or model substitution followed.
+
+## Baseline observations are not model or campaign qualification
+
+The current D/E candidate implements retained bounded/redacted observation output
+in standalone CLI and Session. Its full offline gate passed4291/32, and six
+generated Python/Node real-Docker observations passed independent physical
+readback. The business exits are0/2/1/0/1/1, not six successful business tests.
+Independent full/source/static readback also passed. The separate current-D
+standard-Docker/adversarial/installation/package/delivery gates are tracked in
+the [D/E ledger](MVP_ACCEPTANCE.md#p1-d-and-p1-e--baseline-observations-2026-09-12).
+This is local candidate evidence, not an absent baseline feature or an external
+six-repository/24-task campaign. Historical F gates do not qualify this D/E revision.
+
+Generic campaign manifests, reservation/execution machinery and cold-start slots
+already exist. Actual frozen external-repository/oracle/profile campaigns and
+three real cold starts remain unqualified; another generic controller is not the
+missing proof. Original-DB finalization still rejects with
+`write_boundary_unqualified`; native P0 remains `NOT_GO`. Additional
+Anthropic/Google credentials and provider/Harness campaigns are not supplied or
+qualified by these results. No automatic paid retry follows.
+
+## Resolved and delivered in PR12: same-process Docker resume
 
 The exact retained-sandbox restoration repair passed independent physical
 acceptance on 2026-09-12: 22 Docker cases passed, with 22 ordinary cases
@@ -35,9 +64,12 @@ deselected and no failures, errors or skips. The public same-process terminal
 journey now reaches verified completion after separate Engineer/Verifier
 approvals and real pytest receipts. Retained and recreated conversation cases
 also pass; originals change only after the existing explicit public patch apply.
-The current integrated full suite passed4246/26 with independent exact-identity
+The historical F integrated full suite passed4246/26 with independent exact-identity
 review; all six static gates and the separate806-case offline adversarial gate
-passed. Final artifact and GitHub delivery records are separate. This is bounded scripted-runtime Docker
+passed. Final artifact acceptance passed at12:48:11.175677Z and
+[PR #12](https://github.com/meyowu/agent-fleet-foundry/pull/12) merged normally at
+2026-09-12T12:52:42Z. Its exact archive and Git identities remain historical F
+evidence, not current D/E package qualification. This is bounded scripted-runtime Docker
 evidence, not live-provider qualification; see [P1-F acceptance](MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12).
 
 Restoration reuses only the exact persisted handle/specification and held

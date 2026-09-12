@@ -7,7 +7,9 @@ import pytest
 from business_baseline_fixtures import BaselineFixture, baseline_fixture
 
 from agent_fleet.domain.baseline import (
+    BaselineCommandObservation,
     BaselineExecution,
+    BaselineObservationRef,
     BaselineReport,
     baseline_id,
     canonical,
@@ -57,8 +59,65 @@ def _report(h: BaselineFixture) -> tuple[BaselineCleanupClaim, BaselineReport]:
     return cleanup, report
 
 
+def test_show_returns_only_validated_observation_after_capture(tmp_path: Path) -> None:
+    h = baseline_fixture(tmp_path)
+    planned = h.store.show(h.review.review_id)
+    assert planned.report is None
+    assert planned.observation is None
+    claim = h.claim()
+    observation = h.dispatched_observation(claim)
+    snapshot = h.store.baseline_resource_snapshot(h.review.baseline_id)
+    h.store.record_command_observation(
+        claim, snapshot.execution.revision, observation.canonical_bytes()
+    )
+    captured = h.store.show(h.review.baseline_id)
+    assert captured.report is None
+    assert captured.observation == observation
+
+
+def test_show_rejects_hash_consistent_observation_resource_substitution(tmp_path: Path) -> None:
+    h = baseline_fixture(tmp_path)
+    claim = h.claim()
+    observation = h.dispatched_observation(claim)
+    snapshot = h.store.baseline_resource_snapshot(h.review.baseline_id)
+    h.store.record_command_observation(
+        claim, snapshot.execution.revision, observation.canonical_bytes()
+    )
+    data = observation.model_dump(mode="json", by_alias=True)
+    data["project_id"] = "prj_" + "9" * 32
+    changed = BaselineCommandObservation.model_validate_json(canonical(data))
+    with sqlite3.connect(h.state.database_path) as connection:
+        connection.execute(
+            "UPDATE baseline_command_observations "
+            "SET record_id=?,record_sha256=?,payload=? WHERE baseline_id=?",
+            (
+                "bobs_" + changed.digest,
+                changed.digest,
+                changed.canonical_bytes(),
+                h.review.baseline_id,
+            ),
+        )
+    with pytest.raises(FleetError):
+        h.store.show(h.review.baseline_id)
+
+
+def test_show_rejects_report_whose_observation_was_removed(tmp_path: Path) -> None:
+    h = baseline_fixture(tmp_path)
+    cleanup, report = _report(h)
+    snapshot = h.store.validate_cleanup(cleanup)
+    h.store.publish_baseline_report(cleanup, snapshot.execution.revision, report.canonical_bytes())
+    with sqlite3.connect(h.state.database_path) as connection:
+        connection.execute(
+            "DELETE FROM baseline_command_observations WHERE baseline_id=?",
+            (h.review.baseline_id,),
+        )
+    with pytest.raises(FleetError):
+        h.store.show(h.review.baseline_id)
+
+
 @pytest.mark.parametrize(
-    "mutation", ["exit_code", "cleanup_complete", "claim_id", "scope", "predecessor"]
+    "mutation",
+    ["exit_code", "cleanup_complete", "claim_id", "scope", "predecessor", "observation_ref"],
 )
 def test_readback_repeats_report_fact_validation(tmp_path: Path, mutation: str) -> None:
     h = baseline_fixture(tmp_path)
@@ -77,8 +136,16 @@ def test_readback_repeats_report_fact_validation(tmp_path: Path, mutation: str) 
         data["claim_id"] = baseline_id("bclaim")
     elif mutation == "scope":
         data["cleanup_scope_sha256"] = "0" * 64
-    else:
+    elif mutation == "predecessor":
         data["predecessor_report_sha256"] = original.digest
+    else:
+        assert original.observation is not None
+        data["observation"] = BaselineObservationRef(
+            observation_id="bobs_" + "0" * 64,
+            baseline_id=original.observation.baseline_id,
+            execution_id=original.observation.execution_id,
+            record_sha256="0" * 64,
+        ).model_dump(mode="json", by_alias=True)
     corrupted = BaselineReport.model_validate_json(canonical(data))
     execution = good.execution.model_dump(mode="json", by_alias=True)
     execution["current_report_sha256"] = corrupted.digest

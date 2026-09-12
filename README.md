@@ -12,6 +12,7 @@ result. You stay in control of permissions and changes to your checkout.
 - **Isolated execution:** run project commands in local Docker containers with networking disabled.
 - **Reviewable results:** inspect the diff, command results and verification gaps before applying.
 - **Persistent sessions:** return to a project conversation and inspect previous tasks.
+- **Model-free baseline observations:** explicitly approve an existing check and inspect its retained output without asking an agent to repair the project.
 
 This is an early-stage developer tool. Start with the small learning project below.
 Live models can fail or exhaust their budget; an agent saying “done” is not proof
@@ -223,12 +224,9 @@ repeat approve/resume for the same `FLEET_RUN_ID`. Do not rerun the original tas
 resolve an approval; that would start another task and may incur more model charges.
 
 Each command above exits before the next command runs. This is the validated
-quickstart route. The current candidate also passed independent real-Docker
-same-process Session restoration checks and the complete integrated offline gate
-(4246 passed, 26 explicit opt-in skips). Final artifact and GitHub delivery records
-are maintained separately in the [acceptance ledger](docs/MVP_ACCEPTANCE.md).
-See the [Session guide](docs/USER_GUIDE.md)
-and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12).
+quickstart route. Same-process Session restoration is also supported, with exact
+checkpoint and permission checks preserved. See the [Session guide](docs/USER_GUIDE.md)
+and its [historical F acceptance](docs/MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12).
 
 ### 8. Review and apply the result
 
@@ -270,6 +268,26 @@ then the `permissions`, `approve`, `resume`, `status`, and `patch` commands.
 `fleet run --help` lists cumulative request, token, tool and time limits. Token
 limits are usage accounting, not a guaranteed billing cap.
 
+## Observe an existing check without a model
+
+For a registered, clean committed project with a prepared local Docker image,
+`fleet baseline` can run one already configured verification command after exact
+one-time consent. Review the command and boundary, then substitute the returned
+review ID and hash:
+
+```bash
+fleet baseline plan . --command COMMAND_ID --json
+fleet baseline run REVIEW_ID --allow-once --review-sha256 REVIEW_SHA256 --json
+fleet baseline show REVIEW_ID --json
+```
+
+The retained `observation` exposes bounded, redacted stdout/stderr, exit code,
+hashes and truncation flags. Viewing it does not rerun the command. A missing
+dependency or failing assertion remains a nonzero business result; this produces
+no repair patch or model-completion claim. It does not install dependencies or
+prepare an image for you. See the [baseline and Session instructions](docs/USER_GUIDE.md#不调用模型的项目基线检查standalone-cli)
+for scope, consent and recovery, and the [six generated repository examples](docs/BASELINE_COHORT.md).
+
 ## Data and safety
 
 A real model receives selected source excerpts, task context and tool results.
@@ -300,6 +318,7 @@ and the [security model](docs/SECURITY_MODEL.md) before using sensitive code.
   test configuration and its qualification limits.
 - [Known issues](docs/KNOWN_ISSUES.md): current operational limitations.
 - [Full user guide (简体中文)](docs/USER_GUIDE.md): model profiles, sessions, permissions and recovery.
+- [Baseline cohort](docs/BASELINE_COHORT.md): six generated Python/Node observations and their explicit Docker selection.
 - [Architecture](docs/ARCHITECTURE.md) and [configuration](docs/CONFIG_AND_SCHEMAS.md).
 - [Contributing](CONTRIBUTING.md): local quality checks and contribution workflow.
 - [Development history](docs/DEVELOPMENT_HISTORY.md), [acceptance ledger](docs/MVP_ACCEPTANCE.md) and [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
@@ -307,27 +326,30 @@ and the [security model](docs/SECURITY_MODEL.md) before using sensitive code.
 
 ## Current verification snapshot
 
-The 2026-09-12 Session-restoration candidate, built on
-[PR #11](https://github.com/meyowu/agent-fleet-foundry/pull/11), passed the complete local
-offline suite: **4,246 passed, 26 skipped**, with all 4,272 test identities reconciled
-and all 548 source inputs unchanged. Independent full/static/source review passed.
-The skips are 22 opt-in Docker, three fresh-install and one live-provider case;
-they are not passes. Formatting (474 files), lint, type checking (392 source files),
+The 2026-09-12 baseline-observation candidate, built on
+[PR #12](https://github.com/meyowu/agent-fleet-foundry/pull/12), passed the complete local
+offline suite: **4,291 passed, 32 skipped**, with all 4,323 test identities reconciled
+and all 554 source inputs unchanged. The skips are 28 opt-in Docker cases
+(including the six baseline cohort cases), three fresh-install and one live-provider
+case; they are not passes. Formatting (479 files), lint, type checking (396 source files),
 generated schemas, offline lock validation (99 packages) and whitespace checks
-also passed. Exact commands, times, retained failures and evidence identities are
-in the [restoration plan](.agent/plans/2026-09-12-session-docker-resume.md)
-and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12).
+also passed. Independent full/source/static readback confirmed these results.
+The original two timing-sensitive cases ran serially after all heavy
+groups stopped; their passes are included in 4,291, not added to it.
 
-The same candidate's separately enabled Docker gate passed **22 tests, 22 deselected,
-zero failures/errors/skips**. Independent evidence/cleanup readback confirmed the
-bounded same-process, retained-provider and recreated-provider journeys, exact
-approvals and explicit patch apply. Invalid build/test environments still refuse
-verified completion. A separate two-case timing-sensitive replay also passed after
-the heavy jobs stopped; it overlaps the full count. These are scripted-agent
-Docker journeys, not live-model reliability. Package/fresh-install verification,
-standalone offline adversarial replay and GitHub delivery are separate gates with
-their own exact results in the linked plan and ledger.
+A separate current-source real-Docker cohort passed **six cases in 437.84 seconds**,
+with independent evidence and exact-scope cleanup readback. The generated Python
+and Node repositories produced actual business exit codes **0/2/1/0/1/1**. All six
+observations were verified, but only two business checks passed. These are six
+generated fixtures with scripted bootstrap agents, not six external projects,
+live-model reliability or the 24-task evaluation campaign. Exact independent,
+standard-Docker, adversarial, package/installation and Git delivery records are
+maintained separately in the [baseline delivery plan](.agent/plans/2026-09-12-baseline-delivery.md)
+and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-d-and-p1-e--baseline-observations-2026-09-12).
 
+PR #12's delivered Session-restoration slice had its own **4,246-pass/26-skip**
+offline result and separately qualified 22-case Docker gate; those historical
+F results do not qualify newer baseline artifacts or replace their gates.
 PR #11's earlier 4,211-pass/23-skip baseline is preserved in the
 [diagnostics plan](.agent/plans/2026-09-12-sdk-response-diagnostics.md), not added to
 the current count. OpenAI Agents SDK and LangGraph provide fixed response-failure
@@ -339,8 +361,9 @@ completed one request, then Engineer/OpenAI Agents SDK failed response-policy
 validation. Verifier/LangGraph did not run; the target produced no command or
 patch evidence. One request's usage and the total charge remain unknown.
 This does not invalidate the earlier bounded PydanticAI-only qualification, but
-does not qualify mixed Harnesses or other providers. Broader P0/P1 proof gaps,
-including baseline D/E follow-ups and native P0 qualification, remain open;
+does not qualify mixed Harnesses or other providers. Native P0 finalization remains
+`NOT_GO`; actual external-repository, cold-start and provider/Harness campaigns
+remain unqualified. Existing campaign machinery is not proof that those runs occurred;
 see [known issues](docs/KNOWN_ISSUES.md).
 No GitHub Actions success is claimed for these locally verified changes.
 

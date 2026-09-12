@@ -70,6 +70,21 @@ is fenced and ordered; an incomplete execution prevents sandbox/worktree removal
 Stopped-owner recovery conservatively rejects present, reused or inaccessible PIDs,
 and only cleans the reviewed old resource set. It never resumes execution.
 
+Public BaselineShow includes the existing typed retained observation as a nullable
+field, loaded and validated in the same read transaction as its review, execution,
+report and resources. Missing/corrupt/mismatched references fail closed. Standalone
+and Session projections expose only the already bounded redacted/control-escaped
+output and retained hashes; they never read raw captures or redispatch a command
+for display. CLI startup may still initialize or migrate state. Showing a nonzero
+observation does not turn it into model completion or business-test success.
+
+The optional six-repository Docker cohort is separately selected by an explicit
+prepared Python/Node image. Ordinary adversarial Docker reports that cohort path
+as excluded; explicit selection retains strict no-skip/no-error/nonempty gates.
+No ambient image variable silently expands the selected execution scope. The
+cohort helper treats watchdog, interruption and negative signal exit as unknown
+descendant quiescence and preserves state without automatic show/recovery.
+
 Migration13 preserves existing Run schemas, not old-binary opening compatibility.
 Normal older migrating composition rejects the newer state; do not downgrade
 user databases. Baseline BLOB growth can exceed the unchanged evaluation capture

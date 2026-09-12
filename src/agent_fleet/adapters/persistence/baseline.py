@@ -1283,7 +1283,10 @@ class SqliteBaselineStore:
             return self._observation(connection, baseline_id)
 
     def _report(
-        self, connection: sqlite3.Connection, execution: BaselineExecution
+        self,
+        connection: sqlite3.Connection,
+        execution: BaselineExecution,
+        observation: BaselineCommandObservation | None,
     ) -> BaselineReport | None:
         if execution.current_report_sha256 is None:
             return None
@@ -1294,11 +1297,15 @@ class SqliteBaselineStore:
             f"brpt_{execution.current_report_sha256}",
             BaselineReport,
         )
-        self._validate_report_facts(connection, report, execution)
+        self._validate_report_facts(connection, report, execution, observation)
         return report
 
     def _validate_report_facts(
-        self, connection: sqlite3.Connection, report: BaselineReport, execution: BaselineExecution
+        self,
+        connection: sqlite3.Connection,
+        report: BaselineReport,
+        execution: BaselineExecution,
+        observation: BaselineCommandObservation | None,
     ) -> None:
         review = self._review(connection, execution.review_id)
         owner = self._owner(connection, execution.baseline_id)
@@ -1319,7 +1326,6 @@ class SqliteBaselineStore:
             or report.completed_at < scope.created_at
         ):
             raise unavailable()
-        observation = self._observation(connection, execution.baseline_id)
         if (
             report.observation != self._observation_ref(observation)
             or report.observed_exit_code != (None if observation is None else observation.exit_code)
@@ -1441,7 +1447,7 @@ class SqliteBaselineStore:
                 )
             ):
                 raise unavailable()
-            self._validate_report_facts(connection, report, execution)
+            self._validate_report_facts(connection, report, execution, observation)
             self._insert(connection, "baseline_reports", report)
             self._bump(
                 connection, execution, status=report.status, current_report_sha256=report.digest
@@ -1463,12 +1469,17 @@ class SqliteBaselineStore:
             else:
                 execution = self._execution(connection, identity)
                 review = self._review(connection, execution.review_id)
-            report = self._report(connection, execution)
+            observation = self._observation(connection, execution.baseline_id)
+            report = self._report(connection, execution, observation)
             recovery = (
                 self._snapshot(connection, execution.baseline_id).digest
                 if execution.owner_claim_id is not None
                 else None
             )
             return BaselineShow(
-                review=review, execution=execution, report=report, recovery_scope_sha256=recovery
+                review=review,
+                execution=execution,
+                report=report,
+                observation=observation,
+                recovery_scope_sha256=recovery,
             )

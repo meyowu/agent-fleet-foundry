@@ -99,6 +99,14 @@ to the project tree are not generally supported. Physical Python/Node and
 Session/cold-start qualification remain separate acceptance work.
 See [ADR0011](adr/0011-reviewed-model-free-business-baselines.md).
 
+`BaselineShow` includes the existing typed retained observation as an additive
+nullable field. Persistence loads it once in the same read transaction as the
+review/execution/report and validates report references, identities and resource
+facts before projection. Standalone CLI and Session expose the same bounded,
+redacted/control-escaped output and retained hashes; they never fetch raw capture
+or redispatch a command to display it. Missing or inconsistent evidence fails
+closed. This adds no table, migration, permission scope or execution authority.
+
 The foreground Session now shares this controller through a lazy factory retaining
 the existing Redactor. `/baseline plan` stores a process-local typed review;
 `/confirm` calls authorization only; `/baseline run` consumes that exact grant.

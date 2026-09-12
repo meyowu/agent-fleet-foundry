@@ -118,7 +118,7 @@ and the [living ExecPlan](../.agent/plans/2026-09-11-p0-p1-completion.md).
 Infrastructure acceptance does not satisfy the new-provider six-task qualification
 sets, three cross-provider tasks or three mixed-Harness tasks by itself.
 
-The example's mixed-Harness selection was attempted once after the complete
+In the retained live02 attempt, the example's mixed-Harness selection ran after the complete
 offline gate on 2026-09-12. CoS/PydanticAI completed, then Engineer/OpenAI Agents
 SDK failed its response-policy check; Verifier/LangGraph did not execute. The
 target executed no tools and produced no patch. One request has unknown usage,
@@ -126,3 +126,11 @@ so the total charge cannot be established from the local report. The launcher
 retained this failure and complete cleanup evidence without automatic retry.
 The specific rejected response field is unresolved; do not remove identity,
 terminal-status or usage validation to make this example pass.
+
+The separately authorized live03 diagnostic replay used the same selection on
+delivered PR12. It again stopped before Engineer tools/patch/Verifier; the new
+finite failure message identifies a response-model mismatch. The actual returned
+model identity was not retained. CoS reported two requests/21,449 tokens and
+Engineer usage remains unknown. This does not retroactively resolve live02 or
+establish an alias-to-snapshot mapping. Current stopped/independent results remain
+in the acceptance ledger; no automatic model substitution or retry is authorized.

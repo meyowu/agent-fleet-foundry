@@ -39,6 +39,8 @@ _LINUX_DARWIN_SKIPS = {
     "test_unreproducible_requested_metadata_fails_before_exchange",
     "test_changed_backup_xattr_is_not_normalized_or_deleted_during_cleanup",
 }
+_BASELINE_COHORT_ENV = "AGENT_FLEET_BASELINE_COHORT_IMAGE"
+_BASELINE_COHORT_TEST = "tests/docker/test_business_baseline_cohort.py"
 
 
 def main() -> None:
@@ -50,9 +52,17 @@ def main() -> None:
     parser.add_argument(
         "--image", help="Explicit already-local runner image; never pulled by this script"
     )
+    parser.add_argument(
+        "--baseline-cohort-image",
+        help="Explicit already-local Python/Node cohort image; never pulled by this script",
+    )
     args = parser.parse_args()
     if args.docker != bool(args.image):
         parser.error("--docker and --image must be supplied together")
+    if args.baseline_cohort_image is not None and not args.baseline_cohort_image.strip():
+        parser.error("--baseline-cohort-image must be non-empty")
+    if args.baseline_cohort_image is not None and not (args.docker and args.image):
+        parser.error("--baseline-cohort-image requires --docker and --image")
     output = args.output
     if (
         not output.is_absolute()
@@ -75,9 +85,16 @@ def main() -> None:
             "AGENT_FLEET_ENABLE_DOCKER_TESTS": "1" if args.docker else "0",
         }
     )
+    baseline_cohort_selected = args.baseline_cohort_image is not None
+    excluded_test_paths: list[str] = []
     selection = ["-m", "docker_integration", "tests/docker"] if args.docker else list(_OFFLINE)
+    if args.docker and not baseline_cohort_selected:
+        excluded_test_paths.append(_BASELINE_COHORT_TEST)
+        selection.append(f"--ignore={_BASELINE_COHORT_TEST}")
     if args.image:
         environment["AGENT_FLEET_DOCKER_TEST_IMAGE"] = args.image
+    if args.baseline_cohort_image is not None:
+        environment[_BASELINE_COHORT_ENV] = args.baseline_cohort_image
     started = time.monotonic()
     result = subprocess.run(
         [
@@ -134,6 +151,8 @@ def main() -> None:
         "pytest_exit_code": result.returncode,
         "expected_platform_skips": expected_platform_skips,
         "unexpected_skips": unexpected_skips,
+        "baseline_cohort_selected": baseline_cohort_selected,
+        "excluded_test_paths": excluded_test_paths,
         "selection": selection,
         "counts": counts,
         "source_manifest_sha256": hashlib.sha256(

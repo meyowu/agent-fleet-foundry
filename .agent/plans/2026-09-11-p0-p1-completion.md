@@ -43,16 +43,19 @@ and exact historical quality/live evidence are in README and
 Historical4093 default passes/23 skips, Docker29, install3 and live1 are not
 automatically acceptance for future source changes.
 
-Current delivered baseline is PR11 merge `5b09fea1c5fdb79066498496852adbb9e5239773`.
-F's identical independently reviewed restoration bytes are integrated atop it on
-`codex/p1-session-restore-delivery`; physical03 is accepted and its current
-integrated full gate `session-current-full-01` passed4246/26 with4272 exact
-identities/548 unchanged inputs. Current standard Docker passed22, offline
-adversarial806 and final-doc distribution1 passed. Final fresh-install artifact
-review passed at12:48:11.175677Z; final-doc fresh-install3/270.05s passed.
-F GitHub delivery remains separate.
-See the separate F and G plans
-for immutable evidence identities; neither result qualifies all P0/P1 work.
+Current delivered baseline is F/PR12 merge
+`e45d7e34bb01de94bada6fdd6a0a718c94af2f37`. F's historical full4246/26,
+standard Docker22, offline adversarial806, final-doc distribution1 and fresh-install3
+passed with final artifact acceptance12:48:11.175677Z; PR12 delivery completed
+at12:52:42Z. Its frozen README/guide and archives are not current D/E packages.
+The separate D/E candidate is integrated atop this merge with554 inputs exactly
+matching its stopped full4291/32 freeze (4323 identities). Current six-cohort
+physical readback, six static gates and independent full/source readback passed.
+Final package/adversarial/standard-Docker/installed runners have stopped PASS;
+docs preflight, package, standard-Docker physical, offline-adversarial and installed
+independent reviews passed. Final terminal documentation/diff review passed at
+13:49:47.091626Z; Git delivery remains separate and pending. See the D/E,
+F and G plans for exact identities; none qualifies all P0/P1 work.
 
 `EvaluationOutcomeService.record_final_outcome` and the persistence terminal
 entry fail before state access with `write_boundary_unqualified`. The accepted
@@ -404,6 +407,109 @@ independent verification never edits its candidate or weakens the oracle.
 
 ## Progress
 
+- [x] Separate manually authorized finite live03 on clean delivered PR12, not D/E,
+  stopped NOT_PASSED:13:33:03.149828Z–13:34:07.112382Z,63.962s wall;
+  pytest1 failed/62.23s,13 warnings. Target `run_8f2d52ea5c4c4648a8deb56b543beded`:
+  CoS completed two requests (14911 input/6538 output/21449 total tokens), Engineer
+  one reserved UNKNOWN response; three request reservations/two agent invocations,
+  zero target tools/commands/patch/Verifier. Exact CLI/run.failed diagnostic:
+  `The Agents SDK response model did not match the selected model.`; unchanged
+  `PROVIDER_FAILED`/`provider_sdk`/`response_policy`. The live03 model-identity
+  branch is confirmed, but raw returned model is unretained/unknown; a dated
+  snapshot is not a proven cause and live02 is not retroactively disambiguated.
+  Independent failed-attempt physical readback passed/released13:44:44.347799Z:
+  mixed-live03-readback.tm0PwoSS/VERDICT.md SHA256
+  bb8ef5f08f37d739ee05627ae15690f424b93bdadb97b0925a70b18c2dc2b47a.
+  All8 leases released/3 workspaces absent/2 bootstrap native IDs absent/exact
+  namespace empty;140 fixtures and PRIMARY550/BASELINE556 inputs unchanged.
+  All33 stored artifacts validate,21 run exports match,12 project-scoped remain
+  separate; the verifier's initial count-assumption failure is retained.
+  Original bundle remains inconclusive/cleanup_unproven, supplemented but not
+  rewritten by later cleanup. Bootstrap is not target proof or zero-cost usage.
+  No D/E source changed. Initial launcher03 raw/canonical selection-hash preflight
+  failed before credentials/output/request; retain mixed-live03-preflight-failure.md.
+  Separately authorized03b used unchanged selection. Live02 stays FAILED with
+  unknown charge; no automatic attempt04 or model change is implied.
+- [x] Current D/E final runners stopped exit0 with no failure/error/skip and all
+  556 source/README/guide inputs unchanged: package1/3.93s (wrapper5.919342995s),
+  offline adversarial806/277.11s (279.785661936s), standard Docker22/339.43s,
+  22 deselected with explicit cohort exclusion (342.505614996s), installed3/379.37s
+  (381.090124846s). Exact run/JUnit/manifest hashes are in the D/E plan; counts
+  overlap4291 and are not added to it. Docs preflight PASS13:21:14.092425Z,
+  de-docs-preflight.YeFP53qX SHA256
+  `b9b9c5cebcdc30257a90b3931da31e1087b9c6fb51da1c12d39e52812641e694`.
+  Stopped package independent PASS13:26:35.964296Z, de-package-verifier.gP1HqMis
+  SHA256 `6e8be37bc02c4ddcb7d33f60683832afd66a8ec852da0b7455a56cd600fa989b`:
+  two archives/isolated installed tree match332 resources,115 schemas and frozen
+  README/guide. Standard-Docker physical independent PASS13:33:53.349491Z,
+  de-final-docker-readback.zCIrmCUq/VERDICT.md SHA256
+  `5ffa894084233376f6671bef15fd9a78f2eea0dd39e7bdcbd59c0c06e9763227`:
+  five immutable DBs/nine CompletionGate replays/20 real receipts,56 released
+  leases,18 absent workspaces,22 empty exact namespaces,20 absent native IDs and
+  772 unchanged fixture files; all556 inputs unchanged. Offline-adversarial
+  independent PASS13:30:11.951208Z,15 checks/806 unique identities, original
+  selection/guards and556 inputs unchanged; de-adversarial-verifier.jr0KXSUU/VERDICT.md
+  SHA256 `da76c2eb2cf5c2258d5e76f162db5787fbf4d1d5ea70bae862e9b43cd15da738`.
+  Fresh-installed independent PASS13:36:39.943744Z,
+  de-installed-verifier.0bmfABzF/VERDICT.md SHA256
+  `2b045ff24569cc8974990cb607d67bb94f7d7ffc373ea20865b55cfbe00467a4`:
+  six fresh archives equal the accepted pair, three installs each332 resources/
+  115 schemas/80 locked distributions, seven immutable migration1–13 journals,
+  10 CompletionGate decisions/18 code receipts/215 artifacts; target
+  `run_096b73b647264ceaaf25a3d0a1782348` has two-role pytest5-pass verification
+  then explicit apply. All54 leases released/18 workspaces/six native IDs absent,
+  exact namespace `946fc4aa52da4954a3db128eb6cc244a` empty; all556 inputs unchanged.
+  Verifier-only initial test-name spelling assumption/correction is retained,
+  not artifact failure. Final terminal review subsequently passed as recorded below;
+  Git delivery remains pending.
+- [x] (2026-09-12T13:49:47.091626Z) D/E final terminal documentation/diff review
+  passed with exact28 paths/556 inputs unchanged. Verdict
+  de-final-terminal-verifier.xacbqQOz/VERDICT.md SHA256
+  9e1d7e0060a4ad34f9954af62b23c3019288ab37bb7ec431a81c363738a90424.
+  Only PR-draft spent-retry wording required correction; the verifier's private
+  newline-assumption failure remains retained. Allowed postrelease changes are
+  factual terminal/live03 readback bookkeeping only, not packaged docs/source.
+- [x] (2026-09-12T13:11:38.548093Z) D/E independent full/source/static readback
+  PASS. Fresh collection4323/3.59s matches six JUnits4291/32, no identity gaps or
+  failures/errors; original two serial cases followed all four heavy groups and
+  six statics. All554 current sources equal both freeze maps at PR12e45;15 held
+  D/E source changes match prior freeze, other539 equal PR12 including F11.
+  CI/docs excluded; index/HEAD/source unchanged. Verifier-only syntax-error
+  wrapper failure retained without candidate mutation. Verdict
+  de-current-full-readback.tIgE2Reu/VERDICT.md SHA256
+  `173d805ca6d12cb46ed9883f305f00f503b9090dd00ae86d628923f921c8286c`.
+- [x] Current D/E full `baseline-current-full-01` stopped PASS4291/32,4323 exact
+  collected/JUnit identities and554 unchanged inputs; no missing/extra/duplicate/
+  failure/error. Six statics passed: Ruff479, lint, mypy396, schemas, offline
+  lock99 and whitespace. Integration267/252/249 and default-other3521/32 precede
+  the unchanged two serial cases after all heavy jobs stopped. Exact argv/times
+  are in the baseline delivery plan. Summary SHA256
+  `2c53c43438604443a276135d6b705ce8178a13157a4cf35873c701b6cf049e1c`;
+  both source maps `990c82b4804e434132d1d950804f96e625116e1eb07d13577095792fec760788`.
+- [x] Current D/E cohort passed6/437.84s, wrapper441.880657s,554 inputs unchanged;
+  independent physical read release12:24:48.236807Z. Actual business exits
+  0/2/1/0/1/1,18 released baseline leases,6 absent workspaces/6 absent native IDs,
+  6 exact empty installation scopes and36 metadata queries;960 retained entries
+  unchanged. Verdict de-current-physical-readback.tNFUKO52/VERDICT.md SHA256
+  `b67e04703b6124f5f4ff4402945bfc72c59d485f4e722374580d16ef24b46553`.
+  These are six generated observations, not six passing business checks or the
+  external24-task campaign. Historical D04/failed trials remain retained.
+- [x] After all full tests stopped, preserve stash
+  `9bfc8931fcd70163654a2788388b88da2cca6fa2`, fast-forward/reapply cleanly onto
+  PR12 mergee45d7e34; all554 source inputs still equal the full freeze. Only the
+  reviewed D/E delta remained at that integration snapshot. Independent full
+  readback subsequently passed above; final optional runners and stopped package
+  independent review also passed, followed by standard-Docker physical and offline-
+  adversarial and installed independent readbacks. Final terminal documentation/
+  diff review passed; exact Git delivery remains separate and pending.
+- [x] (2026-09-12T12:52:42Z) F normally delivered in
+  [PR #12](https://github.com/meyowu/agent-fleet-foundry/pull/12): head
+  `b07382369f705b4d76661e17348c04e12dbbb245`, merge
+  `e45d7e34bb01de94bada6fdd6a0a718c94af2f37`, identical tree
+  `d02b0447ddabf20923f5b44f0eb44a0599150ea6`. Guard readback protected=false,
+  rules[], checks0/statuses0; no bypass or branch deletion. Head/merge both
+  `[skip ci]`, Actions0, not hosted CI PASS. Postmerge restore contracts passed22,
+  211 deselected/0.28s; exact remote record `session-github-delivery.json`.
 - [x] September12 F final independent artifact/document acceptance PASS/read
   release12:48:11.175677Z. Eight archives/four installed trees×332 runtime
   resources/115 schemas match current code and final README/guide. Seven safely
@@ -413,7 +519,7 @@ independent verification never edits its candidate or weakens the oracle.
   report f-final-sentence-recheck.PIEGQyGw/VERDICT.md SHA256
   45f9cb7519ddc1f33d869c5702eed85247c62ca410e404e8bd750747a03ca836.
   Root records only factual acceptance in three un-packaged docs before separate
-  commit/push/merge. D full remains running on unchanged combined554 inputs;
+  commit/push/merge. D full was then running on unchanged combined554 inputs;
   native P0/live/provider campaign limits are unchanged.
 - [x] September12 F current combined full gate passed4246/26,4272 exact identities
   and548 unchanged inputs; all six static gates passed. Current standard Docker
@@ -424,7 +530,8 @@ independent verification never edits its candidate or weakens the oracle.
   independent full/physical reviews subsequently passed at12:07Z; offline
   adversarial806 and pre-final-documentation fresh-install3 passed. Distinct
   final-doc package1/3.35s and installed3/270.05s then passed with550 unchanged
-  inputs. Final artifact review and F-before-D GitHub deliveries remain; no paid request.
+  inputs. Final artifact review and F-before-D GitHub delivery subsequently
+  completed as recorded above; no paid request.
 - [x] (2026-09-12T11:39:28Z) Independent B+G+F source integration PASS:
   548 current inputs match the full-gate freeze;11 F inputs match physical03,
   other537 match PR11 including G's five paths. All17 source/AST checks passed
@@ -535,7 +642,7 @@ independent verification never edits its candidate or weakens the oracle.
   and raw JSON/usage validation. Current evidence cannot identify which field
   failed. Alias versus dated-response identity is only an offline hypothesis.
   Keep exact identity, endpoint, body/header, budget and tool guards unchanged;
-  no live03 or automatic retry has occurred. A distinct bounded diagnostics
+  at this earlier diagnosis no live03 or automatic retry had occurred. A distinct bounded diagnostics
   slice must precede any separately decided additional paid attempt.
 - [x] September12 continuation reconciled the independently merged Foundry PR9
   (`09c5a64`) and the renamed GitHub remote. Preserve its public README, Apache
@@ -738,10 +845,16 @@ independent verification never edits its candidate or weakens the oracle.
 
 ## Discoveries
 
+- Generic campaign/cold-start machinery already exists: EvaluationCase supports
+  auxiliary cold starts, the synthetic24-case manifest has finite planned slots,
+  and registration/reservation/preflight and reserved Workflow execution are
+  implemented. Actual frozen external repositories/tasks/oracles/profiles, three
+  actual cold starts and Provider/Harness campaigns remain unqualified. Do not
+  turn these evidence gaps into a new duplicate-controller implementation task.
 - Original evaluation finalization is blocked by a concrete filesystem/SQLite
   boundary, not an absent API key; read-side acceptance cannot turn it on.
-- Current live infrastructure does not exercise selected mixed Harness roles,
-  despite their existing offline implementations.
+- The mixed live attempts have not completed all three selected Harness roles;
+  stopped Engineer failures do not qualify the unexecuted Verifier path.
 
 ## Decision Log
 
@@ -767,9 +880,9 @@ documentation/package refresh passed1/2.85s; PR10 is merged at a96eb29 with
 exact tree/ref/zero-Actions readback and18-pass postmerge smoke as above.
 The actual mixed live02 attempt failed at the Engineer response-policy boundary,
 after a successful CoS request and before tools/patch/Verifier. Its unresolved
-usage is not zero cost, and its bootstrap is not target success. Baseline D/E and
-native P0 status remain unqualified; F's current integrated full4246/26 and
-physical22 acceptance do not complete its artifact/GitHub delivery gates. No full
+usage is not zero cost, and its bootstrap is not target success. Native P0 remains
+NOT_GO with write_boundary_unqualified. D/E has local focused/full/physical
+evidence and separate final gates; F has completed its artifact/PR12 delivery. No full
 P0/P1, mixed-Harness qualification or remote-CI completion is claimed.
 
 Slice G adds only finite SDK response diagnostics while preserving original
@@ -786,5 +899,26 @@ cleanup, not a live model or all P0/P1 work. Physical01/02 and all driver/asset
 failures remain intact. The identical F bytes are integrated atop PR11; the
 current full gate passed4246/26 and current standard Docker passed22. Offline
 adversarial806, final-doc distribution1 and fresh-install3 passed. Final artifact
-acceptance passed12:48:11.175677Z; F GitHub delivery remains separate in
-`2026-09-12-session-docker-resume.md`.
+acceptance passed12:48:11.175677Z; F GitHub delivery completed as PR12 at12:52:42Z,
+with exact tree/ref/zero-Actions readback and22-contract postmerge smoke recorded
+in `2026-09-12-session-docker-resume.md`. Its artifacts remain historical.
+
+Slices D/E expose validated retained baseline observations in CLI/Session and
+qualify six generated Python/Node Docker observations, including four honest
+business failures. Current full4291/32 (4323 identities/554 frozen inputs) and all
+six statics passed; after all runners stopped, identical source was integrated
+atop delivered F. Independent full/source/static readback passed13:11:38.548093Z;
+all four final optional runners stopped PASS with556 unchanged inputs, and docs
+preflight/package, standard-Docker physical, offline-adversarial and installed
+independent reviews passed. Final terminal documentation/diff review passed at
+13:49:47.091626Z; exact Git delivery remains pending in
+`2026-09-12-baseline-delivery.md`. Old D04 and all failed trials,
+including the separate738-deleted-fixture gap, remain retained. Generic campaign
+and cold-start execution machinery already exists; actual campaigns and missing
+additional-provider credentials are not qualified by this local evidence.
+The separate latest live03 replay stopped NOT_PASSED on clean delivered PR12,
+not D/E, with the exact model-mismatch diagnostic recorded above. Its raw returned
+model and Engineer usage/charge remain unknown; independent failed-attempt physical
+readback passed at13:44:44.347799Z, preserving the original inconclusive bundle.
+Live02 is not retroactively relabeled or disambiguated; no attempt04 or
+model change is implied.

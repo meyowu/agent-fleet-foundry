@@ -4,6 +4,157 @@ This is a living review ledger, not a release declaration or a user guide. It ma
 
 ## Evidence boundary and update rules
 
+### P1-D and P1-E — baseline observations, 2026-09-12
+
+The current candidate adds the existing typed retained observation to
+`BaselineShow`, with same-transaction validation of review/execution/report/
+resource identities. Standalone CLI and Session expose the same nullable bounded,
+redacted/control-escaped output, hashes and flags. Showing it does not redispatch
+a command; CLI startup can still initialize/migrate state. No new authority,
+migration, capture channel or model completion is introduced. Six optional
+generated Python/Node fixtures prove observations through public CLI and real
+Docker. The ordinary Docker gate explicitly excludes that cohort unless its
+separate prepared image is selected. Existing strict nonempty/no-skip/error gates
+remain intact. Details: [baseline delivery plan](../.agent/plans/2026-09-12-baseline-delivery.md)
+and [cohort guide](BASELINE_COHORT.md).
+
+The stopped `baseline-current-full-01` default gate used exhaustive disjoint
+selection, not sampling. All4323 collected/JUnit identities reconcile:4291 passed,
+32 skipped, zero missing/extra/duplicate/failure/error and554 unchanged source
+inputs. The32 skips are28 Docker (including six cohort),3 fresh-install and1 live,
+not passes. Exact expanded argv, source maps, logs and JUnits remain private.
+
+| Gate | Exact result |
+| --- | --- |
+| `.venv/bin/python -B -m pytest -p pytest_asyncio.plugin -q`, exhaustive disjoint groups | 4291 passed/32 skipped; collection-to-last-test12:27:23.181872Z–13:02:57.986927Z,2134.805055s. |
+| Three integration partitions | 267/252/249 passed; pytest2089.20/1393.75/1371.64s; process2095.550333/1400.059610/1378.019690s. |
+| Default-other partition | 3521 passed,32 skipped; pytest1761.65s, process1768.568405s. |
+| Original cancellation and baseline-Session serial cases, after every heavy group stopped | One pass each; pytest9.85/18.49s, process11.894497/20.343215s. Original assertions/deadlines preserved; included in4291. |
+| `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`; `.venv/bin/mypy src tests scripts/run_live_canary.py` | 479 formatted files; lint passed;396 type-checked source files. |
+| `.venv/bin/python -B -m agent_fleet.schemas.generate --check`; `uv lock --check --offline --python .venv/bin/python`; `git diff --check` | All passed;99 locked packages. |
+
+Full summary SHA256 `2c53c43438604443a276135d6b705ce8178a13157a4cf35873c701b6cf049e1c`;
+both554-input maps SHA256
+`990c82b4804e434132d1d950804f96e625116e1eb07d13577095792fec760788`.
+Independent full/source/static readback passed at13:11:38.548093Z. Fresh collection
+found the same4323 identities in3.59s and reconciled all six JUnits. Both original
+serial cases followed all four heavy groups, all six static checks and each other;
+their JUnit times are9.855s/18.490s. All554 current inputs match both frozen maps
+at PR12 mergee45d7e34. Fifteen held D/E source changes match the earlier freeze;
+the other539 match PR12, including the eleven accepted F paths. CI/docs were
+excluded from that source hold. Source/index/HEAD stayed unchanged. The verifier's
+initial syntax-error wrapper failure remains retained, without candidate mutation.
+Verdict `de-current-full-readback.tIgE2Reu/VERDICT.md` SHA256
+`173d805ca6d12cb46ed9883f305f00f503b9090dd00ae86d628923f921c8286c`.
+
+The separately selected `baseline-current-cohort-01` passed6 in437.84s
+(wrapper441.880657s), zero failure/error/skip and554 unchanged inputs. Independent
+physical readback released at12:24:48.236807Z. Actual business exits are0/2/1/0/1/1;
+all six conclusive observations validate, but the four nonzero business checks
+remain failures. Each case has one exact consumed authorization/owner/dispatch/
+observation/report, unchanged source and matching public/durable output. All18
+baseline leases and cleanup receipts are released; six workspaces and six exact
+native IDs are absent. Thirty-six metadata-only queries confirm six empty exact
+installation scopes on the matching daemon; all960 retained entries are unchanged.
+These are not global Docker or bootstrap-Run cleanup claims.
+
+Verdict `de-current-physical-readback.tNFUKO52/VERDICT.md` SHA256
+`b67e04703b6124f5f4ff4402945bfc72c59d485f4e722374580d16ef24b46553`;
+cohort JUnit SHA256 `466be03f5d0aab60bfd9dbfaff7eea8b0fe5467f3fcbeb3e0e6e7dff8b5a9ef1`;
+summary SHA256 `a66c105925c23df8ac9305091d6d08c7c5a9bfcf0ebcad6da5e100d541d011b6`.
+Historical isolated D04 and all rejected retry/cleanup/signal assumptions remain
+retained, as does the separate738-deleted-fixture evidence gap in the F plan.
+
+After every full-test process stopped, root preserved stash
+`9bfc8931fcd70163654a2788388b88da2cca6fa2`, fast-forwarded to PR12 merge
+`e45d7e34bb01de94bada6fdd6a0a718c94af2f37` and reapplied D/E cleanly; all554
+source inputs still match the completed full freeze. All four final current-D
+runners have now stopped exit0, with zero failure/error/skip and identical556-input
+source/README/guide before/after maps (SHA256
+`9a5777d3d7def14eee4563ca2b8b4cd160738dafee30798be8ee78487d260c10`).
+
+| Separate final runner | Exact result |
+| --- | --- |
+| Distribution package | 1 passed/3.93s; wrapper5.919342995s. |
+| Standalone offline adversarial | 806 passed/277.11s; gate279.713s, wrapper279.785661936s. |
+| Standard Docker, explicit six-cohort exclusion | 22 passed,22 deselected/339.43s; gate342.365s, wrapper342.505614996s. |
+| Fresh installation | 3 passed/379.37s; wrapper381.090124846s. |
+
+Exact original entry points, run names and four JUnit hashes are in the baseline
+delivery plan. These counts overlap other gates and are not added to4291.
+Documentation preflight passed at13:21:14.092425Z, report
+`de-docs-preflight.YeFP53qX/VERDICT.md` SHA256
+`b9b9c5cebcdc30257a90b3931da31e1087b9c6fb51da1c12d39e52812641e694`.
+Stopped-package independent review passed at13:26:35.964296Z: two archives and
+the distribution test's isolated installed tree match332 runtime/resource files,
+115 schemas and frozen README/guide. Report `de-package-verifier.gP1HqMis/VERDICT.md`
+SHA256 `6e8be37bc02c4ddcb7d33f60683832afd66a8ec852da0b7455a56cd600fa989b`.
+That package verdict is not the separate fresh-install/public journey verdict.
+Standard-Docker physical independent PASS/read release13:33:53.349491Z:
+five immutable DBs, nine CompletionGate replays,20 real receipts,56 released leases,
+18 absent workspaces,22 empty exact installation namespaces,20 absent native IDs
+and772 unchanged fixture files; all556 inputs unchanged. Report
+`de-final-docker-readback.zCIrmCUq/VERDICT.md` SHA256
+`5ffa894084233376f6671bef15fd9a78f2eea0dd39e7bdcbd59c0c06e9763227`.
+Offline-adversarial independent PASS/read release13:30:11.951208Z:15 checks,
+806 unique passing identities, original selection/guards and all556 inputs unchanged.
+Report `de-adversarial-verifier.jr0KXSUU/VERDICT.md` SHA256
+`da76c2eb2cf5c2258d5e76f162db5787fbf4d1d5ea70bae862e9b43cd15da738`.
+Fresh-installed/public-journey independent PASS/read release13:36:39.943744Z:
+six fresh archives equal the accepted pair; three installs each match332 resources,
+115 schemas and80 locked distributions. Seven immutable migration1–13 journals,
+10 CompletionGate decisions,18 code receipts and215 artifacts bind the original
+three passing cases. Target `run_096b73b647264ceaaf25a3d0a1782348` has two-role
+pytest5-pass verification followed by explicit public apply. All54 leases released,
+18 workspaces/six native IDs absent, exact namespace `946fc4aa52da4954a3db128eb6cc244a`
+empty and556 inputs unchanged. Report `de-installed-verifier.0bmfABzF/VERDICT.md`
+SHA256 `2b045ff24569cc8974990cb607d67bb94f7d7ffc373ea20865b55cfbe00467a4`.
+The verifier-only initial test-name spelling assumption/correction remains retained,
+not an artifact failure. Final terminal documentation/diff review passed/read
+release13:49:47.091626Z, with exact28 paths/556 inputs unchanged. Report
+`de-final-terminal-verifier.xacbqQOz/VERDICT.md` SHA256
+`9e1d7e0060a4ad34f9954af62b23c3019288ab37bb7ec431a81c363738a90424`.
+The PR-draft spent-retry phrase was corrected; verifier-only line-wrap failure
+is retained. Postrelease changes are only factual terminal/live03 bookkeeping,
+not source/README/guide. Exact Git delivery remains pending.
+Cleanup acceptance is scoped to the reviewed fixtures/namespaces;
+the six-cohort evidence remains separate.
+Historical F results and archives below cannot qualify newer D/E bytes.
+
+Six generated repositories are not six external projects or the24-task campaign.
+Generic manifests, cold-start slots and campaign reservation/execution machinery
+already exist; actual repository/task/oracle/profile identities and completed
+cold-start/provider/Harness campaigns remain unqualified. Native P0 finalization
+remains NOT_GO/`write_boundary_unqualified`; live02 remains failed with unknown
+charge. These D/E gates make no paid provider requests and do not imply an
+additional-provider credential, hosted CI success, whole P0/P1 completion or
+public package release. The separate live03 attempt is recorded below.
+
+Separate from D/E, the manually authorized finite live03 replay on clean delivered
+PR12 stopped NOT_PASSED:13:33:03.149828Z–13:34:07.112382Z,63.962s wall;
+pytest1 failed/62.23s,13 warnings. Target `run_8f2d52ea5c4c4648a8deb56b543beded`
+completed two CoS requests (14911 input/6538 output/21449 total tokens), followed
+by one Engineer reserved UNKNOWN response: three request reservations/two agent
+invocations, zero target tools/commands/patch/Verifier. Exact CLI/run.failed message:
+`The Agents SDK response model did not match the selected model.`; unchanged
+`PROVIDER_FAILED`/`provider_sdk`/`response_policy`. This confirms live03's
+model-identity guard branch, not the raw returned model (unretained/unknown) or
+a dated-snapshot cause, and does not retroactively identify live02's failed field.
+Engineer usage/charge remain unknown. Cleanup reports complete/no outstanding
+leases. Independent failed-attempt readback passed/released13:44:44.347799Z,
+`mixed-live03-readback.tm0PwoSS/VERDICT.md` SHA256
+`bb8ef5f08f37d739ee05627ae15690f424b93bdadb97b0925a70b18c2dc2b47a`.
+All8 leases released/3 workspaces absent/2 bootstrap native IDs absent, exact
+namespace empty;140 fixture files and PRIMARY550/BASELINE556 inputs unchanged.
+All33 stored artifacts validate,21 run exports match and12 project-scoped artifacts
+stay separate. Retain the verifier's initial count-assumption failure. The
+original failure bundle stays inconclusive/cleanup_unproven; later physical
+cleanup supplements it without modifying assurance or unknown cost. Bootstrap fake-agent/real-Docker
+evidence is not target-provider proof; no D/E source changed. Initial launcher03
+raw/canonical selection-hash preflight failed before credentials/output/request;
+retain `mixed-live03-preflight-failure.md`. Separately authorized03b used unchanged
+selection. Live02 remains FAILED; no automatic attempt04 or model change is implied.
+
 ### P1-F — exact Docker Session restoration, 2026-09-12
 
 The repair adds an internal `SandboxProvider.restore(handle, spec)` seam after
@@ -80,7 +231,8 @@ remained unchanged. Subsequent README/guide-only corrections are independently
 reviewed; they do not change this source qualification. The distinct final-doc
 distribution check passed1/3.35s (5.009104s wrapper); final fresh-install passed3
 in270.05s (271.984476s wrapper), no failure/error/skip and550 unchanged inputs.
-Final artifact review passed at12:48:11.175677Z; F GitHub delivery remains separate.
+Final artifact review passed at12:48:11.175677Z; F GitHub delivery subsequently
+completed as recorded below.
 Eight archives and four installed trees match332 current runtime resources,
 115 schemas and the final README/guide. Seven immutable journals1–13 and10
 replayed completion decisions passed;54 leases released,18 workspaces absent,
@@ -94,7 +246,18 @@ adversarial report independently passed in session-adversarial-verifier.tH7c6E3a
 (SHA256560f5b48d1ec377912f9159da0fe8b3556ab4ef4c0151935d0885550367ae744).
 These overlapping counts are not added to4246. This bounded physical
 qualification does not establish mixed-Harness/live-provider reliability, close
-baseline D/E or qualify native P0 finalization. No full P0/P1 completion is claimed.
+the separate current D/E gates or qualify native P0 finalization.
+
+[PR #12](https://github.com/meyowu/agent-fleet-foundry/pull/12) merged normally at
+2026-09-12T12:52:42Z: head `b07382369f705b4d76661e17348c04e12dbbb245`, merge
+`e45d7e34bb01de94bada6fdd6a0a718c94af2f37`, identical tree
+`d02b0447ddabf20923f5b44f0eb44a0599150ea6`. Exact-head premerge readback had
+protected=false, rules[], checks0 and statuses0. No bypass or branch deletion;
+head and merge use `[skip ci]`, with Actions0 for each, not hosted CI PASS.
+Postmerge restore contracts passed22,211 deselected in0.28s; these overlap prior
+tests. Exact remote readback is retained in `session-github-delivery.json`.
+F's README/guide and archive hashes are frozen historical artifacts, not packages
+of the newer D/E documentation or source. No full P0/P1 completion is claimed.
 
 ### P1-G — bounded SDK response diagnostics, 2026-09-12
 
@@ -158,9 +321,8 @@ is `sdk-postmerge-smoke.xml`; these overlapping smoke tests are not added to 421
 
 No new live request was made by this slice. The mixed-Harness live02 below remains
 failed with unknown Engineer usage; new diagnostics cannot reconstruct its missing
-field-level cause. The separate F physical acceptance is recorded above; its
-integrated full gate has since passed4246/26; F artifact/delivery gates,
-baseline D/E integration, native P0 finalization
+field-level cause. F's separate full/static/physical/artifact acceptance and PR12
+delivery are recorded above. Current D/E gates, native P0 finalization
 and broader Provider/Harness campaigns remain separate. No hosted
 CI success, full P0/P1 completion or package publication is implied.
 
@@ -237,10 +399,10 @@ records that earlier proof gap; later lifecycle/cleanup evidence must be read
 separately, not used to rewrite the failed bundle. The precise rejected response
 field remains unresolved. Exact model-alias equality is an offline hypothesis,
 not an observed provider response or proven cause. Native P0 qualification,
-D/E baseline follow-ups, additional-provider and mixed-role campaigns remain
-incomplete. The separate F Docker Session repair has the bounded physical
-acceptance above and integrated full4246/26 acceptance; final artifact/delivery
-records are separate. No remote CI success,
+D/E local candidate evidence is recorded above with final gates/delivery separate;
+additional-provider and mixed-role campaigns remain incomplete. The separate F
+Docker Session repair is delivered in PR12 with historical full4246/26, physical
+and final artifact acceptance. No remote CI success,
 whole P0/P1 completion or public package release is implied.
 
 ### Historical phase evidence
