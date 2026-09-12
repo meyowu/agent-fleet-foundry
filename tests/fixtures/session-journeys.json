@@ -61,5 +61,25 @@
     "negative": "Unapproved resume remains waiting with no leases, graph, execution or grant.",
     "positive": "Explicit plan approval then resume delivers exactly the frozen task/plan without a second CoS invocation; terminal replay changes no events.",
     "limitation": "Five actual offline Workflow strategies, not real-provider or independent functional-success proof."
+  },
+  "strategy_rejection_checks": {
+    "test": "tests/integration/test_session_strategy_rejections.py::test_illegal_strategy_fails_before_dispatch_and_next_session_task_is_legal",
+    "scenarios": [
+      "direct_code_change",
+      "single_engineer_independent_verification",
+      "ineligible_verifier",
+      "overlapping_parallel_writers",
+      "undeclared_specialist"
+    ],
+    "regressions": [
+      "direct cannot request code-change assurance",
+      "single Engineer cannot claim independent verification",
+      "Engineer plus Verifier cannot select an ineligible verifier",
+      "parallel Engineers cannot overlap write scopes",
+      "specialist plans cannot reference undeclared roles"
+    ],
+    "negative": "Each illegal CoS proposal persists one failed root Run and settled failed turn with zero specialist invocations, child Runs, resource leases, tool intents, command evidence or capability grants; target Git and Fleet configuration stay unchanged.",
+    "continuation": "A legal next task executes as a new Run in the same Session while the original failure and its events remain unchanged.",
+    "limitation": "Five fake-CoS proposals through the actual offline Session, Workflow, validators and SQLite stores; not live-provider, Harness, sandbox, cold-start or functional-success qualification."
   }
 }

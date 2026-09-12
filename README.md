@@ -10,6 +10,41 @@ Phase7 adds packaged runner/learning assets, fresh-install/upgrade/scale verific
 
 The Session-first release adds a foreground session entry, exact in-session review, opt-in pre-execution planning approval, immutable per-role model bindings, operational custom role templates and an authenticated local read-only dashboard. Follow the [living release plan](.agent/plans/2026-09-07-session-first-release.md) for current verification; the September5 CI results below do not accept these additions.
 
+## P0/P1 continuation — 2026-09-11
+
+The owner resumed only the unfinished evaluation, Provider/Harness and Session
+work, with a separate verified GitHub delivery for each completed slice. Dashboard
+expansion, connectors, Memory/evolution and hosted sandbox productization remain
+deferred. The [continuation ExecPlan](.agent/plans/2026-09-11-p0-p1-completion.md)
+records current contracts, checks and delivery status; the September10 results
+below remain their own historical candidate, not automatic acceptance of new code.
+
+The first slice adds five illegal-plan regressions through the actual Session,
+Workflow and SQLite paths: direct code-change assurance, single-Engineer
+independent-verification claims, ineligible Verifier selection, overlapping parallel
+write scopes and undeclared specialist roles. Each must persist a failed Run/turn
+with no specialist dispatch, command, child Run, lease or grant, then permit a
+legal new task in the same Session without altering the old failure. Production
+validators and permissions are unchanged. These are offline security/continuation
+checks, not five live tasks or full S2/cold-start acceptance.
+
+Slice A local acceptance: **4098 passed,23 optional skips** across4121 unique
+collected/JUnit identities, with zero gaps, duplicates, failures or errors and
+all547 source/test inputs unchanged. Three disjoint integration groups passed
+249/264/251 cases; the remaining default group passed3333 with23 skips; the final
+cancellation/recovery case passed alone after those groups. Ruff format/lint,
+mypy, schema freshness, offline lock and whitespace checks passed. Fresh
+independent verification additionally passed22 focused cases and five full
+SQLite/event/source-preservation replays. The post-documentation distribution
+check passed1/8.69s. GitHub delivery is pending; no new remote CI or live-model
+success is claimed.
+
+Remaining P0/P1 work is explicit: original-DB evaluation write containment and
+the24-task campaign are not accepted; Provider/Harness selections have passed
+independent offline review but await full integration/qualification; the six
+Python/Node baseline cohort and public retained-output visibility are in progress.
+No new paid model requests were made for these results.
+
 ## S1–S3 development status — 2026-09-10 UTC
 
 **Merged to main:** [PR7](https://github.com/meyowu/agent-fleet-codex-kit/pull/7)
