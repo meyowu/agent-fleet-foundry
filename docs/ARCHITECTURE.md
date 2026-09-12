@@ -813,13 +813,28 @@ class ExecResult(BaseModel):
 class SandboxProvider(Protocol):
     capabilities: SandboxCapabilities
 
-    async def create(self, spec: SandboxSpec) -> SandboxHandle: ...
+    async def create(
+        self, run_id: RunId, spec: SandboxSpec, *, sandbox_id: str | None = None
+    ) -> SandboxHandle: ...
+    async def restore(self, handle: SandboxHandle, spec: SandboxSpec) -> SandboxHandle: ...
     async def exec(self, handle: SandboxHandle, request: ExecRequest) -> ExecResult: ...
     async def terminate(self, handle: SandboxHandle) -> None: ...
     async def inspect(self, handle: SandboxHandle) -> SandboxInspection: ...
 ```
 
 The adapter, not the model, selects host paths and Docker flags.
+
+Paused logical sandbox restoration is separate from creation. After validating
+the paused Run and its exact active parent leases, `ResourceService` calls
+`restore` with the persisted handle and immutable specification. A retained
+Docker provider revalidates its original preparation, held Git-shadow pin,
+workspace, installation, daemon and image, including after awaited inspection.
+An absent preparation uses strict creation with the persisted identity followed
+by exact inspection; a conflicting preparation fails closed without replacement.
+Ordinary duplicate creation remains rejected. Restoration does not recreate an
+execution container or replay a command. Fake and explicitly selected local-unsafe
+providers implement the same port; local-unsafe checks publication identity after
+validation and never replaces a concurrent handle/specification.
 
 Phase 1.5 introduced intrinsic capability validation. Phase 3 registers fake, Docker, and local-unsafe providers behind the same port, resolves the exact persisted selection, and matches per-plan `SandboxRequirements` before initialization or workflow resource creation. A mismatch fails closed; there is no fallback to a weaker provider. Fleet reports and hashes the full descriptor/configuration, binds them to Project and Run, and copies their identities into command evidence and the final bundle. Docker Project/Run state additionally pins the resolved immutable image and local daemon identity.
 

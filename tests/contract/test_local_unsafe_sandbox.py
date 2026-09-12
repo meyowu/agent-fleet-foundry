@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.models import (
     ExecRequest,
     SandboxConfiguration,
+    SandboxHandle,
     SandboxSecurityLevel,
     SandboxSpec,
     WorkflowStage,
@@ -132,6 +134,182 @@ async def test_local_unsafe_reports_host_risk_and_uses_direct_argv_in_workspace(
     assert cwd == str((workspace / "src").resolve())
     assert environment["CI"] == "1"
     assert "PATH" in environment
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retained", [True, False])
+async def test_local_unsafe_restores_only_exact_explicitly_confirmed_context(
+    tmp_path: Path,
+    retained: bool,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingProcessRunner()
+    original = _provider(tmp_path, runner)
+    spec = _spec(workspace, confirmed=True)
+    handle = await original.create("run_" + "6" * 32, spec)
+    provider = original if retained else _provider(tmp_path, runner)
+    retained_handle = original._handles[handle.sandbox_id] if retained else None
+
+    restored = await provider.restore(handle, spec)
+
+    assert restored == handle
+    assert provider._handles[handle.sandbox_id] == handle
+    if retained_handle is not None:
+        assert provider._handles[handle.sandbox_id] is retained_handle
+    with pytest.raises(FleetError) as captured:
+        await provider.restore(
+            handle,
+            spec.model_copy(update={"unsafe_local_confirmed": False}),
+        )
+    assert captured.value.code in {
+        ErrorCode.UNSAFE_LOCAL_CONFIRMATION_REQUIRED,
+        ErrorCode.SANDBOX_INSPECTION_FAILED,
+    }
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_local_unsafe_absent_restore_cannot_overwrite_second_await_competitor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingProcessRunner()
+    source = _provider(tmp_path, runner)
+    spec = _spec(workspace, confirmed=True)
+    handle = await source.create(
+        "run_" + "1" * 32,
+        spec,
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+    provider = _provider(tmp_path, runner)
+    original_to_thread = asyncio.to_thread
+    second_await_entered = asyncio.Event()
+    second_await_release = asyncio.Event()
+    restore_calls = 0
+    restoration: asyncio.Task[SandboxHandle] | None = None
+
+    async def expose_second_await(
+        function: object,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        nonlocal restore_calls
+        if asyncio.current_task() is restoration:
+            restore_calls += 1
+            if restore_calls == 2:
+                second_await_entered.set()
+                await second_await_release.wait()
+        return await original_to_thread(function, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(asyncio, "to_thread", expose_second_await)
+    restoration = asyncio.create_task(provider.restore(handle, spec))
+    second_wait = asyncio.create_task(second_await_entered.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            {restoration, second_wait},
+            timeout=5,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        assert done, "restore neither completed nor exposed a second publication await"
+        if second_wait in done:
+            competing = await provider.create(
+                "run_" + "8" * 32,
+                spec,
+                sandbox_id=handle.sandbox_id,
+            )
+            live_handle = provider._handles[handle.sandbox_id]
+            live_spec = provider._specs[handle.sandbox_id]
+            second_await_release.set()
+            with pytest.raises(FleetError):
+                await restoration
+            assert provider._handles[handle.sandbox_id] is live_handle
+            assert provider._specs[handle.sandbox_id] is live_spec
+            assert live_handle == competing
+        else:
+            second_wait.cancel()
+            restored = await restoration
+            assert restored == handle and restore_calls == 1
+            live_handle = provider._handles[handle.sandbox_id]
+            live_spec = provider._specs[handle.sandbox_id]
+            with pytest.raises(FleetError) as duplicate:
+                await provider.create(
+                    "run_" + "8" * 32,
+                    spec,
+                    sandbox_id=handle.sandbox_id,
+                )
+            assert duplicate.value.code is ErrorCode.SANDBOX_CREATION_FAILED
+            assert provider._handles[handle.sandbox_id] is live_handle
+            assert provider._specs[handle.sandbox_id] is live_spec
+    finally:
+        second_await_release.set()
+        second_wait.cancel()
+        await asyncio.gather(second_wait, return_exceptions=True)
+        if not restoration.done():
+            restoration.cancel()
+            await asyncio.gather(restoration, return_exceptions=True)
+
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_local_unsafe_restore_rejects_foreign_creation_during_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingProcessRunner()
+    source = _provider(tmp_path, runner)
+    spec = _spec(workspace, confirmed=True)
+    handle = await source.create(
+        "run_" + "1" * 32,
+        spec,
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+    provider = _provider(tmp_path, runner)
+    original_to_thread = asyncio.to_thread
+    validation_entered = asyncio.Event()
+    validation_release = asyncio.Event()
+    restoration: asyncio.Task[SandboxHandle] | None = None
+
+    async def block_restore_validation(
+        function: object,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        if asyncio.current_task() is restoration:
+            validation_entered.set()
+            await validation_release.wait()
+        return await original_to_thread(function, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(asyncio, "to_thread", block_restore_validation)
+    restoration = asyncio.create_task(provider.restore(handle, spec))
+    try:
+        await asyncio.wait_for(validation_entered.wait(), timeout=5)
+        competing = await provider.create(
+            "run_" + "8" * 32,
+            spec,
+            sandbox_id=handle.sandbox_id,
+        )
+        live_handle = provider._handles[handle.sandbox_id]
+        live_spec = provider._specs[handle.sandbox_id]
+        validation_release.set()
+        with pytest.raises(FleetError) as captured:
+            await restoration
+    finally:
+        validation_release.set()
+        if not restoration.done():
+            restoration.cancel()
+            await asyncio.gather(restoration, return_exceptions=True)
+
+    assert captured.value.code is ErrorCode.SANDBOX_INSPECTION_FAILED
+    assert provider._handles[handle.sandbox_id] is live_handle
+    assert provider._specs[handle.sandbox_id] is live_spec
+    assert live_handle == competing
+    assert runner.calls == []
 
 
 @pytest.mark.asyncio

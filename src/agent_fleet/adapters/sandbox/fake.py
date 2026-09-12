@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     ExecRequest,
@@ -54,6 +55,7 @@ class FakeSandboxProvider:
         self.scripts = list(scripts or [])
         self.requests: list[ExecRequest] = []
         self.handles: dict[str, SandboxHandle] = {}
+        self._specs: dict[str, SandboxSpec] = {}
         self.terminated: set[str] = set()
         self.executions: set[str] = set()
 
@@ -105,8 +107,57 @@ class FakeSandboxProvider:
             capabilities=self.capabilities,
             configuration_hash=canonical_json_hash(spec.configuration.model_dump(mode="json")),
         )
-        self.handles[handle.sandbox_id] = handle
-        return handle
+        handle_snapshot = SandboxHandle.model_validate(handle.model_dump(mode="json"))
+        self.handles[handle.sandbox_id] = handle_snapshot
+        self._specs[handle.sandbox_id] = SandboxSpec.model_validate(spec.model_dump(mode="json"))
+        return SandboxHandle.model_validate(handle_snapshot.model_dump(mode="json"))
+
+    async def restore(self, handle: SandboxHandle, spec: SandboxSpec) -> SandboxHandle:
+        handle_snapshot = SandboxHandle.model_validate(handle.model_dump(mode="json"))
+        spec_snapshot = SandboxSpec.model_validate(spec.model_dump(mode="json"))
+        expected = SandboxHandle(
+            sandbox_id=handle_snapshot.sandbox_id,
+            run_id=handle_snapshot.run_id,
+            project_id=spec_snapshot.project_id,
+            workspace_host_path=spec_snapshot.workspace_host_path,
+            provider="fake",
+            capabilities=self.capabilities,
+            configuration_hash=canonical_json_hash(
+                spec_snapshot.configuration.model_dump(mode="json")
+            ),
+        )
+        if (
+            handle.provider != "fake"
+            or spec.configuration.provider != "fake"
+            or handle_snapshot != expected
+        ):
+            raise FleetError(
+                ErrorCode.SANDBOX_INSPECTION_FAILED,
+                "The fake sandbox restoration binding is invalid.",
+                "Resume through the exact recorded fake sandbox checkpoint.",
+            )
+        current = self.handles.get(handle.sandbox_id)
+        if current is None:
+            restored = await self.create(
+                handle.run_id,
+                spec_snapshot,
+                sandbox_id=handle.sandbox_id,
+            )
+            current = self.handles.get(handle.sandbox_id)
+        else:
+            restored = SandboxHandle.model_validate(current.model_dump(mode="json"))
+        if (
+            current is None
+            or current != handle_snapshot
+            or restored != handle_snapshot
+            or self._specs.get(handle.sandbox_id) != spec_snapshot
+        ):
+            raise FleetError(
+                ErrorCode.SANDBOX_INSPECTION_FAILED,
+                "The fake sandbox restoration binding does not match its checkpoint.",
+                "Cancel this run; Fleet did not substitute another sandbox.",
+            )
+        return SandboxHandle.model_validate(current.model_dump(mode="json"))
 
     async def inspect(self, handle: SandboxHandle) -> SandboxInspection:
         if handle.provider != "fake" or handle.sandbox_id not in self.handles:
@@ -228,6 +279,7 @@ class FakeSandboxProvider:
         found = int(handle.sandbox_id in self.handles)
         self.terminated.add(handle.sandbox_id)
         self.handles.pop(handle.sandbox_id, None)
+        self._specs.pop(handle.sandbox_id, None)
         return SandboxCleanupResult(
             provider="fake",
             resource_id=handle.sandbox_id,

@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from agent_fleet.adapters.sandbox.fake import FakeExecScript, FakeSandboxProvider
 from agent_fleet.adapters.system import SystemClock, UuidIdGenerator
+from agent_fleet.domain.errors import ErrorCode, FleetError
 from agent_fleet.domain.ids import IdPrefix
 from agent_fleet.domain.models import (
     ExecRequest,
@@ -117,6 +118,44 @@ async def test_fake_sandbox_records_canonical_exec_and_failure(tmp_path: Path) -
     assert failure.timed_out is False
     await sandbox.terminate(handle)
     assert handle.sandbox_id in sandbox.terminated
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retained", [True, False])
+async def test_fake_sandbox_restores_exact_retained_or_absent_context(
+    tmp_path: Path,
+    retained: bool,
+) -> None:
+    ids = UuidIdGenerator()
+    original = FakeSandboxProvider(SystemClock(), ids)
+    spec = SandboxSpec(workspace_host_path=str(tmp_path))
+    handle = await original.create(ids.new(IdPrefix.RUN), spec)
+    sandbox = original if retained else FakeSandboxProvider(SystemClock(), ids)
+    retained_handle = original.handles[handle.sandbox_id] if retained else None
+
+    restored = await sandbox.restore(handle, spec)
+
+    assert restored == handle
+    assert sandbox.handles[handle.sandbox_id] == handle
+    if retained_handle is not None:
+        assert sandbox.handles[handle.sandbox_id] is retained_handle
+
+
+@pytest.mark.asyncio
+async def test_fake_sandbox_restore_rejects_changed_spec_without_replacement(
+    tmp_path: Path,
+) -> None:
+    ids = UuidIdGenerator()
+    sandbox = FakeSandboxProvider(SystemClock(), ids)
+    spec = SandboxSpec(workspace_host_path=str(tmp_path))
+    handle = await sandbox.create(ids.new(IdPrefix.RUN), spec)
+    retained = sandbox.handles[handle.sandbox_id]
+
+    with pytest.raises(FleetError) as captured:
+        await sandbox.restore(handle, spec.model_copy(update={"timeout_seconds": 61}))
+
+    assert captured.value.code is ErrorCode.SANDBOX_INSPECTION_FAILED
+    assert sandbox.handles[handle.sandbox_id] is retained
 
 
 @pytest.mark.asyncio

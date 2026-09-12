@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+from importlib import resources
 from pathlib import Path
 from typing import Literal, cast
 
 import pytest
 from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, ToolCallPart
 from pydantic_ai.messages import UserPromptPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.tools import ToolDefinition
 from test_phase5_evidence import (
     _COMMAND_ID,
     _CORE_PATH,
@@ -29,15 +32,26 @@ from agent_fleet.application.conversations import ChatExecutionOptions
 from agent_fleet.application.runtime import RuntimeRegistry
 from agent_fleet.bootstrap import ApplicationContainer, build_container
 from agent_fleet.domain.errors import ErrorCode, FleetError
-from agent_fleet.domain.models import ApprovalChoice, RunStatus
+from agent_fleet.domain.models import ApprovalChoice, RunStatus, TaskSpec, VerifierVerdict
 from agent_fleet.domain.offline_canary import BROKEN_CANARY, FIXED_CANARY
 from agent_fleet.domain.trust import TrustMode
 
 pytestmark = pytest.mark.asyncio
 
 
-def _registered_test_model(container: ApplicationContainer, roles: list[str]) -> None:
+async def _respond_from_invocation_history(
+    messages: list[ModelMessage], info: AgentInfo
+) -> ModelResponse:
+    # PydanticAI starts a fresh history after an approval pause. Bookkeeping must
+    # follow this invocation, not the lifetime of the retained Session/provider.
     model = _TwoCriterionModel()
+    model.calls[info.output_tools[0].name] = sum(
+        isinstance(message, ModelResponse) for message in messages
+    )
+    return await model.respond(messages, info)
+
+
+def _registered_test_model(container: ApplicationContainer, roles: list[str]) -> None:
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         prompt = next(
@@ -55,7 +69,7 @@ def _registered_test_model(container: ApplicationContainer, roles: list[str]) ->
         if role == "cos":
             assert request["task_input"]["conversation_context"]["through_sequence"] == 0
             assert request["task_input"]["conversation_context"]["entries"] == []
-        result = await model.respond(messages, info)
+        result = await _respond_from_invocation_history(messages, info)
         # The actual public profiler discovers python-test from the fixture's
         # declared real pytest dependency. The model must request that reviewed
         # command, not the private bootstrap-only unittest command.
@@ -74,12 +88,98 @@ def _registered_test_model(container: ApplicationContainer, roles: list[str]) ->
     container.bootstrap.runtimes = registry
 
 
+@pytest.mark.parametrize("role", ["engineer", "verifier"])
+async def test_scripted_model_restarts_tools_for_each_fresh_invocation(role: str) -> None:
+    task = TaskSpec.model_validate(
+        {
+            "task_id": "task_" + "a" * 32,
+            "run_id": "run_" + "b" * 32,
+            "original_goal": "Repair the reviewed fixture",
+            "normalized_goal": "Repair the reviewed fixture",
+            "base_revision": "c" * 40,
+            "allowed_paths": ["src/canary_calc"],
+            "forbidden_paths": ["tests"],
+            "acceptance_criteria": [{"criterion_id": "repair", "description": "Repair"}],
+            "required_evidence": ["canonical_patch", "command_evidence"],
+            "max_repair_iterations": 1,
+            "config_snapshot_hash": "d" * 64,
+            "verification_commands": [
+                {"command_id": "python-test", "executable": "python", "argv": ["-m", "pytest"]}
+            ],
+            "required_verification_command_ids": ["python-test"],
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    info = AgentInfo(
+        function_tools=[
+            ToolDefinition(
+                name="run_verification",
+                description="content.command_evidence_artifact_id; content.transcript_artifact_id",
+            )
+        ],
+        allow_text_output=False,
+        output_tools=[
+            ToolDefinition(
+                name="submit_verifier_verdict"
+                if role == "verifier"
+                else "submit_implementation_report",
+                parameters_json_schema=VerifierVerdict.model_json_schema(),
+            )
+        ],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        instructions=resources.files("agent_fleet.adapters.runtime.prompts")
+        .joinpath("verifier.md")
+        .read_text(),
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    "Task:\n"
+                    + json.dumps(
+                        {
+                            "untrusted_project_guidance": [],
+                            "task_input": {
+                                "task_spec": task.model_dump(mode="json"),
+                                "criterion_mapping_contract": {
+                                    "receipt_field": "content.command_evidence_artifact_id",
+                                    "excluded": "content.transcript_artifact_id",
+                                    "pairing": "one current independent receipt",
+                                },
+                            },
+                        }
+                    )
+                )
+            ]
+        )
+    ]
+    first = await _respond_from_invocation_history(messages, info)
+    resumed = await _respond_from_invocation_history(messages, info)
+    expected = (
+        ["repo_read_file", "run_verification"]
+        if role == "verifier"
+        else ["workspace_write_file", "workspace_write_file", "run_verification"]
+    )
+    assert [part.tool_name for part in first.parts if isinstance(part, ToolCallPart)] == expected
+    assert [part.tool_name for part in resumed.parts if isinstance(part, ToolCallPart)] == expected
+    assert [part.args for part in resumed.parts if isinstance(part, ToolCallPart)] == [
+        part.args for part in first.parts if isinstance(part, ToolCallPart)
+    ]
+    if role == "engineer":
+        continued = await _respond_from_invocation_history([*messages, first], info)
+        assert [part.tool_name for part in continued.parts if isinstance(part, ToolCallPart)] == [
+            "submit_implementation_report"
+        ]
+
+
 async def _public_journey(
     target: Path,
     container: ApplicationContainer,
     *,
     sandbox: Literal["fake", "docker"],
     image: str | None = None,
+    recreate_on_resume: bool = True,
 ) -> None:
     manifest = target / "pyproject.toml"
     manifest.write_text(
@@ -161,8 +261,9 @@ async def _public_journey(
         assert run.status is RunStatus.PAUSED_FOR_APPROVAL and run.pending_approval_id is not None
         approvals.append(run.pending_approval_id)
         prior_budget = container.budgets.snapshot(run_id)
-        container = build_container(container.state_root)
-        _registered_test_model(container, roles)
+        if recreate_on_resume:
+            container = build_container(container.state_root)
+            _registered_test_model(container, roles)
         restored = container.conversations.select(target, conversation_id=conversation_id)
         assert restored["run_id"] == run_id and restored["turn_id"] == binding.turn_id
         assert container.budgets.snapshot(run_id) == prior_budget
@@ -223,15 +324,25 @@ async def test_offline_public_bootstrap_does_not_publish_simulated_proof(
 
 
 @pytest.mark.docker_integration
+@pytest.mark.parametrize("recreate_on_resume", [False, True], ids=["retained", "recreated"])
 async def test_public_docker_chat_verifies_real_pytest_after_approval_and_restart(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, real_docker_image: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_docker_image: str,
+    recreate_on_resume: bool,
 ) -> None:
     target, container = _fixture(tmp_path, monkeypatch)
     provider = container.sandboxes.get("docker")
     assert isinstance(provider, DockerSandboxProvider)
     scope = provider.recovery_scope_id
     try:
-        await _public_journey(target, container, sandbox="docker", image=real_docker_image)
+        await _public_journey(
+            target,
+            container,
+            sandbox="docker",
+            image=real_docker_image,
+            recreate_on_resume=recreate_on_resume,
+        )
         assert (
             await provider._list_exact(
                 provider._require_executable(), {"agent-fleet.installation": scope}

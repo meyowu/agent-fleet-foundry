@@ -128,7 +128,7 @@ fleet
 
 ### 2. 先审计划，再执行，再审补丁
 
-> 当前源码在同一 Session 内恢复 Docker 任务时已复现 `SANDBOX_CREATION_FAILED`。首次使用请采用 [首页的独立 CLI 命令流程](../README.md#7-run-your-first-task)。下面是 Session 接口说明，不代表该故障已修复；详情与恢复边界见 [已知问题](KNOWN_ISSUES.md)。
+> 当前候选版已通过同进程 Docker Session 恢复的独立物理验证：22 个 Docker case 通过；整合版完整离线测试为 4246 passed、26 个明确的可选测试跳过，全部六项静态检查通过。恢复只复用精确匹配的 checkpoint、sandbox handle/spec 和已有资源绑定，不重复执行命令，也不放宽审批。历史失败仍保留；已处于 uncertain ownership 的旧 Run 仍需明确的 stopped-owner recovery。最终安装包和 GitHub 交付使用单独的验收记录；上述结果不代表 live-model 可靠性已通过。详见 [P1-F 验收记录](MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12) 和 [已知问题](KNOWN_ISSUES.md)。
 
 默认裸入口和旧 one-shot 行为保持兼容。要让这个会话的新任务在 CoS 完成计划后、创建工作区或调度执行 Agent **之前**暂停，显式启动：
 

@@ -27,9 +27,27 @@ infrastructure passed its independent offline gate, but this does not qualify
 the mixed-Harness path or Anthropic/Google providers. See the [selection guide](LIVE_CANARY_SELECTION.md)
 and [acceptance ledger](MVP_ACCEPTANCE.md#p1-b--explicit-canary-selection-infrastructure-2026-09-12).
 
-## Interactive Docker resume can fail in the same Session
+## Resolved in the current candidate: same-process Docker resume
 
-Reproduced during the public quickstart review on 2026-09-12, against base
+The exact retained-sandbox restoration repair passed independent physical
+acceptance on 2026-09-12: 22 Docker cases passed, with 22 ordinary cases
+deselected and no failures, errors or skips. The public same-process terminal
+journey now reaches verified completion after separate Engineer/Verifier
+approvals and real pytest receipts. Retained and recreated conversation cases
+also pass; originals change only after the existing explicit public patch apply.
+The current integrated full suite passed4246/26 with independent exact-identity
+review; all six static gates and the separate806-case offline adversarial gate
+passed. Final artifact and GitHub delivery records are separate. This is bounded scripted-runtime Docker
+evidence, not live-provider qualification; see [P1-F acceptance](MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12).
+
+Restoration reuses only the exact persisted handle/specification and held
+Git-shadow pin, rechecking identity after awaited validation. Absent retained
+state follows strict restoration; conflicting state fails closed. Duplicate
+creation is still rejected, with no command replay, automatic recovery or host
+fallback. This does not convert old failed or uncertain Runs into resumable work.
+
+The original failure was reproduced during the public quickstart review on
+2026-09-12, against base
 `3bcf735` plus the pre-existing local canary-development changes. No production
 code was changed by the documentation review.
 
@@ -52,13 +70,15 @@ Docker sandbox preparation is already active for this identity.
 Terminate the existing logical sandbox before preparing it again.
 ```
 
-The Session then reports uncertain execution ownership. This run did not execute
+The Session then reported uncertain execution ownership. This run did not execute
 the requested repair to verified completion, and no patch was applied. A successful
-bootstrap alone did not expose this problem. The root cause and production fix
-are outside this documentation change; do not claim the Session journey passed.
+bootstrap alone did not expose this problem. This historical failure and the
+later physical01/physical02 failures remain failures; the physical03 acceptance
+is a new, separately identified run.
 
-Use the separate-process `fleet run`, `fleet approve`, `fleet resume`, `fleet status`
-and `fleet patch` route in the [quickstart](../README.md#7-run-your-first-task).
+The separate-process `fleet run`, `fleet approve`, `fleet resume`, `fleet status`
+and `fleet patch` route in the [quickstart](../README.md#7-run-your-first-task)
+remains supported.
 Do not use a repeated original task or broad cleanup to force the failed Session
 to continue. For an already affected task, stop its original owner, inspect the
 exact run and follow [documented recovery](USER_GUIDE.md#运行资源恢复). Recovery
@@ -75,4 +95,5 @@ project/state: two explicit allow-once approvals, two successful resume commands
 Verifier each produced a separate real-Docker exit-zero pytest receipt; the source
 remained unchanged until explicit patch apply, which then succeeded. The runtime
 budget recorded zero model requests. This verifies the scripted learning route,
-not live-model reliability or a fix for the Session issue.
+not live-model reliability. The separate restoration repair is qualified only
+by the newer acceptance record above.

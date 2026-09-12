@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import replace
 from io import FileIO
 from pathlib import Path
 from typing import cast
@@ -1909,6 +1910,237 @@ async def test_docker_duplicate_preparation_cannot_replace_live_shadow_pin(tmp_p
     assert original.git_shadow_file.closed is False
     assert (await provider.terminate(handle)).complete is True
     assert original.git_shadow_file.closed is True
+
+
+@pytest.mark.asyncio
+async def test_docker_restore_reuses_exact_preparation_and_open_shadow_pin(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    provider = _provider(tmp_path, runner)
+    spec = _docker_spec(workspace)
+    handle = await provider.create(
+        "run_" + "1" * 32,
+        spec,
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+    original = provider._prepared[handle.sandbox_id]
+    descriptor = original.git_shadow_file.fileno()
+    runner.calls.clear()
+
+    restored = await provider.restore(handle, spec)
+
+    assert restored == handle and restored is not handle
+    assert provider._prepared[handle.sandbox_id] is original
+    assert original.git_shadow_file.closed is False
+    assert original.git_shadow_file.fileno() == descriptor
+    assert not any(
+        call[0][1:3] in {("container", "create"), ("container", "rm")} for call in runner.calls
+    )
+    assert (await provider.terminate(handle)).complete is True
+
+
+@pytest.mark.asyncio
+async def test_docker_restore_recreates_only_absent_exact_preparation(tmp_path: Path) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    shadow = tmp_path / "state" / "git-shadow"
+    runner = RecordingDockerRunner(workspace, shadow)
+    original_provider = _provider(tmp_path, runner)
+    spec = _docker_spec(workspace)
+    handle = await original_provider.create(
+        "run_" + "1" * 32,
+        spec,
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+    original_provider._prepared.pop(handle.sandbox_id).git_shadow_file.close()
+    provider = _provider(tmp_path, runner)
+    runner.calls.clear()
+
+    restored = await provider.restore(handle, spec)
+
+    assert restored == handle
+    assert provider._prepared[handle.sandbox_id].handle == handle
+    assert provider._prepared[handle.sandbox_id].spec == spec
+    assert provider._prepared[handle.sandbox_id].git_shadow_file.closed is False
+    assert not any(
+        call[0][1:3] in {("container", "create"), ("container", "rm")} for call in runner.calls
+    )
+    assert (await provider.terminate(handle)).complete is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "run",
+        "project",
+        "spec",
+        "requirements",
+        "configuration",
+        "capabilities",
+        "image",
+        "daemon",
+        "recovery-scope",
+    ],
+)
+async def test_docker_restore_rejects_changed_checkpoint_without_replacement_or_dispatch(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    provider = _provider(tmp_path, runner)
+    spec = _docker_spec(workspace)
+    handle = await provider.create(
+        "run_" + "1" * 32,
+        spec,
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+    original = provider._prepared[handle.sandbox_id]
+    changed_handle = handle.model_copy(deep=True)
+    changed_spec = spec.model_copy(deep=True)
+    if mismatch == "run":
+        changed_handle.run_id = "run_" + "8" * 32
+    elif mismatch == "project":
+        changed_handle.project_id = "prj_" + "8" * 32
+        changed_spec.project_id = "prj_" + "8" * 32
+    elif mismatch == "spec":
+        changed_spec.timeout_seconds += 1
+    elif mismatch == "requirements":
+        changed_spec.requirements = changed_spec.requirements.model_copy(
+            update={"code_execution_required": True}
+        )
+    elif mismatch == "configuration":
+        changed_spec.configuration = changed_spec.configuration.model_copy(
+            update={"cpu_limit": 2.0}
+        )
+        changed_handle.configuration_hash = canonical_json_hash(
+            changed_spec.configuration.model_dump(mode="json")
+        )
+    elif mismatch == "capabilities":
+        changed_handle.capabilities = changed_handle.capabilities.phase1_fake()
+    elif mismatch == "image":
+        changed_handle.image_identity = "sha256:" + "b" * 64
+        changed_spec.image_identity = "sha256:" + "b" * 64
+    elif mismatch == "daemon":
+        changed_handle.daemon_identity = "8" * 64
+        changed_spec.daemon_identity = "8" * 64
+    else:
+        changed_handle.recovery_scope_id = "8" * 32
+    runner.calls.clear()
+
+    with pytest.raises(FleetError):
+        await provider.restore(changed_handle, changed_spec)
+
+    assert provider._prepared[handle.sandbox_id] is original
+    assert original.git_shadow_file.closed is False
+    assert runner.calls == []
+    assert (await provider.terminate(handle)).complete is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", ["workspace", "shadow", "closed-pin"])
+async def test_docker_restore_rejects_changed_mount_or_pin_without_dispatch(
+    tmp_path: Path,
+    changed: str,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    shadow = tmp_path / "state" / "git-shadow"
+    runner = RecordingDockerRunner(workspace, shadow)
+    provider = _provider(tmp_path, runner)
+    spec = _docker_spec(workspace)
+    handle = await provider.create(
+        "run_" + "1" * 32,
+        spec,
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+    original = provider._prepared[handle.sandbox_id]
+    if changed == "workspace":
+        workspace.rename(tmp_path / "old-candidate")
+        workspace.mkdir()
+    elif changed == "shadow":
+        shadow.unlink()
+        shadow.write_bytes(b"")
+        shadow.chmod(0o400)
+    else:
+        original.git_shadow_file.close()
+    runner.calls.clear()
+
+    with pytest.raises(FleetError):
+        await provider.restore(handle, spec)
+
+    assert provider._prepared[handle.sandbox_id] is original
+    assert runner.calls == []
+    assert (await provider.terminate(handle)).complete is True
+
+
+@pytest.mark.asyncio
+async def test_docker_restore_rejects_inflight_preparation_map_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    runner = RecordingDockerRunner(workspace, tmp_path / "state" / "git-shadow")
+    provider = _provider(tmp_path, runner)
+    spec = _docker_spec(workspace)
+    handle = await provider.create(
+        "run_" + "1" * 32,
+        spec,
+        sandbox_id="sandbox_" + "2" * 32,
+    )
+    original = provider._prepared[handle.sandbox_id]
+    original_run = runner.run
+    restore_info_entered = asyncio.Event()
+    restore_info_release = asyncio.Event()
+
+    async def block_restore_info(
+        argv: tuple[str, ...],
+        *,
+        environment: dict[str, str],
+        cwd: str | None = None,
+        timeout_seconds: int,
+        max_output_bytes: int,
+    ) -> ProcessResult:
+        if argv[1:2] == ("info",) and not restore_info_entered.is_set():
+            restore_info_entered.set()
+            await restore_info_release.wait()
+        return await original_run(
+            argv,
+            environment=environment,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+        )
+
+    monkeypatch.setattr(runner, "run", block_restore_info)
+    runner.calls.clear()
+    restoration = asyncio.create_task(provider.restore(handle, spec))
+    try:
+        await asyncio.wait_for(restore_info_entered.wait(), timeout=5)
+        replacement = replace(original)
+        provider._prepared[handle.sandbox_id] = replacement
+        restore_info_release.set()
+        with pytest.raises(FleetError) as captured:
+            await restoration
+    finally:
+        restore_info_release.set()
+        if not restoration.done():
+            restoration.cancel()
+            await asyncio.gather(restoration, return_exceptions=True)
+
+    assert captured.value.code is ErrorCode.SANDBOX_INSPECTION_FAILED
+    assert provider._prepared[handle.sandbox_id] is replacement
+    assert original.git_shadow_file.closed is False
+    assert not any(
+        call[0][1:3] in {("container", "create"), ("container", "rm")} for call in runner.calls
+    )
+    assert (await provider.terminate(handle)).complete is True
 
 
 @pytest.mark.parametrize("unsafe", ["nonempty", "permissions", "hardlink"])

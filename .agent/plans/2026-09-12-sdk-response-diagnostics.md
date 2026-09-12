@@ -30,14 +30,20 @@ This slice improves diagnosis; it does not make rejected responses acceptable.
 
 ## Current repository state
 
-Base09c5a64 contains pinned native runtime adapters. In
+The historical starting base09c5a64 contained pinned native runtime adapters. In
 adapters/runtime/openai_agents_boundary.py, PinnedResponsesModel._fetch_response
-maps SDK ModelBehaviorError and combined identity/terminal-state failure to one
-message; RawUsageReceipt.observe uses the same message for invalid JSON/usage.
-LangGraph raw_response combines response-envelope checks and uses generic
+mapped SDK ModelBehaviorError and combined identity/terminal-state failure to one
+message; RawUsageReceipt.observe used the same message for invalid JSON/usage.
+LangGraph raw_response combined response-envelope checks and used generic
 response_policy errors for usage. RuntimeDiagnostic is a deliberately restricted
 projection. CLI error.message and run.failed.payload.message already persist
 trusted redacted FleetError messages; agent.failed does not contain that message.
+
+Slice G is now delivered in PR11, normally merged at2026-09-12T11:28:17Z with
+exact head/merge/tree readback recorded below. Its accepted 4211/23 full suite
+and archives describe the frozen G baseline. The newer F Session-restoration
+candidate has independent physical22 and integrated full4246/26 acceptance;
+its final artifact/delivery records are in `2026-09-12-session-docker-resume.md`.
 
 ## Security impact
 
@@ -129,9 +135,11 @@ recorded decision after offline acceptance, not automatic retry from this fix.
   JUnit SHA256 `a51a7f643ee3deacc0f2b6309bee2ae9b6e22d27654d377d6145b4892de61e6b`;
   wheel `a408ed5117999f70616a304769eca77bae3e5ca7c609b57fd4a5d9488d11423a`,
   sdist `ac4e56395b4c8e275d00b5e859fe64aba5183f440f2ba15155229dfcf8501b3d`.
-  Current README SHA256
+  Frozen G README SHA256
   `93067f151cea89f3b0aac0a5709571ee6f5ecaa69c6b9d7dcf372774de2289a2`.
-  Independent terminal/archive readback and normal GitHub delivery remain pending.
+  Independent terminal/archive readback and normal GitHub delivery were then
+  pending; both subsequently completed as recorded below. These are G artifacts,
+  not a package qualification of the newer F candidate or its updated README.
 - [x] (2026-09-12T11:07:34Z) Complete current-B+G offline gate passed4211/23;
   all4234 collected/JUnit identities reconcile,0 missing/extra/duplicates/failures/
   errors,548 unchanged source inputs. Collection-to-end1728.402139s. Three
@@ -201,7 +209,17 @@ recorded decision after offline acceptance, not automatic retry from this fix.
   import origin,115 schemas and read-only migration journal1–13 passed. Source,
   plan and ignored/untracked inventory stayed unchanged; new-content secret and
   absolute-machine-path scans were clear. No paid request or Docker rerun.
-- [ ] Exact-head commit, push and ordinary GitHub merge/readback.
+- [x] (2026-09-12T11:28:17Z) Exact-head commit/push and ordinary
+  [PR #11](https://github.com/meyowu/agent-fleet-foundry/pull/11) merge/readback
+  complete. Head `13daa225d8a195a9e16d317bac6b21e282b89319`, merge
+  `5b09fea1c5fdb79066498496852adbb9e5239773`, identical tree
+  `5d918cf7954918058cda150686183fd101390f63`. No admin bypass, rules changes or
+  branch deletion. Actions readback is0 for head and merge, not hosted CI success.
+- [x] Post-merge smoke: clean diagnostics worktree fast-forwarded to merge5b09fea;
+  existing `tests/integration/test_cli.py -k runtime_diagnostic_survives_reopened_logs`
+  passed3,32 deselected in6.62s under a cleared no-key/no-Docker/no-install
+  environment. `sdk-postmerge-smoke.xml` and its fixtures remain private and
+  retained. These overlapping smoke cases are not added to the4211 full-suite count.
 
 ## Discoveries
 
@@ -275,10 +293,14 @@ Independent repaired-code verification passed at10:36:45Z, with exact byte
 continuity after integration onto current-B confirmed separately. The complete
 default suite passed4211/23 with4234 exact identities and548 unchanged source
 inputs; all six configured static checks passed (including mypy392 files).
-README and ledger now record that exact full result. Final current-README package
-closure passed1/2.82s. Independent terminal/archive readback passed at11:19:00Z;
-only exact-head GitHub delivery remains pending. This factual post-release plan
-update does not change the accepted code, README or package bytes.
+The G README and ledger recorded that exact full result. Final frozen-G-README
+package closure passed1/2.82s. Independent terminal/archive readback passed
+at11:19:00Z; PR11 was normally merged at11:28:17Z with identical head/merge tree
+and zero Actions for both. These G code/archive identities remain historical
+evidence; later F documentation changes do not retroactively refresh the archives.
+F's physical repair has since passed current integrated full4246/26, distribution1
+and fresh-install3; its final independent artifact review and GitHub delivery are
+recorded separately in the F plan.
 No additional paid attempt was authorized;
 the prior live failure's exact field remains unresolved and alias mismatch is
 only an offline hypothesis.

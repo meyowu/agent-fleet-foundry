@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 from conftest import FleetHarness
@@ -21,6 +23,7 @@ from agent_fleet.domain.models import (
     SandboxCleanupResult,
     SandboxExecutionHandle,
     SandboxHandle,
+    SandboxSpec,
 )
 from agent_fleet.domain.security import canonical_json_hash
 
@@ -58,6 +61,55 @@ async def test_approval_survives_reconstruction_and_side_effect_executes_once(
         if event.event_type == "capability.consumed"
     ]
     assert len(consumed_events) == 1
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_same_process_approval_resume_restores_retained_sandbox_once(
+    harness: FleetHarness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paused = await harness.start(FakeScenario.APPROVAL)
+    assert paused.pending_approval_id is not None
+    provider = harness.container.sandbox
+    sandbox = harness.container.recovery.resources.engineer_sandbox(paused.run_id)
+    retained = provider.handles[sandbox.sandbox_id]
+    original_restore = cast(
+        Callable[[SandboxHandle, SandboxSpec], Awaitable[SandboxHandle]],
+        provider.restore,
+    )
+    restore_calls = 0
+
+    async def record_retained_restore(
+        handle: SandboxHandle,
+        spec: SandboxSpec,
+    ) -> SandboxHandle:
+        nonlocal restore_calls
+        restore_calls += 1
+        assert provider.handles[handle.sandbox_id] is retained
+        return await original_restore(handle, spec)
+
+    monkeypatch.setattr(provider, "restore", record_retained_restore)
+    harness.container.approvals.approve_once(paused.pending_approval_id)
+
+    ready = await harness.container.workflow.resume(paused.run_id)
+
+    assert ready.status is RunStatus.READY_FOR_REVIEW
+    assert restore_calls == 1
+    assert (
+        harness.container.state.count_executed_intents(ready.run_id, "fixture.record_side_effect")
+        == 1
+    )
+    assert (
+        len(
+            [
+                event
+                for event in harness.container.state.list_events(ready.run_id)
+                if event.event_type == "sandbox.rehydrated"
+            ]
+        )
+        == 1
+    )
 
 
 @pytest.mark.integration
