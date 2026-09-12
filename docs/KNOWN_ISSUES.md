@@ -36,16 +36,34 @@ not the actual returned model name or the cause of02. Exact terminal/independent
 readback status is recorded in the acceptance ledger. No validation was relaxed
 and no automatic retry or model substitution followed.
 
+Two later, separately reviewed configuration experiments also failed on delivered
+PR13. Live04 explicitly selected dated GPT-5 nano for Engineer/Verifier and stopped
+with the finite SDK-processing diagnostic. Its independent failed-attempt audit
+passed, but cannot distinguish the actual failed/incomplete response status or
+establish that model identity matched. Live05 explicitly selected dated GPT-4.1
+nano for those two roles, leaving CoS unchanged, and stopped with
+`RUNTIME_OUTPUT_INVALID` / `output_schema` / `schema_validation`. Its five requests
+reported17,487 tokens with no unknown/outstanding requests, but dollar billing is
+not reported. Three Engineer tools and one standalone passing Docker pytest receipt
+exist; accepted Engineer output/patch, Run-attached command evidence and independent
+Verifier do not. Its stopped-owner audit verifies exact cleanup and preservation,
+not successful delivery. Neither result
+justifies relaxing response or output validation. The exact attempt, accounting,
+independent audit and Git-delivery status are maintained in the
+[pinned-model plan](../.agent/plans/2026-09-12-pinned-model-canary.md) and
+[low-cost configuration plan](../.agent/plans/2026-09-12-low-cost-harness-canary.md).
+No additional paid attempt follows live05; it is not mixed-Harness qualification.
+
 ## Baseline observations are not model or campaign qualification
 
-The current D/E candidate implements retained bounded/redacted observation output
+The D/E implementation delivered in PR13 exposes retained bounded/redacted observation output
 in standalone CLI and Session. Its full offline gate passed4291/32, and six
 generated Python/Node real-Docker observations passed independent physical
 readback. The business exits are0/2/1/0/1/1, not six successful business tests.
 Independent full/source/static readback also passed. The separate current-D
 standard-Docker/adversarial/installation/package/delivery gates are tracked in
 the [D/E ledger](MVP_ACCEPTANCE.md#p1-d-and-p1-e--baseline-observations-2026-09-12).
-This is local candidate evidence, not an absent baseline feature or an external
+This is locally verified delivered evidence, not an absent baseline feature or an external
 six-repository/24-task campaign. Historical F gates do not qualify this D/E revision.
 
 Generic campaign manifests, reservation/execution machinery and cold-start slots
