@@ -1,3 +1,7 @@
+> **Historical implementation brief.** To install and use the current product,
+> start with the [public README](README.md). This file describes the original
+> development kit, not the current installation procedure.
+
 # Agent Fleet — Codex implementation kit
 
 This kit is a complete implementation brief for a greenfield, local-first, BYOK multi-agent coding fleet whose primary user interface is a Chief of Staff (CoS).

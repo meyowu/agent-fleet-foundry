@@ -3,9 +3,11 @@
 An implemented local MVP, a GitHub merge, a live-provider pass and a public OSS
 release are different outcomes. Current exact results live in `MVP_ACCEPTANCE.md`
 and the living release ExecPlan. Package version0.1.0 is not evidence of a published
-PyPI package or tag. No license has been selected by the agent and repository
-visibility must not change implicitly. Public release remains blocked until the
-owner license and explicitly authorized real-provider canary gates are resolved.
+PyPI package or tag. The owner selected Apache-2.0 on 2026-09-12; see
+[LICENSE](../LICENSE). Repository visibility must not change implicitly. Review
+[publication privacy findings](PUBLICATION_PRIVACY_REVIEW.md), the remaining
+release checks and exact live-provider evidence before publishing. License
+selection alone does not pass the other release gates.
 
 ## Candidate preparation
 
@@ -110,3 +112,13 @@ Optional OpenTelemetry export, remote sandbox/harness integrations and backgroun
 services are deliberately deferred. Unperformed live inference, advisory scanning,
 hostile-host resistance or untested platforms must stay limitations, not implied
 by broad local test counts.
+
+## Repository naming compatibility
+
+The product is Agent Fleet Foundry and the repository is
+`meyowu/agent-fleet-foundry` (formerly `meyowu/agent-fleet-codex-kit`). The executable
+remains `fleet`, the Python distribution remains `agent-fleet`, and the import
+package remains `agent_fleet`. Existing `.fleet/` configuration, user-state paths,
+schema identifiers, Docker labels and runner image names remain compatible.
+Historical records and runtime/configuration templates can retain the earlier
+Agent Fleet name; the rename does not alter their bound bytes or verification.

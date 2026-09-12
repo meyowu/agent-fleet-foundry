@@ -204,7 +204,7 @@ Each of the first three staged source trees also passed isolated archive-based C
 import/help smoke, with Dashboard registration added only alongside its module.
 Those small commit smokes do not replace final-tree matrix acceptance.
 
-[PR6](https://github.com/meyowu/agent-fleet-codex-kit/pull/6) was normally merged
+[PR6](https://github.com/meyowu/agent-fleet-foundry/pull/6) was normally merged
 at `2026-09-08T00:45:57Z` (September7 local time), with exact-head matching and no
 admin override. Merge commit `8e64fd893b68384868222ebad3b274787c9d89f8` has parents
 the baseline `9276cbf44fa32adc8087d618e0ec4aeff60b877c` and feature head

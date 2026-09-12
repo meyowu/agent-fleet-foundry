@@ -1,4 +1,4 @@
-# Security model — Agent Fleet
+# Security model — Agent Fleet Foundry
 
 ## 1. Security objective
 
@@ -44,7 +44,7 @@ availability limitation, not weaker redaction or permission to use another key.
 
 The independently reviewed baseline is integrated into the working candidate.
 Its narrow physical standalone fixture and Session/offline qualifications are
-separate; see README for exact results, not a general physical-Docker claim.
+separate; see [development history](DEVELOPMENT_HISTORY.md) for exact results, not a general physical-Docker claim.
 See [ADR0011](adr/0011-reviewed-model-free-business-baselines.md)
 and its living ExecPlan. It observes one configured command under explicit user
 allow-once consent, through the existing Broker/Gateway/resource/sandbox boundary;
@@ -796,7 +796,7 @@ the original local validation even when the request specified strict output.
 
 The explicit OpenAI client uses a per-client reject-all cookie policy. Untrusted Set-Cookie responses must not create client state or add Cookie to later requests; response-header clearing occurs too late to prevent HTTP client extraction by itself. Cookie remains prohibited by the final request guard, and no new header or endpoint authority is granted. Trusted request/response guard failures have separate fixed diagnostic causes without exposing header names or values.
 
-Action-tool strict generation is an additional output-shape constraint, never permission. The corrective implementation requests strict external function arguments while retaining the original, independently validated catalog schemas. Provider-incompatible string-length keywords may move to descriptive text in a copied wire schema; original local Pydantic limits, exact command IDs and whole-batch validation must still reject invalid arguments before reservation or execution. No missing command ID is inferred, no incompatible-schema non-strict fallback is allowed, and no verification tool is advertised without an admitted command. Fixed `tool_arguments` diagnostics distinguish this boundary from final-output validation without exposing validation records. Output-model configuration, budgets, retry prohibitions, PermissionBroker and CompletionGate remain unchanged. Fresh live acceptance is separately recorded in README; strict generation alone does not prove task success.
+Action-tool strict generation is an additional output-shape constraint, never permission. The corrective implementation requests strict external function arguments while retaining the original, independently validated catalog schemas. Provider-incompatible string-length keywords may move to descriptive text in a copied wire schema; original local Pydantic limits, exact command IDs and whole-batch validation must still reject invalid arguments before reservation or execution. No missing command ID is inferred, no incompatible-schema non-strict fallback is allowed, and no verification tool is advertised without an admitted command. Fixed `tool_arguments` diagnostics distinguish this boundary from final-output validation without exposing validation records. Output-model configuration, budgets, retry prohibitions, PermissionBroker and CompletionGate remain unchanged. Fresh live acceptance is separately recorded in [development history](DEVELOPMENT_HISTORY.md); strict generation alone does not prove task success.
 
 The pre-existing fake-only `offline-canary` fallback is simulated evidence, not an admitted real command or a fallback for real/Docker tasks. A real catalog with no admitted verification command omits that tool and rejects a forged call.
 

@@ -1,8 +1,8 @@
-# Product specification — Agent Fleet
+# Product specification — Agent Fleet Foundry
 
 ## 1. Product definition
 
-Agent Fleet is a local-first, bring-your-own-key Chief-of-Staff command-line product that bootstraps, operates, secures, and evolves a versioned, reviewable, project-specific agent organization around a software repository.
+Agent Fleet Foundry is a local-first, bring-your-own-key Chief-of-Staff command-line product that bootstraps, operates, secures, and evolves a versioned, reviewable, project-specific agent organization around a software repository.
 
 The positioning is intentionally narrower than “multi-agent framework”:
 

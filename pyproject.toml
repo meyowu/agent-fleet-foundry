@@ -5,8 +5,10 @@ build-backend = "hatchling.build"
 [project]
 name = "agent-fleet"
 version = "0.1.0"
-description = "Local-first, verification-oriented agent workflow control plane"
+description = "Agent Fleet Foundry: a local-first, verification-oriented agent control plane"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.15"
 authors = [{ name = "Agent Fleet contributors" }]
 dependencies = [
@@ -38,6 +40,11 @@ dependencies = [
   "typer>=0.12,<1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/meyowu/agent-fleet-foundry"
+Repository = "https://github.com/meyowu/agent-fleet-foundry"
+Issues = "https://github.com/meyowu/agent-fleet-foundry/issues"
+
 [project.optional-dependencies]
 dev = [
   "hatchling==1.32.0",
@@ -63,6 +70,7 @@ packages = ["src/agent_fleet"]
 include = [
   "/src/agent_fleet",
   "/README.md",
+  "/LICENSE",
   "/pyproject.toml",
   "/docs/USER_GUIDE.md",
 ]

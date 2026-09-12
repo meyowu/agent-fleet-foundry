@@ -1,12 +1,10 @@
-# Agent Fleet 用户指南
+# Agent Fleet Foundry 用户指南
 
 本指南用中文解释产品，保留命令、字段和架构名的 English 原名。目标是让你理解每一步会做什么、授权什么，以及什么证据才算完成。
 
-文档状态：本版本实现六项核心能力及本地 release-candidate 工具。全新 wheel/sdist、真实 Docker 练习、跨平台检查与 GitHub 交付的确切结果，见 [MVP acceptance ledger](MVP_ACCEPTANCE.md) 和 [README](../README.md#release-candidate-verification-2026-09-05)；不要把示例命令当成执行记录。2026-09-09 的有界真实 OpenAI canary 已独立验收通过，范围见本指南的真实模型测试说明。CLI 的完整阶段标记保持6；owner 许可证决定和其他公开发布门槛不会因此自动完成，也不代表 S1–S3 全部完成。当前没有公开包/镜像发布或已获授权的开源许可证。安装包附带本指南全文；跨文档相对链接请在同版本源码仓库中浏览。
+第一次使用请先阅读 [首页逐步上手指南](../README.md)，按 Fork → 安装 → Docker → API key → 初始化 → 审查补丁完成练习。本指南提供完整操作与恢复说明。安装包附带本指南全文；跨文档相对链接请在同版本源码仓库中浏览。
 
-真实模型结果补充：上段指的是10:37UTC验收的历史 attempt6，不是当前版本的通过证明。最新3fe候选在20:44UTC失败：Engineer和Verifier各自的Docker测试退出码为0，但Verifier随后读取受保护的`.fleet`目录被拒绝，没有有效VerifierVerdict，CompletionGate未通过。后续仅补充读取范围/证据指引，尚无新的真实模型成功记录。请以[README的最新状态](../README.md#s1s3-development-status--2026-09-09-utc)为准。
-
-本次新增的 Session-first 功能见下一节；其交付进度与新的验收边界以 [Session-first living plan](../.agent/plans/2026-09-07-session-first-release.md) 和最终 README 为准。旧 MVP 账本不代表本次功能已经通过全部验收。
+开发进度、历史测试结果和模型验收边界已移到 [开发记录](DEVELOPMENT_HISTORY.md) 与 [验收账本](MVP_ACCEPTANCE.md)。历史成功或失败仅代表对应源码快照，不保证当前模型或任意项目成功。项目采用 [Apache-2.0](../LICENSE)，不预设已发布到 PyPI 或公开镜像仓库。
 
 ## 目录
 
@@ -129,6 +127,8 @@ fleet
 初始化引导没有私有 FakeSandbox 快捷入口。真正首次初始化仍必须满足第3节的隔离验证和清理条件。
 
 ### 2. 先审计划，再执行，再审补丁
+
+> 当前源码在同一 Session 内恢复 Docker 任务时已复现 `SANDBOX_CREATION_FAILED`。首次使用请采用 [首页的独立 CLI 命令流程](../README.md#7-run-your-first-task)。下面是 Session 接口说明，不代表该故障已修复；详情与恢复边界见 [已知问题](KNOWN_ISSUES.md)。
 
 默认裸入口和旧 one-shot 行为保持兼容。要让这个会话的新任务在 CoS 完成计划后、创建工作区或调度执行 Agent **之前**暂停，显式启动：
 
@@ -313,7 +313,7 @@ Dashboard 读取同一份项目、会话、父/子 Run、Agent、模型绑定、
 
 ## 1. 产品是什么
 
-Agent Fleet 是本地优先、用户自带模型的 **Agent 组织运行时**，不是把固定数量的机器人放进一个聊天室。
+Agent Fleet Foundry 是本地优先、用户自带模型的 **Agent 组织运行时**，不是把固定数量的机器人放进一个聊天室。
 
 你只与 Chief of Staff（CoS，参谋长）沟通。CoS 提议任务范围、团队和操作；确定性的控制平面负责检查范围、决定权限、调度隔离执行、记录证据。模型不能批准自己的请求，也不能自行更换执行环境。
 
@@ -377,7 +377,7 @@ uv pip install /absolute/path/to/agent_fleet-0.1.0-py3-none-any.whl
 fleet version --json
 ```
 
-以上安装可能需要下载声明的依赖，不属于离线测试。不要把源码里的 `.venv` 或 `--no-deps` 解包检查当成全新依赖安装。当前没有承诺 PyPI 发布、公开 runner 镜像或已选择的许可证；不要根据包名安装来源不明的同名产品。
+以上安装可能需要下载声明的依赖，不属于离线测试。不要把源码里的 `.venv` 或 `--no-deps` 解包检查当成全新依赖安装。项目采用 Apache-2.0；当前没有承诺 PyPI 发布或公开 runner 镜像；不要根据包名安装来源不明的同名产品。
 
 在独立安装环境中，可用下面的只读命令找到随包附带的本指南；源码用户直接阅读 `docs/USER_GUIDE.md`：
 
@@ -492,7 +492,7 @@ Canary 使用确定性的假模型，不消耗真实模型调用；这里的 Doc
 
 假模型只能执行受支持的确定性 fixture 场景，不能理解任意软件需求。真正使用 CoS 处理项目，需要显式选择 `pydantic-ai`：可以在最初注册时指定，也可以通过上文的用户模型 profiles 为未来任务配置。
 
-PydanticAI 的 OpenAI 路径支持显式 `openai:<model-id>` 或 `openai-chat:<model-id>`，分别选择 Responses 和 Chat Completions。`anthropic:<model-id>`、`google:<model-id>` 及逐角色绑定已通过真实 SDK 的离线测试，尚无这两个供应商的真实请求验收；`google-gla:` 不是 Fleet 公开别名。新增 `openai-agents` 和 `langgraph` Harness 只允许 `openai:<model-id>`，两者均有独立离线验收；具体源码快照与限制见 README 和当前 ExecPlan。不同角色混用这三个 Harness 的9个离线流程已通过实现测试，不等于3个真实混用任务已完成。系统不会自动切换供应商。模型 ID 由操作者明确提供，示例占位符不是已验证可用的模型。
+PydanticAI 的 OpenAI 路径支持显式 `openai:<model-id>` 或 `openai-chat:<model-id>`，分别选择 Responses 和 Chat Completions。`anthropic:<model-id>`、`google:<model-id>` 及逐角色绑定已通过真实 SDK 的离线测试，尚无这两个供应商的真实请求验收；`google-gla:` 不是 Fleet 公开别名。新增 `openai-agents` 和 `langgraph` Harness 只允许 `openai:<model-id>`，两者均有独立离线验收；具体源码快照与限制见 [开发记录](DEVELOPMENT_HISTORY.md) 和当前 ExecPlan。不同角色混用这三个 Harness 的9个离线流程已通过实现测试，不等于3个真实混用任务已完成。系统不会自动切换供应商。模型 ID 由操作者明确提供，示例占位符不是已验证可用的模型。
 
 先通过你正常的安全环境配置方式设定 key；不要把 key 放进聊天、命令参数、仓库文件或截图。然后只传引用：
 
@@ -515,7 +515,7 @@ fleet init /absolute/path/to/new-project \
 - 项目一旦已有组织版本头，不能通过再次 init 改 runtime、模型、credential reference 或 sandbox；移动 `.fleet/` 也不能绕过这个约束。未来任务的模型选择使用显式用户 profiles；不同 sandbox 仍需要保留旧项目和状态并创建独立注册。
 - 在同一个已记录的环境引用下轮换 key 的**值**不需要修改组织配置。换成另一个引用名称是不同操作。
 
-本地离线 FunctionModel 测试验证接口、输出检查和控制流，不等于真实供应商可用性或模型质量验收。用户已明确提供真实测试凭证并授权 canary；它只供临时可信控制平面进程使用，不写入项目、测试报告或工作容器。实际尝试及失败保留在 README 和 living canary plan，不能据凭证存在宣称端到端通过。
+本地离线 FunctionModel 测试验证接口、输出检查和控制流，不等于真实供应商可用性或模型质量验收。历史真实模型尝试及其结果见 [开发记录](DEVELOPMENT_HISTORY.md)；凭证存在不等于端到端通过。
 
 ## 5. 与 Chief of Staff 对话
 
@@ -794,7 +794,7 @@ fleet fleet-patch rollback <current-applied-proposal-id> --json
 
 第一步审查不会修改 Run、执行工具或清理资源。恢复码只在当前进程内保留五分钟、使用一次，绑定当前会话、任务、ownership 和资源状态；切换历史、状态变化、重启、重复使用都需要重新审查。这个码不同于 `/confirm` 的权限或 Patch 确认码。恢复只终止并清理原任务，之后可以在同一会话输入一个新的目标；不会恢复丢失的模型内存或重新发送未知请求。
 
-正在本进程正常运行的任务应使用 `/cancel`，不能用 stopped-owner 声明抢占。程序不能仅凭你的确认判断另一个操作系统进程是否真的停止；不要在旧 owner 仍工作时确认。恢复期间的连续取消也必须等待已经开始的资源清理完成，不代表强杀后没有风险。此新增 Session 入口的独立验收状态见 README；原有独立 CLI 仍兼容：
+正在本进程正常运行的任务应使用 `/cancel`，不能用 stopped-owner 声明抢占。程序不能仅凭你的确认判断另一个操作系统进程是否真的停止；不要在旧 owner 仍工作时确认。恢复期间的连续取消也必须等待已经开始的资源清理完成，不代表强杀后没有风险。此新增 Session 入口的历史验收状态见 [开发记录](DEVELOPMENT_HISTORY.md)；原有独立 CLI 仍兼容：
 
 确认原进程已停止后：
 
@@ -977,7 +977,7 @@ uv run --offline pytest -q -m 'installed_distribution and not docker_integration
 
 尚不能据此宣称任意模型稳定完成任意需求；Modal/Hosted sandbox、任意 harness/plugin、联网 worker、自动部署已经实现；或能隔离恶意宿主账户、daemon、内核和任意控制平面 adapter 代码。
 
-全新安装、Linux/macOS 矩阵、GitHub merge 与公开发布是独立结果，以验收记录为准。有界真实 OpenAI canary 已于2026-09-09独立验收通过，但没有应用目标 Patch，也不证明一般任务可靠性或 S1–S3 完成；owner 许可证决定和公开发布仍未完成，不因本地或 CI 测试通过而自动完成。
+全新安装、Linux/macOS 矩阵、GitHub merge 与公开发布是独立结果，以验收记录为准。有界真实 OpenAI canary 已于2026-09-09独立验收通过，但没有应用目标 Patch，也不证明一般任务可靠性或 S1–S3 完成；许可证已由 owner 选定为 Apache-2.0；公开发布及其余门槛不因本地或 CI 测试通过而自动完成。
 
 推荐学习顺序：只读 preview → 确定性 Docker Canary → 在无敏感信息的独立项目配置明确 BYOK → Safe 审批 → 审查完整证据并 apply 代码 → 提议验证规则 → 检查后续任务要求变化 → 当前头 rollback。
 
