@@ -358,6 +358,63 @@ class DockerSandboxProvider:
             raise
         return result_handle
 
+    async def restore(self, handle: SandboxHandle, spec: SandboxSpec) -> SandboxHandle:
+        """Restore one exact logical sandbox without weakening strict creation."""
+
+        handle_snapshot = SandboxHandle.model_validate(handle.model_dump(mode="json"))
+        spec_snapshot = SandboxSpec.model_validate(spec.model_dump(mode="json"))
+        self._require_restore_request(handle_snapshot, spec_snapshot)
+        prepared = self._prepared.get(handle_snapshot.sandbox_id)
+        if prepared is None:
+            restored = await self.create(
+                handle_snapshot.run_id,
+                spec_snapshot,
+                sandbox_id=handle_snapshot.sandbox_id,
+            )
+            prepared = self._prepared.get(handle_snapshot.sandbox_id)
+            if prepared is None:
+                raise _sandbox_restore_mismatch()
+            self._require_same_restoration(
+                prepared,
+                handle_snapshot,
+                spec_snapshot,
+            )
+            inspection = await self.inspect(restored)
+            self._require_same_restoration(
+                prepared,
+                handle_snapshot,
+                spec_snapshot,
+            )
+            if restored != handle_snapshot or inspection != prepared.inspection:
+                raise _sandbox_restore_mismatch()
+            return SandboxHandle.model_validate(restored.model_dump(mode="json"))
+
+        self._require_same_restoration(prepared, handle_snapshot, spec_snapshot)
+        executable = self._require_executable()
+        self._require_worker_identity()
+        daemon = await self._require_local_linux_daemon(
+            executable,
+            expected_identity=handle_snapshot.daemon_identity,
+        )
+        self._require_same_restoration(prepared, handle_snapshot, spec_snapshot)
+        image_identity, image_environment = await self._inspect_image(
+            executable,
+            cast(str, spec_snapshot.image_identity),
+            expected_architecture=daemon.architecture,
+        )
+        self._require_same_restoration(prepared, handle_snapshot, spec_snapshot)
+        if (
+            image_identity != prepared.image_identity
+            or image_environment != prepared.image_environment
+        ):
+            raise _sandbox_restore_mismatch()
+        await self._require_local_linux_daemon(
+            executable,
+            expected_identity=handle_snapshot.daemon_identity,
+        )
+        self._require_same_restoration(prepared, handle_snapshot, spec_snapshot)
+        return SandboxHandle.model_validate(prepared.handle.model_dump(mode="json"))
+
     async def inspect(self, handle: SandboxHandle) -> SandboxInspection:
         prepared = self._prepared.get(handle.sandbox_id)
         if prepared is None or handle.provider != "docker" or handle != prepared.handle:
@@ -2043,6 +2100,52 @@ class DockerSandboxProvider:
                 "Use the original Fleet state to inspect and recover the resource.",
             )
 
+    def _require_restore_request(self, handle: SandboxHandle, spec: SandboxSpec) -> None:
+        workspace = _validated_workspace(spec.workspace_host_path)
+        expected_configuration_hash = canonical_json_hash(
+            spec.configuration.model_dump(mode="json")
+        )
+        self._require_current_recovery_scope(handle.recovery_scope_id)
+        if (
+            handle.provider != "docker"
+            or spec.configuration.provider != "docker"
+            or spec.project_id is None
+            or handle.project_id != spec.project_id
+            or handle.workspace_host_path != str(workspace)
+            or handle.capabilities != self.capabilities
+            or handle.configuration_hash != expected_configuration_hash
+            or handle.image_identity != spec.image_identity
+            or handle.daemon_identity != spec.daemon_identity
+            or spec.environment
+            or spec.configuration.network_mode != "none"
+        ):
+            raise _sandbox_restore_mismatch()
+
+    def _require_same_restoration(
+        self,
+        prepared: _PreparedSandbox,
+        handle: SandboxHandle,
+        spec: SandboxSpec,
+    ) -> None:
+        if (
+            self._prepared.get(handle.sandbox_id) is not prepared
+            or prepared.handle != handle
+            or prepared.spec != spec
+            or prepared.workspace != _validated_workspace(spec.workspace_host_path)
+            or prepared.image_identity != handle.image_identity
+            or prepared.inspection.sandbox_id != handle.sandbox_id
+            or prepared.inspection.provider != handle.provider
+            or prepared.inspection.configuration_hash != handle.configuration_hash
+            or prepared.inspection.capabilities != handle.capabilities
+            or prepared.inspection.image_identity != handle.image_identity
+            or prepared.inspection.daemon_identity != handle.daemon_identity
+            or prepared.inspection.effective_network_mode != spec.configuration.network_mode
+            or prepared.inspection.missing_requirements(spec.requirements)
+        ):
+            raise _sandbox_restore_mismatch()
+        self._require_current_recovery_scope(handle.recovery_scope_id)
+        self._revalidate_prepared_paths(prepared)
+
     def _revalidate_prepared_paths(self, prepared: _PreparedSandbox) -> None:
         workspace = _validated_workspace(str(prepared.workspace))
         with self._open_git_shadow() as current_shadow:
@@ -2076,6 +2179,14 @@ class DockerSandboxProvider:
                 "Run through the Agent Fleet composition root and doctor preflight.",
             )
         return str(executable)
+
+
+def _sandbox_restore_mismatch() -> FleetError:
+    return FleetError(
+        ErrorCode.SANDBOX_INSPECTION_FAILED,
+        "The Docker sandbox restoration binding does not match its exact checkpoint.",
+        "Cancel or recover this run; Fleet did not replace resources or replay a command.",
+    )
 
 
 def _validated_workspace(value: str) -> Path:

@@ -683,6 +683,15 @@ When MCP support is added:
 
 Approval-pause recovery preserves both Engineer and Verifier identity. Their checkpoints bind agent/workspace/sandbox/iteration; Verifier additionally binds patch hash and baseline fingerprint, with exact patch-byte validation on resume and final mutation detection. Checkpoints clear after the role completes. Logical sandbox rehydration is permitted only for known active parent leases with matching Run/workspace/provider/image/daemon bindings and successful inspection; it never recreates an interrupted execution. Outstanding execution leases require recovery. A logical retry preserves the original reviewed reason while all execution-bearing fields retain the canonical intent hash. Phase 5 durably preserves reported usage, outstanding/unknown requests and aggregate budgets across these pauses; unknown dispatches are not replayable or refunded. General raw provider-history restoration remains unimplemented.
 
+`SandboxProvider.restore` is a logical preparation operation, not a command or
+ownership recovery operation. A retained Docker preparation must match the exact
+handle/specification, current installation, workspace and held Git-shadow identity,
+daemon and immutable image before reuse, with map/pin checks repeated after awaits.
+Conflicting state is preserved and rejected, not terminated or substituted.
+Missing state follows strict persisted-ID creation and effective inspection;
+ordinary duplicate creation is still an error. No command dispatch, new grant,
+raw provider-history restoration or automatic unsafe fallback follows from restore.
+
 Legacy once-only Engineer pauses without a checkpoint can restore only their exact original persisted agent after validated run/task/role lookup. Compatibility never transfers a grant to a new principal or widens its duration.
 
 Session review confirmation is an additional human-control boundary, not a new

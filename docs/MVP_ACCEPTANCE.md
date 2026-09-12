@@ -4,6 +4,98 @@ This is a living review ledger, not a release declaration or a user guide. It ma
 
 ## Evidence boundary and update rules
 
+### P1-F — exact Docker Session restoration, 2026-09-12
+
+The repair adds an internal `SandboxProvider.restore(handle, spec)` seam after
+existing paused-lease checks. Exact retained handle/specification, installation,
+workspace, Docker daemon/image and held Git-shadow pin must still match, including
+identity rechecks after awaits. Absent state uses strict restoration; conflicting
+state is preserved and rejected. Duplicate `create` rejection, execution
+reservations, permission checks, recovery rules and the no-host-fallback boundary
+are unchanged. No CLI/schema/migration/dependency or provider call is added.
+
+Fresh independent offline review passed 233 sandbox contracts, 17 ownership/
+recovery cases and 22 adversarial cases. After separately retained test-driver and
+fixture repairs, `session-docker-full-03` passed the real-Docker marker selection:
+22 passed, 22 deselected, zero failure/error/skip; pytest 246.90s, wall 248.916883s.
+All 547 physical source inputs stayed unchanged. Independent physical readback
+released at 2026-09-12T11:20:08.137149Z; all 619 held candidate files and Git state
+stayed unchanged during that review.
+
+| Physical acceptance surface | Exact observed result |
+| --- | --- |
+| Public same-process terminal, packaged learning fixture | Plan review and two distinct command approvals; Engineer and independent Verifier each have an exit-zero pytest transcript with 5 passed; `ready_for_review`, `verified_complete=true`, no gaps. Original source unchanged. |
+| Retained and recreated conversation variants | Each has two independent exit-zero pytest receipts with 3 passed, structured criterion mappings and verified completion. Original source stays unchanged until explicit public canonical patch apply; only the intended core and new metadata module then change. |
+| Synthetic negative terminal fixture | Four distinct approvals/receipts, reviewed build exit1 and pytest exit2 for each role. `verified_complete=false`, with `COMMAND_EXECUTION_FAILED` and `CRITERION_NOT_PASSING`; a passing negative test is not a successful task. |
+| Five Session/onboarding fixture cleanup audit | 9 bootstrap/target Runs, 20 typed command receipts, 56 released leases, 18 recorded workspace paths absent and 20 exact native IDs absent. All 22 attempt-specific installation-label inventories are empty on the matching daemon. |
+
+The other 17 physical cases have named passing JUnit evidence; the deep lifecycle
+ledger audit covers the five Session/onboarding fixtures, not arbitrary Docker
+resources. Physical01 remains FAIL (19 passed/2 failed); physical02 remains FAIL
+(20 passed/1 failed). Driver/asset failures, stopped-state backups and exact
+physical01 cleanup remain recorded in the [restoration plan](../.agent/plans/2026-09-12-session-docker-resume.md).
+Verdict `f3-physical-readback.IRwinLHh/VERDICT.md` SHA256:
+`6460cbb8d1f841a1b9ef430eb04e4fa90ab3113462939b397163d22f33b021ab`.
+Physical03 summary SHA256:
+`2fbd8d4d215890e70381d18a3f89df56fc13454ce3b957fba0f58095c95bc7dd`;
+JUnit SHA256 `7df44f76ddaacd538346b09c1f88e60a9343f41d8b513c22dac40a08cabe5ff2`.
+
+Root integrated the identical reviewed F source/test bytes atop PR11 merge
+`5b09fea1c5fdb79066498496852adbb9e5239773`. Independent combined-source verification
+passed at11:39:28Z: all548 current inputs match the full-gate freeze,11 F inputs
+match accepted physical03 and the other537 match PR11, including G's five paths.
+All17 source/AST checks passed twice;55 existing Docker provider functions are unchanged.
+Verdict `bgf-source-verifier.cm9BlI/VERDICT.md` SHA256
+`e05a4f2f921825fbdc5ae9ae8d500578c2f3ff017c95b5c983a43bfa4225acbd`.
+This verdict excludes documentation, full-test and package acceptance.
+The current integrated full offline gate `session-current-full-01` passed4246,
+with26 skips and4272 exact collected/JUnit identities, zero missing/extra/duplicate/
+failure/error and548 unchanged source inputs. Collection-to-last-test elapsed
+1901.692739s (11:29:00.673Z–12:00:42.366Z). Integration groups passed253/248/265;
+default-other passed3478 with26 skips, and the original two serial cases passed
+once each. Skips are22 Docker,3 fresh-install and1 live, not passes. Ruff format474,
+lint, mypy392, generated schemas, offline99-package lock and whitespace passed.
+Exact commands, durations, warnings and hashes are in the restoration plan.
+
+The current standard Docker adversarial entry point also passed22,22 deselected,
+zero failures/errors/skips (pytest461.18s; wrapper466.009177s), with550 unchanged
+source/README/guide inputs. Because it overlapped the default serial cases' first
+execution, the unchanged two serial cases were repeated after both jobs stopped:
+2 passed24.66s, separate overlapping proof, not two additional unique tests.
+Independent current full/static/source terminal readback passed at12:07:04.862044Z:
+fresh collection, all six JUnits, all six static argv/results and548 current
+source inputs matched. Report f-full-verifier.NEXvzSz5/VERDICT.md SHA256
+`4bb76964ce14b834e4cc79ad3ab07cd436299349763e17189cb6e8217b386bdb`.
+Current physical readback passed at12:07:33.940349Z: all22 identities/550 frozen
+inputs matched; five stopped immutable Session DBs replayed9 completion decisions
+and20 command receipts,56 released leases,18 absent workspaces and20 absent native
+IDs. All22 exact installation scopes empty;772 deep-fixture files unchanged, no
+auxiliary files or retained DB handles. Original terminal/conversation apply
+boundaries match the earlier physical03 scope. Report
+f-current-physical-readback.Qj0IIVgX/VERDICT.md SHA256
+`f7fce493a1bdfff94c56a63e9dcf753ca22433b1d78579750b8cf30a2bcd6784`.
+The unchanged standalone offline adversarial gate passed806 in285.69s
+(288.595s gate,288.692113s wrapper), no failure/error/skip; original550 inputs
+remained unchanged. Subsequent README/guide-only corrections are independently
+reviewed; they do not change this source qualification. The distinct final-doc
+distribution check passed1/3.35s (5.009104s wrapper); final fresh-install passed3
+in270.05s (271.984476s wrapper), no failure/error/skip and550 unchanged inputs.
+Final artifact review passed at12:48:11.175677Z; F GitHub delivery remains separate.
+Eight archives and four installed trees match332 current runtime resources,
+115 schemas and the final README/guide. Seven immutable journals1–13 and10
+replayed completion decisions passed;54 leases released,18 workspaces absent,
+6 exact native IDs absent and one exact installed-Docker namespace empty.
+Original final-artifact FAIL was only the stale un-packaged G Outcomes sentence;
+the eight-check exact correction recheck passed without source/artifact changes.
+Report f-final-sentence-recheck.PIEGQyGw/VERDICT.md SHA256
+`45f9cb7519ddc1f33d869c5702eed85247c62ca410e404e8bd750747a03ca836`.
+The standalone
+adversarial report independently passed in session-adversarial-verifier.tH7c6E3a
+(SHA256560f5b48d1ec377912f9159da0fe8b3556ab4ef4c0151935d0885550367ae744).
+These overlapping counts are not added to4246. This bounded physical
+qualification does not establish mixed-Harness/live-provider reliability, close
+baseline D/E or qualify native P0 finalization. No full P0/P1 completion is claimed.
+
 ### P1-G — bounded SDK response diagnostics, 2026-09-12
 
 This separate slice builds on PR10 mergea96eb29 and changes only two runtime
@@ -26,7 +118,7 @@ root fast-forwarded onto PR10. A later documentation-only FAIL identified stale
 review status and imprecise pointer-lifecycle wording; both were corrected without
 changing the accepted code. All failed sources/reports/fixtures remain retained.
 
-The complete current offline gate used a cleared no-key environment with Docker,
+The complete G-baseline offline gate used a cleared no-key environment with Docker,
 live and fresh-install opt-ins disabled. Expanded argv, JUnit, timestamps and
 source maps are retained privately in sdk-diagnostics-full-01. Counts overlap
 with the focused reviews; do not add them as extra distinct tests.
@@ -46,18 +138,30 @@ passes. Existing JUnit record_property and SDK deprecation warnings are retained
 Summary SHA256 `9c8a69b729f686be909f9ccc61161c14645826259f66029cf4ab0e1d7ed5cc65`;
 both source maps SHA256
 `3ac12ca38e29123ef48e8e64a4853f6efa2914edb27f2536847443e182801f2b`.
-Final current-README package refresh passed1/2.82s; wheel/sdist/JUnit/README
+Final G-baseline README/package refresh passed1/2.82s; wheel/sdist/JUnit/README
 identities are recorded in the diagnostics plan. Independent terminal/archive
 readback passed at11:19:00Z in sdk-final-verifier.xX3CAM: fresh collection and all
 six JUnit files reconciled,548 source inputs matched,332 archive/installed runtime
-resources and current README matched,115 schemas and migration journal1–13
-passed. GitHub delivery remains a separate pending gate. This post-release
-bookkeeping leaves accepted code, README and archive bytes unchanged.
+resources and the frozen G README matched,115 schemas and migration journal1–13
+passed. [PR #11](https://github.com/meyowu/agent-fleet-foundry/pull/11) was normally
+merged at 2026-09-12T11:28:17Z: head
+`13daa225d8a195a9e16d317bac6b21e282b89319`, merge
+`5b09fea1c5fdb79066498496852adbb9e5239773`, identical tree
+`5d918cf7954918058cda150686183fd101390f63`. Exact-head merge used no admin bypass,
+rule changes or branch deletion. Actions readback is zero for both head and merge,
+not hosted CI success. These archives are historical G artifacts, not packages
+of the newer F candidate or its updated README.
+After fast-forwarding the clean diagnostics worktree to that merge, the existing
+CLI runtime-diagnostic durability selection passed 3 tests, with 32 deselected,
+in 6.62s under a cleared no-key/no-Docker/no-install environment. Retained evidence
+is `sdk-postmerge-smoke.xml`; these overlapping smoke tests are not added to 4211.
 
 No new live request was made by this slice. The mixed-Harness live02 below remains
 failed with unknown Engineer usage; new diagnostics cannot reconstruct its missing
-field-level cause. Same-process Session repair, baseline D/E integration, native
-P0 finalization and broader Provider/Harness campaigns remain separate. No hosted
+field-level cause. The separate F physical acceptance is recorded above; its
+integrated full gate has since passed4246/26; F artifact/delivery gates,
+baseline D/E integration, native P0 finalization
+and broader Provider/Harness campaigns remain separate. No hosted
 CI success, full P0/P1 completion or package publication is implied.
 
 ### P1-B — explicit Canary-selection infrastructure, 2026-09-12
@@ -133,8 +237,10 @@ records that earlier proof gap; later lifecycle/cleanup evidence must be read
 separately, not used to rewrite the failed bundle. The precise rejected response
 field remains unresolved. Exact model-alias equality is an offline hypothesis,
 not an observed provider response or proven cause. Native P0 qualification,
-same-process Docker Session repair, D/E baseline follow-ups, additional-provider
-and mixed-role campaigns remain separate and incomplete. No remote CI success,
+D/E baseline follow-ups, additional-provider and mixed-role campaigns remain
+incomplete. The separate F Docker Session repair has the bounded physical
+acceptance above and integrated full4246/26 acceptance; final artifact/delivery
+records are separate. No remote CI success,
 whole P0/P1 completion or public package release is implied.
 
 ### Historical phase evidence
@@ -647,6 +753,18 @@ ledger. Historical Phase6/7 CI or the package's0.1.0 label does not accept this
 extension; L1/L2 and unperformed platform/provider checks remain separate.
 
 ## External gates and genuine post-MVP deferrals
+
+Historical status note: the L1/L2 starting-state declarations and second-Harness
+deferral below are retained from the earlier Phase7/Session-first snapshot, not
+current gate declarations. The owner subsequently selected [Apache-2.0](../LICENSE)
+and explicitly supplied/authorized bounded OpenAI test credentials. Current
+implemented runtimes include OpenAI Agents SDK and restricted LangGraph with
+offline conformance evidence; that does not qualify their broader live campaigns.
+Use the current [README](../README.md), the dated evidence above and the active
+P0/P1 plan for exact live results, unknown usage, authorization and delivery.
+Historical missing-credential prose does not supersede those records, and an
+old canary pass does not qualify a new candidate or provider/Harness combination.
+The remaining productization deferrals and security boundaries below still apply.
 
 - **L1 — owner license: unproven.** The active plan records no supplied license choice. Selecting a license or publishing a package is outside the current implementation authorization. Complete independent implementation and release artifacts first; do not label the public OSS release ready until the owner's exact license decision is recorded.
 - **L2 — disposable live credential: unproven.** No explicit disposable provider credential is supplied by the active task. Ordinary tests, CI, builds, documentation and offline smoke repair can proceed. M3 cannot be marked passed from historical model-adapter tests, ambient variables, fake runtime or TestModel/FunctionModel.

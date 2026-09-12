@@ -59,6 +59,7 @@ class LocalUnsafeSandboxProvider:
         self.state_root = state_root
         self.redactor = redactor
         self._handles: dict[str, SandboxHandle] = {}
+        self._specs: dict[str, SandboxSpec] = {}
         self._executions: set[str] = set()
 
     @property
@@ -109,6 +110,21 @@ class LocalUnsafeSandboxProvider:
         *,
         sandbox_id: str | None = None,
     ) -> SandboxHandle:
+        spec_snapshot = SandboxSpec.model_validate(spec.model_dump(mode="json"))
+        handle = await self._validate_preparation(
+            run_id,
+            spec_snapshot,
+            sandbox_id=sandbox_id,
+        )
+        return self._publish_new(handle, spec_snapshot)
+
+    async def _validate_preparation(
+        self,
+        run_id: str,
+        spec: SandboxSpec,
+        *,
+        sandbox_id: str | None,
+    ) -> SandboxHandle:
         if spec.configuration.provider != "local-unsafe":
             raise ValueError("LocalUnsafeSandboxProvider requires provider='local-unsafe'")
         if not spec.unsafe_local_confirmed:
@@ -137,8 +153,72 @@ class LocalUnsafeSandboxProvider:
             capabilities=self.capabilities,
             configuration_hash=canonical_json_hash(spec.configuration.model_dump(mode="json")),
         )
+        return SandboxHandle.model_validate(handle.model_dump(mode="json"))
+
+    def _publish_new(self, handle: SandboxHandle, spec: SandboxSpec) -> SandboxHandle:
+        identity = handle.sandbox_id
+        if identity in self._handles or identity in self._specs:
+            raise FleetError(
+                ErrorCode.SANDBOX_CREATION_FAILED,
+                "Local-unsafe sandbox preparation is already active for this identity.",
+                "Terminate the existing logical sandbox before preparing it again.",
+            )
         self._handles[identity] = handle
-        return handle
+        self._specs[identity] = spec
+        return SandboxHandle.model_validate(handle.model_dump(mode="json"))
+
+    async def restore(self, handle: SandboxHandle, spec: SandboxSpec) -> SandboxHandle:
+        handle_snapshot = SandboxHandle.model_validate(handle.model_dump(mode="json"))
+        spec_snapshot = SandboxSpec.model_validate(spec.model_dump(mode="json"))
+        initial_handle = self._handles.get(handle_snapshot.sandbox_id)
+        initial_spec = self._specs.get(handle_snapshot.sandbox_id)
+        if (
+            handle.provider != "local-unsafe"
+            or spec.configuration.provider != "local-unsafe"
+            or (initial_handle is None) is not (initial_spec is None)
+            or (initial_handle is not None and initial_handle != handle_snapshot)
+            or (initial_spec is not None and initial_spec != spec_snapshot)
+        ):
+            raise FleetError(
+                ErrorCode.SANDBOX_INSPECTION_FAILED,
+                "The local-unsafe sandbox restoration binding is invalid.",
+                "Resume through the exact explicitly confirmed local-unsafe checkpoint.",
+            )
+        expected = await self._validate_preparation(
+            handle_snapshot.run_id,
+            spec_snapshot,
+            sandbox_id=handle_snapshot.sandbox_id,
+        )
+        if handle_snapshot != expected:
+            raise FleetError(
+                ErrorCode.SANDBOX_INSPECTION_FAILED,
+                "The local-unsafe sandbox restoration binding is invalid.",
+                "Resume through the exact explicitly confirmed local-unsafe checkpoint.",
+            )
+        current = self._handles.get(handle.sandbox_id)
+        current_spec = self._specs.get(handle.sandbox_id)
+        if initial_handle is None and initial_spec is None:
+            if current is not None or current_spec is not None:
+                raise FleetError(
+                    ErrorCode.SANDBOX_INSPECTION_FAILED,
+                    "The local-unsafe sandbox restoration binding changed during validation.",
+                    "Cancel this run; Fleet preserved the concurrent host execution boundary.",
+                )
+            return self._publish_new(expected, spec_snapshot)
+        if (
+            current is None
+            or current_spec is None
+            or current is not initial_handle
+            or current_spec is not initial_spec
+            or current != handle_snapshot
+            or current_spec != spec_snapshot
+        ):
+            raise FleetError(
+                ErrorCode.SANDBOX_INSPECTION_FAILED,
+                "The local-unsafe sandbox restoration binding does not match its checkpoint.",
+                "Cancel this run; Fleet did not substitute another host execution boundary.",
+            )
+        return SandboxHandle.model_validate(current.model_dump(mode="json"))
 
     async def inspect(self, handle: SandboxHandle) -> SandboxInspection:
         if handle.sandbox_id not in self._handles:
@@ -318,6 +398,7 @@ class LocalUnsafeSandboxProvider:
     async def terminate(self, handle: SandboxHandle) -> SandboxCleanupResult:
         found = int(handle.sandbox_id in self._handles)
         self._handles.pop(handle.sandbox_id, None)
+        self._specs.pop(handle.sandbox_id, None)
         return SandboxCleanupResult(
             provider="local-unsafe",
             resource_id=handle.sandbox_id,

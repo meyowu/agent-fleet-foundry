@@ -520,10 +520,12 @@ class ResourceService:
                     "Cancel this run; Fleet will not substitute execution boundaries.",
                 )
             provider = self.sandboxes.require(run.sandbox_configuration, run.sandbox_requirements)
-            # Current providers create only a logical context here. Commands use
-            # separately journaled execution resources and are never recreated.
-            restored = await provider.create(
-                run.run_id,
+            # Restoration is distinct from creation: a persistent provider may
+            # still hold the exact logical context and its pinned resources.
+            # Commands use separately journaled execution resources and are never
+            # recreated by this operation.
+            restored = await provider.restore(
+                handle,
                 SandboxSpec(
                     workspace_host_path=handle.workspace_host_path,
                     project_id=run.project_id,
@@ -534,7 +536,6 @@ class ResourceService:
                     image_identity=run.sandbox_image_identity,
                     daemon_identity=run.sandbox_daemon_identity,
                 ),
-                sandbox_id=handle.sandbox_id,
             )
             inspection = await provider.inspect(restored)
             if (

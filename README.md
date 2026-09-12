@@ -223,8 +223,12 @@ repeat approve/resume for the same `FLEET_RUN_ID`. Do not rerun the original tas
 resolve an approval; that would start another task and may incur more model charges.
 
 Each command above exits before the next command runs. This is the validated
-quickstart route. The current interactive Session has a known Docker-resume issue;
-see [known issues](docs/KNOWN_ISSUES.md) before trying `fleet chat`.
+quickstart route. The current candidate also passed independent real-Docker
+same-process Session restoration checks and the complete integrated offline gate
+(4246 passed, 26 explicit opt-in skips). Final artifact and GitHub delivery records
+are maintained separately in the [acceptance ledger](docs/MVP_ACCEPTANCE.md).
+See the [Session guide](docs/USER_GUIDE.md)
+and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12).
 
 ### 8. Review and apply the result
 
@@ -303,24 +307,41 @@ and the [security model](docs/SECURITY_MODEL.md) before using sensitive code.
 
 ## Current verification snapshot
 
-On 2026-09-12 the bounded SDK-diagnostics candidate passed the complete local
-offline suite: **4,211 passed, 23 skipped**, with all 4,234 test identities reconciled
-and all 548 source inputs unchanged.
-The skips are 19 opt-in Docker, three fresh-install and one live-provider case;
-they are not passes. Formatting, lint, type checking (392 source files), generated
-schemas, offline lock validation and whitespace checks also passed. Exact commands,
-retained failures and evidence identities are in the [diagnostics plan](.agent/plans/2026-09-12-sdk-response-diagnostics.md)
-and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-g--bounded-sdk-response-diagnostics-2026-09-12).
-OpenAI Agents SDK and LangGraph now provide fixed response-failure messages without
-changing validation, error codes, permissions, retries or unknown-usage accounting.
+The 2026-09-12 Session-restoration candidate, built on
+[PR #11](https://github.com/meyowu/agent-fleet-foundry/pull/11), passed the complete local
+offline suite: **4,246 passed, 26 skipped**, with all 4,272 test identities reconciled
+and all 548 source inputs unchanged. Independent full/static/source review passed.
+The skips are 22 opt-in Docker, three fresh-install and one live-provider case;
+they are not passes. Formatting (474 files), lint, type checking (392 source files),
+generated schemas, offline lock validation (99 packages) and whitespace checks
+also passed. Exact commands, times, retained failures and evidence identities are
+in the [restoration plan](.agent/plans/2026-09-12-session-docker-resume.md)
+and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12).
+
+The same candidate's separately enabled Docker gate passed **22 tests, 22 deselected,
+zero failures/errors/skips**. Independent evidence/cleanup readback confirmed the
+bounded same-process, retained-provider and recreated-provider journeys, exact
+approvals and explicit patch apply. Invalid build/test environments still refuse
+verified completion. A separate two-case timing-sensitive replay also passed after
+the heavy jobs stopped; it overlaps the full count. These are scripted-agent
+Docker journeys, not live-model reliability. Package/fresh-install verification,
+standalone offline adversarial replay and GitHub delivery are separate gates with
+their own exact results in the linked plan and ledger.
+
+PR #11's earlier 4,211-pass/23-skip baseline is preserved in the
+[diagnostics plan](.agent/plans/2026-09-12-sdk-response-diagnostics.md), not added to
+the current count. OpenAI Agents SDK and LangGraph provide fixed response-failure
+messages without changing validation, error codes, permissions, retries or
+unknown-usage accounting.
 
 A separate real OpenAI mixed-Harness attempt **did not pass**: CoS/PydanticAI
 completed one request, then Engineer/OpenAI Agents SDK failed response-policy
 validation. Verifier/LangGraph did not run; the target produced no command or
 patch evidence. One request's usage and the total charge remain unknown.
 This does not invalidate the earlier bounded PydanticAI-only qualification, but
-does not qualify mixed Harnesses or other providers. The same-process Docker
-Session issue and broader P0/P1 proof gaps also remain open; see known issues.
+does not qualify mixed Harnesses or other providers. Broader P0/P1 proof gaps,
+including baseline D/E follow-ups and native P0 qualification, remain open;
+see [known issues](docs/KNOWN_ISSUES.md).
 No GitHub Actions success is claimed for these locally verified changes.
 
 ## License
