@@ -116,7 +116,18 @@ release13:49:47.091626Z, with exact28 paths/556 inputs unchanged. Report
 `9e1d7e0060a4ad34f9954af62b23c3019288ab37bb7ec431a81c363738a90424`.
 The PR-draft spent-retry phrase was corrected; verifier-only line-wrap failure
 is retained. Postrelease changes are only factual terminal/live03 bookkeeping,
-not source/README/guide. Exact Git delivery remains pending.
+not source/README/guide. Exact D/E Git delivery completed at2026-09-12T13:55:02Z
+in [PR #13](https://github.com/meyowu/agent-fleet-foundry/pull/13): head
+`1577eb0914f6b4757d7fd706634bac076ff05a63`, merge
+`606a255580c9ee76f75e899de533431d5ca58c5d`, identical head/merge tree
+`83868cd4efebb2b8607f73adcf6e5f112aa24546`. Normal exact-head merge;
+protectionfalse/rules[]/checks0/statuses0, no force/admin/rule changes or branch
+deletion. `[skip ci]` and Actions0 on both commits are not hosted CI PASS.
+Original54-case baseline/cohort-fixture/adversarial-selection postmerge smoke
+passed4.38s, all556 accepted inputs unchanged, no key/Docker/install/live call;
+those54 passes overlap the full matrix. Evidence `baseline-github-delivery.json`
+SHA256 `e5d54dd60879df566bc8bb8d827d80bd30207e62fea70c0b3bca2ca60b4e239e`
+and retained `baseline-postmerge-smoke.xml`.
 Cleanup acceptance is scoped to the reviewed fixtures/namespaces;
 the six-cohort evidence remains separate.
 Historical F results and archives below cannot qualify newer D/E bytes.
@@ -154,6 +165,68 @@ evidence is not target-provider proof; no D/E source changed. Initial launcher03
 raw/canonical selection-hash preflight failed before credentials/output/request;
 retain `mixed-live03-preflight-failure.md`. Separately authorized03b used unchanged
 selection. Live02 remains FAILED; no automatic attempt04 or model change is implied.
+
+Prior live04 is a separate explicitly authorized diagnostic configuration,
+manually dispatched at13:57Z from clean delivered PR13, and stopped NOT_PASSED:
+13:57:54.978425Z–13:58:49.445718Z,54.467s wall; pytest1 failed/52.66s,13 warnings.
+CoS stays PydanticAI/openai:gpt-5-nano; Engineer/OpenAI Agents SDK and
+Verifier/LangGraph select exactly openai:gpt-5-nano-2025-08-07. No source,
+response-admission guard, task oracle, permissions or finite budget changed.
+The deprecated snapshot is not a permanent model recommendation. The later
+[tracked plan](../.agent/plans/2026-09-12-pinned-model-canary.md) faithfully records
+the earlier private pre-dispatch protocol, not a plan that preexisted dispatch.
+Target `run_b2ce5fa98bd54c0b81f6f3c1515a9d7f` completed one CoS request with4684
+input/4633 output/9317 total tokens; the first Engineer request remains UNKNOWN.
+Two invocations/two requests yielded zero target tools/commands/patch/Verifier.
+Exact CLI/run.failed message: `The Agents SDK rejected response processing.`,
+with unchanged `provider_sdk/response_policy`. The different finite message does
+not establish that pinning fixed identity or prove a precise SDK/incomplete-response,
+returned-model or deprecation cause; raw detail and Engineer usage/charge remain
+unknown. Independent failed-attempt readback PASS/read release14:04:35.683988Z,
+`mixed-live04-readback.xy2UP1bs/VERDICT.md` SHA256
+`ad2b1c7ff10f354378c6c3a0947122936f33e82290b4659f7521a5b7ccdfffea`:
+CLI equals immutable event37; all33 artifacts validate (21 run/12 project),
+8 leases released/3 workspaces absent, exact namespace
+`bac0631c525e142d2f27d2a3c9b8957d` empty/2 bootstrap native IDs absent on the
+matching e470 daemon. All140 fixtures/both556 maps/raw and canonical selection
+unchanged; no04 auditor assertion failed. The original inconclusive/cleanup_unproven
+bundle is preserved; supplemental cleanup does not promote assurance. Live04 remains
+NOT_PASSED. This record authorizes neither implementation nor attempt05.
+
+Latest live05 is the separate pre-dispatch
+[low-cost Harness configuration experiment](../.agent/plans/2026-09-12-low-cost-harness-canary.md),
+not an automatic retry or source repair. CoS stays PydanticAI/openai:gpt-5-nano;
+Engineer/OpenAI Agents SDK and Verifier/LangGraph explicitly select
+openai:gpt-4.1-nano-2025-04-14 under unchanged source/oracle/permissions/budgets.
+Independent12-check pre-dispatch review passed/read release14:18:20.155306Z,
+`live05-predispatch-verifier.iNjcw9rZ/VERDICT.md` SHA256
+`0d08d2465de8435d8f55a237cd81a780a3ce3df82c0581f5d7fc3ca7730768b3`;
+root separately decided one dispatch at14:19Z. It stopped NOT_PASSED:
+2026-09-12T14:19:49.008936Z–14:20:26.503411Z,37.495s wall;
+pytest1 failed/35.69s,13 warnings. Target `run_8f55c18e3547410bb929945ddc0bc13c`
+returned `RUNTIME_OUTPUT_INVALID` with `output_schema/schema_validation` and
+`The bounded Agents SDK invocation did not satisfy its trusted contract.`
+Runner cleanup reports complete, recovery not withheld and diagnostic_errors[];
+independent failed-attempt machine audit PASS/read release14:27:18.204341Z.
+Evidence `mixed-live05-readback.pamnbbdY/result.json` SHA256
+`33c54cbc07c289fea9a5cd2b09f513b2c60f9ff097acbdcbe722f1fe9c3d1b74`;
+human VERDICT.md SHA256
+`952cd3a8efe4e0f81e898dbd0050ad71ea1381ab59a12c8906a2ed8f3d1273d7`
+confirms the same release and facts. Actual live outcome remains
+NOT_PASSED. CoS1 request:4678 input/2304 output/6982 total tokens; Engineer4:
+10201 input/304 output/10505 total. Together5 reported requests/17487 tokens,
+zero unknown/outstanding requests; billed cost unknown. Engineer used
+workspace.get_diff, workspace.write_file and command.run. One standalone
+real-Docker `python -m pytest` exit0 receipt exists, but there is no accepted
+Engineer message, Run-attached receipt, patch or Verifier invocation. Original
+target unchanged;9 leases released,3 workspaces/3 native IDs absent, exact namespace
+`5fbbf50e61a8105ebc63d1a6280eceea` empty;143 fixture files/both556 maps unchanged.
+All36 artifacts validate as24 Run exports and12 project records. The original
+inconclusive/cleanup_unproven bundle remains unchanged: standalone receipt and
+supplemental cleanup are not qualification promotion. This finite error still
+does not reveal the exact rejected content or justify a repair. Preserve all
+prior failures; no additional
+paid attempt follows05 in this experiment.
 
 ### P1-F — exact Docker Session restoration, 2026-09-12
 

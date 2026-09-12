@@ -43,7 +43,7 @@ and exact historical quality/live evidence are in README and
 Historical4093 default passes/23 skips, Docker29, install3 and live1 are not
 automatically acceptance for future source changes.
 
-Current delivered baseline is F/PR12 merge
+Historical F delivered baseline is PR12 merge
 `e45d7e34bb01de94bada6fdd6a0a718c94af2f37`. F's historical full4246/26,
 standard Docker22, offline adversarial806, final-doc distribution1 and fresh-install3
 passed with final artifact acceptance12:48:11.175677Z; PR12 delivery completed
@@ -54,8 +54,11 @@ physical readback, six static gates and independent full/source readback passed.
 Final package/adversarial/standard-Docker/installed runners have stopped PASS;
 docs preflight, package, standard-Docker physical, offline-adversarial and installed
 independent reviews passed. Final terminal documentation/diff review passed at
-13:49:47.091626Z; Git delivery remains separate and pending. See the D/E,
-F and G plans for exact identities; none qualifies all P0/P1 work.
+13:49:47.091626Z. Current delivered D/E baseline is PR13 merge
+`606a255580c9ee76f75e899de533431d5ca58c5d` at13:55:02Z, with54 original
+postmerge smoke cases passed/4.38s and556 unchanged inputs. The later un-packaged
+pinned-canary results branch does not change that source. See the D/E, F and G
+plans for exact identities; none qualifies all P0/P1 work.
 
 `EvaluationOutcomeService.record_final_outcome` and the persistence terminal
 entry fail before state access with `write_boundary_unqualified`. The accepted
@@ -407,6 +410,76 @@ independent verification never edits its candidate or weakens the oracle.
 
 ## Progress
 
+- [x] Separate live05 configuration experiment on clean delivered PR13 stopped
+  NOT_PASSED:2026-09-12T14:19:49.008936Z–14:20:26.503411Z,37.495s wall;
+  pytest1 failed/35.69s,13 warnings. The pre-dispatch
+  [low-cost Harness plan](2026-09-12-low-cost-harness-canary.md) keeps CoS at
+  PydanticAI/openai:gpt-5-nano and explicitly selects Engineer/OpenAI Agents SDK
+  and Verifier/LangGraph at openai:gpt-4.1-nano-2025-04-14, with unchanged
+  source/oracle/permissions/budgets. Its independent12-check pre-dispatch review
+  passed/released14:18:20.155306Z; report live05-predispatch-verifier.iNjcw9rZ/VERDICT.md
+  SHA256 `0d08d2465de8435d8f55a237cd81a780a3ce3df82c0581f5d7fc3ca7730768b3`.
+  Root separately decided one dispatch at14:19Z. Target
+  `run_8f55c18e3547410bb929945ddc0bc13c` returned `RUNTIME_OUTPUT_INVALID`,
+  `output_schema/schema_validation`, and
+  `The bounded Agents SDK invocation did not satisfy its trusted contract.`
+  Runner cleanup reports complete, recovery not withheld and diagnostic_errors[];
+  independent failed-attempt machine audit PASS/read release14:27:18.204341Z.
+  Evidence `mixed-live05-readback.pamnbbdY/result.json` SHA256
+  `33c54cbc07c289fea9a5cd2b09f513b2c60f9ff097acbdcbe722f1fe9c3d1b74`;
+  human VERDICT.md SHA256
+  `952cd3a8efe4e0f81e898dbd0050ad71ea1381ab59a12c8906a2ed8f3d1273d7`
+  confirms the same read release and machine facts. Actual live outcome
+  remains NOT_PASSED. CoS1 request:4678 input+2304 output=6982 tokens;
+  Engineer4 requests:10201 input+304 output=10505 tokens. Total5 reported requests/
+  17487 tokens, zero unknown/outstanding requests; billed cost remains unknown.
+  Engineer used workspace.get_diff, workspace.write_file and command.run. One
+  standalone real-Docker `python -m pytest` exit0 receipt exists, but no accepted
+  Engineer message, Run-attached receipt, patch or Verifier. Original target stays
+  unchanged;9 leases released,3 workspaces/3 native IDs absent, exact namespace
+  `5fbbf50e61a8105ebc63d1a6280eceea` empty. All143 fixture files/both556 maps
+  unchanged;36 artifacts validate as24 Run exports plus12 project records.
+  The original bundle remains inconclusive/cleanup_unproven: standalone receipt
+  and supplemental cleanup do not promote qualification or explain the exact
+  rejected content. Prior failures remain intact;
+  no additional paid attempt follows05 in this experiment.
+- [x] Separate manually dispatched live04 on clean delivered PR13 stopped
+  NOT_PASSED:13:57:54.978425Z–13:58:49.445718Z,54.467s wall;
+  pytest1 failed/52.66s,13 warnings. CoS remains PydanticAI/openai:gpt-5-nano;
+  Engineer/OpenAI Agents SDK and Verifier/LangGraph explicitly select
+  openai:gpt-5-nano-2025-08-07. No source/guard/oracle/permission/budget change or
+  automatic fallback is involved. `2026-09-12-pinned-model-canary.md` is a later
+  tracked record of the prior private pre-dispatch protocol, not a claim that
+  this tracked plan preexisted. The deprecated snapshot is diagnostic only,
+  not a permanent recommendation. Target `run_b2ce5fa98bd54c0b81f6f3c1515a9d7f`:
+  one CoS request4684 input/4633 output/9317 total tokens; first Engineer request
+  UNKNOWN. Two invocations/two requests, zero target tools/commands/patch/Verifier.
+  Exact CLI/run.failed: `The Agents SDK rejected response processing.`, unchanged
+  `provider_sdk/response_policy`. Different from03's model-mismatch message, not
+  proof that pinning fixed identity or of a precise SDK/incomplete-response,
+  returned-model or deprecation cause; raw details and Engineer usage/charge unknown.
+  Independent failed-attempt readback PASS/read release14:04:35.683988Z,
+  `mixed-live04-readback.xy2UP1bs/VERDICT.md` SHA256
+  `ad2b1c7ff10f354378c6c3a0947122936f33e82290b4659f7521a5b7ccdfffea`:
+  safe CLI equals immutable event37;33 artifacts validate (21 run/12 project),
+  8 leases released/3 workspaces absent, exact namespace
+  `bac0631c525e142d2f27d2a3c9b8957d` empty/2 bootstrap native IDs absent on the
+  same e470 daemon;140 fixtures/both556 maps/raw/canonical selection unchanged.
+  No04 auditor assertion failure. Original bundle remains
+  inconclusive/cleanup_unproven; supplemental cleanup is not assurance promotion. Live04 remains
+  NOT_PASSED; this record authorizes neither implementation nor attempt05.
+- [x] (2026-09-12T13:55:02Z) D/E delivered normally in
+  [PR #13](https://github.com/meyowu/agent-fleet-foundry/pull/13), head
+  `1577eb0914f6b4757d7fd706634bac076ff05a63`, merge
+  `606a255580c9ee76f75e899de533431d5ca58c5d`, identical tree
+  `83868cd4efebb2b8607f73adcf6e5f112aa24546`. Exact-head guard; protectionfalse,
+  rules[], checks0/statuses0; no force/admin/rule change/branch deletion. Both
+  commit messages use `[skip ci]`; Actions0/0 is not hosted CI PASS. Original
+  baseline-readback/cohort-fixture/adversarial-selection postmerge smoke passed
+  54/4.38s, all556 accepted inputs unchanged, no key/Docker/install/live call.
+  `baseline-github-delivery.json` SHA256
+  `e5d54dd60879df566bc8bb8d827d80bd30207e62fea70c0b3bca2ca60b4e239e`;
+  JUnit `baseline-postmerge-smoke.xml`. The54 overlap the full-suite count.
 - [x] Separate manually authorized finite live03 on clean delivered PR12, not D/E,
   stopped NOT_PASSED:13:33:03.149828Z–13:34:07.112382Z,63.962s wall;
   pytest1 failed/62.23s,13 warnings. Target `run_8f2d52ea5c4c4648a8deb56b543beded`:
@@ -461,7 +534,7 @@ independent verification never edits its candidate or weakens the oracle.
   exact namespace `946fc4aa52da4954a3db128eb6cc244a` empty; all556 inputs unchanged.
   Verifier-only initial test-name spelling assumption/correction is retained,
   not artifact failure. Final terminal review subsequently passed as recorded below;
-  Git delivery remains pending.
+  Git delivery subsequently completed in PR13 as recorded above.
 - [x] (2026-09-12T13:49:47.091626Z) D/E final terminal documentation/diff review
   passed with exact28 paths/556 inputs unchanged. Verdict
   de-final-terminal-verifier.xacbqQOz/VERDICT.md SHA256
@@ -501,7 +574,7 @@ independent verification never edits its candidate or weakens the oracle.
   readback subsequently passed above; final optional runners and stopped package
   independent review also passed, followed by standard-Docker physical and offline-
   adversarial and installed independent readbacks. Final terminal documentation/
-  diff review passed; exact Git delivery remains separate and pending.
+  diff review passed; exact Git delivery subsequently completed in PR13.
 - [x] (2026-09-12T12:52:42Z) F normally delivered in
   [PR #12](https://github.com/meyowu/agent-fleet-foundry/pull/12): head
   `b07382369f705b4d76661e17348c04e12dbbb245`, merge
@@ -911,14 +984,37 @@ atop delivered F. Independent full/source/static readback passed13:11:38.548093Z
 all four final optional runners stopped PASS with556 unchanged inputs, and docs
 preflight/package, standard-Docker physical, offline-adversarial and installed
 independent reviews passed. Final terminal documentation/diff review passed at
-13:49:47.091626Z; exact Git delivery remains pending in
+13:49:47.091626Z; exact Git delivery completed in PR13 at13:55:02Z, with54
+postmerge smoke passes and556 unchanged inputs as recorded in
 `2026-09-12-baseline-delivery.md`. Old D04 and all failed trials,
 including the separate738-deleted-fixture gap, remain retained. Generic campaign
 and cold-start execution machinery already exists; actual campaigns and missing
 additional-provider credentials are not qualified by this local evidence.
-The separate latest live03 replay stopped NOT_PASSED on clean delivered PR12,
+The separate prior live03 replay stopped NOT_PASSED on clean delivered PR12,
 not D/E, with the exact model-mismatch diagnostic recorded above. Its raw returned
 model and Engineer usage/charge remain unknown; independent failed-attempt physical
 readback passed at13:44:44.347799Z, preserving the original inconclusive bundle.
-Live02 is not retroactively relabeled or disambiguated; no attempt04 or
-model change is implied.
+Prior live04 is a separately manually dispatched pinned-model diagnostic on
+clean delivered PR13 that stopped NOT_PASSED with the response-processing message
+and9317 reported CoS tokens above. Its tracked plan was created after dispatch
+from the earlier private protocol. Engineer usage/charge and raw cause remain
+unknown; independent failed-attempt readback passed14:04:35.683988Z without
+promoting the original inconclusive/cleanup_unproven bundle. No broader qualification
+is inferred. Live02 is not retroactively relabeled or disambiguated; this record
+authorizes no further attempt or model change.
+Latest live05 is the separately preregistered low-cost Harness configuration
+experiment in `2026-09-12-low-cost-harness-canary.md`. It stopped NOT_PASSED with
+the output_schema/schema_validation failure above; independent failed-attempt
+machine and human audit passed with read release14:27:18.204341Z. The5 reported requests/
+17487 tokens and standalone successful Engineer command do not promote the
+original inconclusive bundle; billed cost remains unknown and no Verifier ran.
+This is not a source-fix or retrospective explanation of04. No additional paid
+attempt follows05 in this experiment.
+
+Final six-document/PR-body independent review PASS12 checks, read release
+14:37:48.260528Z, canary-final-docs-verifier.G6dePeM3/VERDICT.md SHA256
+e49819b6226412cff3579d30a2452c9b92c779d255869cfced21b4780fa16bcf.
+All556 accepted inputs, relative links, evidence boundaries and sensitive-pattern
+checks passed. Subsequent edits only record the actual human report and this
+verdict. Documentation commit/push/exact-head merge remains pending at this record;
+no complete P0/P1 or live-success claim is made.

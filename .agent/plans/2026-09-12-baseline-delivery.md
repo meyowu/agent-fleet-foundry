@@ -39,6 +39,11 @@ snapshot only the22 reviewed D/E paths remained dirty; all554 source inputs stil
 equal the full freeze. Final documentation edits are separate from that source
 binding. Other worktrees and the retained original evidence remain untouched.
 
+D/E is now delivered through PR13 merge
+`606a255580c9ee76f75e899de533431d5ca58c5d` at2026-09-12T13:55:02Z.
+The later `codex/p1-pinned-canary-results` branch is un-packaged result bookkeeping
+only; it does not change the accepted556 source/README/guide inputs.
+
 ## Security impact
 
 No authority, execution port, migration or new raw capture is introduced.
@@ -208,7 +213,21 @@ recovery. Never global-prune containers or remove evidence to pass a gate.
   line-wrap assertion failure is retained. Postrelease edits are only factual
   terminal-PASS/Git-pending and separate live03 readback bookkeeping; README,
   guide, source and accepted artifacts remain unchanged.
-- [ ] Exact GitHub delivery and remote readback.
+- [x] (2026-09-12T13:55:02Z) Normal exact-head delivery in
+  [PR #13](https://github.com/meyowu/agent-fleet-foundry/pull/13): head
+  `1577eb0914f6b4757d7fd706634bac076ff05a63`, merge
+  `606a255580c9ee76f75e899de533431d5ca58c5d`, identical head/merge tree
+  `83868cd4efebb2b8607f73adcf6e5f112aa24546`. Premerge protectionfalse,
+  effective rules[], checks0/statuses0; normal merge with exact-head guard,
+  no force/admin/rule change/branch deletion. Head and merge contain `[skip ci]`;
+  Actions0 on each is not hosted CI PASS. Credential-free postmerge smoke of
+  `tests/contract/test_baseline_readback.py`,
+  `tests/unit/test_baseline_cohort_fixtures.py` and
+  `tests/unit/test_adversarial_selection.py` passed54/4.38s with all556 accepted
+  inputs unchanged; no Docker/install/live call. These passes overlap the full
+  matrix. Evidence `baseline-github-delivery.json` SHA256
+  `e5d54dd60879df566bc8bb8d827d80bd30207e62fea70c0b3bca2ca60b4e239e`;
+  retained JUnit `baseline-postmerge-smoke.xml`.
 - [x] Current combined six-cohort physical run baseline-current-cohort-01 passed6,
   zero failure/error/skip (437.84s pytest,441.880657s wrapper), all554 source
   inputs unchanged. Independent physical audit passed/read release
@@ -270,7 +289,7 @@ recovery. Never global-prune containers or remove evidence to pass a gate.
   file hashes retained; no actual Docker or hosted CI was run by that review.
 - [x] Current exhaustive default/static matrix completed as recorded above.
 - [x] Final terminal documentation/diff check as recorded above.
-- [ ] Exact Git delivery.
+- [x] Exact Git delivery and postmerge readback as recorded above.
 
 - [x] September12 current-B integration preflight:37 focused fixture/selection
   tests passed3.15s, configured mypy396 files, Ruff format478 files/lint and
@@ -313,7 +332,8 @@ package1, offline adversarial806, standard Docker22 and fresh-install3 runners
 all stopped PASS with556 unchanged inputs; exact timings/hashes are above.
 Docs preflight, stopped-package, standard-Docker physical, offline-adversarial and
 fresh-installed/public-journey independent reviews passed. Final terminal
-documentation/diff review passed13:49:47.091626Z; Git delivery remains pending.
+documentation/diff review passed13:49:47.091626Z; normal PR13 delivery completed
+13:55:02Z with the exact tree and54-case postmerge smoke recorded above.
 Physical cleanup
 acceptance is bounded to the exact reviewed standard-Docker fixtures/namespaces.
 Historical F artifacts do not substitute
@@ -353,3 +373,26 @@ is authorized by this record. The initial launcher03 raw/canonical selection-has
 preflight failed before credentials/output/request; the separately authorized03b
 used unchanged selection. Retain `mixed-live03-preflight-failure.md`, live02's
 FAILED/unknown-charge result, and all live03 evidence without relabeling success.
+
+A later separate manual decision dispatched one explicitly pinned live04 from
+clean delivered PR13 at13:57Z. It stopped NOT_PASSED at13:58:49.445718Z after
+starting13:57:54.978425Z (54.467s wall; pytest1 failed/52.66s,13 warnings).
+Target `run_b2ce5fa98bd54c0b81f6f3c1515a9d7f`: one CoS request4684 input/4633
+output/9317 total tokens, Engineer's first reserved response UNKNOWN; two
+invocations/two requests, zero target tools/commands/patch/Verifier. Exact CLI/
+run.failed message: `The Agents SDK rejected response processing.`, with unchanged
+`provider_sdk/response_policy`. Raw details are unavailable: no proof that pinning
+fixed identity, no precise SDK/incomplete-response or deprecation cause, and no
+known Engineer usage/charge. Independent failed-attempt readback PASS/read release
+14:04:35.683988Z, `mixed-live04-readback.xy2UP1bs/VERDICT.md` SHA256
+`ad2b1c7ff10f354378c6c3a0947122936f33e82290b4659f7521a5b7ccdfffea`:
+safe CLI equals immutable event37,33 artifact hashes validate (21 run/12 project),
+8 leases released/3 workspaces absent, exact namespace
+`bac0631c525e142d2f27d2a3c9b8957d` empty/2 bootstrap native IDs absent on the
+matching e470 daemon. All140 fixtures/both556 maps/raw and canonical selection
+unchanged; no04 auditor assertion failure. Original bundle stays inconclusive/
+cleanup_unproven; supplemental cleanup does not promote assurance. Live04 remains
+NOT_PASSED. This record authorizes no attempt05 or source repair.
+The new tracked `2026-09-12-pinned-model-canary.md` records the earlier private
+pre-dispatch protocol and unchanged limits; it did not exist before dispatch.
+This separate failed diagnostic is not D/E acceptance or an automatic retry.
