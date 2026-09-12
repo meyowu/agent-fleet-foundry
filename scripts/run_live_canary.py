@@ -7,6 +7,7 @@ import json
 import os
 import selectors
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -15,14 +16,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL = "openai:gpt-5-nano"
-CREDENTIAL_NAME = "FLEET_OPENAI_TEST_KEY"
 MAX_CAPTURE_BYTES = 2 * 1024 * 1024
 WALL_SECONDS = 900
 TEST = "tests/live/test_provider_smoke.py::test_live_provider_cli_cos_engineer_verifier_canary"
 
 
-def child_environment(key: str, image: str, output: Path) -> dict[str, str]:
+def read_selection_file(path: Path) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 16 * 1024:
+            raise ValueError("invalid selection file")
+        payload = stream.read(16 * 1024 + 1)
+    if len(payload) > 16 * 1024:
+        raise ValueError("invalid selection file")
+    return payload
+
+
+def child_environment(
+    credentials: dict[str, str], selection_json: str, image: str, output: Path
+) -> dict[str, str]:
     environment = {
         name: os.environ[name]
         for name in ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR")
@@ -30,7 +43,6 @@ def child_environment(key: str, image: str, output: Path) -> dict[str, str]:
     }
     environment.update(
         {
-            CREDENTIAL_NAME: key,
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
@@ -38,11 +50,11 @@ def child_environment(key: str, image: str, output: Path) -> dict[str, str]:
             "AGENT_FLEET_ENABLE_DOCKER_TESTS": "1",
             "AGENT_FLEET_ENABLE_INSTALL_TESTS": "0",
             "AGENT_FLEET_DOCKER_TEST_IMAGE": image,
-            "AGENT_FLEET_LIVE_PROVIDER_MODEL": MODEL,
-            "AGENT_FLEET_LIVE_PROVIDER_CREDENTIAL_REF": f"env:{CREDENTIAL_NAME}",
+            "AGENT_FLEET_LIVE_SELECTION_JSON": selection_json,
             "AGENT_FLEET_LIVE_EVIDENCE_DIR": str(output),
         }
     )
+    environment.update(credentials)
     return environment
 
 
@@ -145,14 +157,41 @@ def main() -> int:
     parser.add_argument(
         "--output", type=Path, required=True, help="New absolute evidence directory"
     )
+    parser.add_argument(
+        "--selection",
+        type=Path,
+        help="Strict schema-version-1 JSON selecting cos, engineer and verifier models",
+    )
     parser.add_argument("--image", default="agent-fleet-runner:0.1.0-py314-v1")
     args = parser.parse_args()
     if not args.run:
         parser.error("--run is required; no test started")
-    key = os.environ.get(CREDENTIAL_NAME, "")
-    if not key or not key.isascii() or not 16 <= len(key) <= 16384 or any(c.isspace() for c in key):
-        print("KEY_NOT_READY: use the same Terminal with the exported test key. Do not print it.")
+
+    # Load the offline-test helper only after argument parsing, but validate the
+    # immutable selection before any credential lookup or output creation.
+    sys.path.insert(0, str(ROOT / "tests"))
+    from live_provider_support import (
+        default_live_canary_selection,
+        parse_live_canary_selection,
+        resolve_live_canary_credentials,
+        selected_credential_forms,
+    )
+
+    try:
+        if args.selection is None:
+            selection = default_live_canary_selection()
+        else:
+            selection = parse_live_canary_selection(read_selection_file(args.selection))
+    except (OSError, ValueError):
+        print("SELECTION_INVALID: no credential read, directory, or request created.")
         return 2
+    try:
+        credentials = resolve_live_canary_credentials(selection, os.environ)
+    except ValueError:
+        print("CREDENTIALS_NOT_READY: configure only the selected dedicated references.")
+        return 2
+    forms = selected_credential_forms(credentials)
+
     output = args.output
     if (
         not output.is_absolute()
@@ -166,12 +205,9 @@ def main() -> int:
         )
         return 2
 
-    # Reuse the test helper's registered-secret forms without exposing the key.
-    sys.path.insert(0, str(ROOT / "tests"))
-    from live_provider_support import credential_forms
-
-    forms = credential_forms(key)
-    operator_metadata = json.dumps([str(output), str(ROOT), args.image]).encode("utf-8")
+    operator_metadata = json.dumps(
+        [str(output), str(ROOT), args.image, selection.safe_projection()], sort_keys=True
+    ).encode("utf-8")
     if any(form in operator_metadata for form in forms):
         print("SENSITIVE_LAUNCH_METADATA: no directory or request created.")
         return 2
@@ -195,7 +231,9 @@ def main() -> int:
     started = time.monotonic()
     manifest = {
         "scope": "real_provider_docker_cli_canary",
-        "model": MODEL,
+        "model": selection.cos.provider_model,
+        "selected_roles": selection.safe_projection()["roles"],
+        "selection_sha256": selection.sha256,
         "image": args.image,
         "started_at": datetime.now(UTC).isoformat(),
         "whole_test_attempts": 1,
@@ -203,9 +241,10 @@ def main() -> int:
         "outcome": "STARTED_OUTCOME_UNKNOWN",
     }
     write_safe(output / "attempt.json", json.dumps(manifest, indent=2).encode(), forms)
-    print(f"One live nano canary. Evidence: {output}", flush=True)
+    print(f"One bounded live canary. Evidence: {output}", flush=True)
     returncode, captured, stop_reason = capture_test(
-        command, child_environment(key, args.image, output)
+        command,
+        child_environment(credentials, selection.canonical_json, args.image, output),
     )
 
     diagnostic_errors: list[str] = []
@@ -233,6 +272,8 @@ def main() -> int:
     except (OSError, ValueError):
         evidence = {}
         diagnostic_errors.append("INVALID_CANARY_REPORT")
+    if evidence.get("selection_sha256") != selection.sha256:
+        diagnostic_errors.append("SELECTION_EVIDENCE_MISMATCH")
     passed = (
         returncode == 0
         and stop_reason == "normal"

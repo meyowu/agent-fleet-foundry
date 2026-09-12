@@ -4,6 +4,85 @@ This is a living review ledger, not a release declaration or a user guide. It ma
 
 ## Evidence boundary and update rules
 
+### P1-B — explicit Canary-selection infrastructure, 2026-09-12
+
+This continuation record supplements, rather than rewrites, the historical
+phase snapshots below. Governing plan:
+`.agent/plans/2026-09-11-p0-p1-completion.md`. Candidate base is the Foundry
+rename merge `09c5a64f06888c2feb6ae8aea2cd0aca8f212148`; P1-A's five Session
+rejection/continuation cases were already merged in PR8. This slice changes
+optional test infrastructure and its documentation, not production adapters,
+permissions, schemas, dependencies or budgets.
+
+`scripts/run_live_canary.py --selection FILE` now accepts a bounded strict JSON
+selection for CoS, Engineer and Verifier. Production runtime validators admit
+pairings; dedicated credential namespaces, a cleared child environment, canonical
+selection digest and complete five-role configuration closure precede dispatch.
+The legacy canonical default remains unchanged. Admission is not live qualification.
+The guide documents single-attempt limits, no automatic retry/fallback/apply,
+unknown usage and exact evidence/cleanup requirements.
+
+All commands below returned exit0 in the pinned local macOS arm64/Python3.14.6
+environment with live, Docker and installation opt-ins disabled. The full suite
+was partitioned exhaustively, not sampled. Raw expanded argv, timestamps and
+JUnit are retained privately in `canary-full-03`; test layers overlap.
+
+| Gate | Exact result |
+| --- | --- |
+| `.venv/bin/python -B -m pytest -p pytest_asyncio.plugin -q`, disjoint full selection | 4181 passed,23 skipped;4204 unique collected/JUnit identities;0 missing/extra/duplicate/failure/error. Four parallel groups then two unchanged serial cases, total run08:45:53.168579Z–09:18:13.693271Z. |
+| Three integration partitions | 249/264/251 passes; process walls1899.447208/1802.854939/1290.383776s. |
+| Default-other partition | 3415 passed,23 skipped; wall1766.097497s. |
+| Original cancellation and baseline-Session serial cases | One pass each; walls16.403791/20.625948s. No deadline/assertion changes. |
+| `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .` | 472 files formatted; lint passed. |
+| `.venv/bin/mypy src tests scripts/run_live_canary.py` | Passed,392 source files. |
+| `.venv/bin/python -B -m agent_fleet.schemas.generate --check`; `uv lock --check --offline --python .venv/bin/python`; `git diff --check` | All passed; lock99 packages. |
+| Independent terminal readback | Both548-input source maps and current source identical;620 held candidate files unchanged; all4204 identities reconciled independently. Both archives matched332 current package resources and the then-current README. |
+
+The23 skips are exactly19 opt-in Docker,3 fresh-install and1 live-provider case.
+They are not promoted into passes. Independent verdict timestamp
+09:23:34.139259Z: **PASS for B offline infrastructure only**. Summary SHA256:
+`a7fdd78c5a799dacb16e41ffdede30d2e1ba71675b10c3525cd43551376f883a`;
+source-map SHA256:
+`6045d3ff6d8e2ec6600590a4d269c4fe9125a8f424c42b33da3787ab06feafaf`.
+The earlier full01 failure and interrupted full02 remain retained and separate.
+Final documentation/package closure and immutable GitHub delivery are recorded
+in the continuation plan; this working-tree record alone does not prove merge.
+
+#### Separate live02 result: NOT_PASSED
+
+One manually selected OpenAI attempt followed that offline PASS, using
+PydanticAI/CoS, OpenAI Agents SDK/Engineer and LangGraph/Verifier, all
+`openai:gpt-5-nano`. Selection SHA256:
+`0ed325d81f65ee619a0f114fee838e89972d7de57202a5347b034a8fc95a2e0d`.
+The private `openai-mixed-live-02` launcher ran09:24:18.047687Z–09:25:00.076977Z
+(42.03s); pytest returned1failed/40.29s with13 SDK deprecation warnings.
+
+Target `run_a9580c06384644688ea9bf3ec1bed908` failed while implementing.
+CoS completed one real request with4681 input+4077 output=8758 reported tokens.
+Engineer reserved its first request, then failed `PROVIDER_FAILED` with
+`provider_sdk/response_policy`. Target totals:2 invocations,2 model-request
+reservations,1 unknown request/32768 unknown-token reservation,0 tool calls.
+There is no target command evidence, patch or Verifier invocation; the total
+charge is unknown. Five reviewed bindings are frozen at revision4. The separate
+scripted bootstrap's two Docker commands and successful report are not target
+evidence. No patch was applied and no automatic retry occurred.
+
+The launcher stopped normally. Independent09:35:07Z terminal readback confirmed
+all8 leases released (2target/6bootstrap),3 workspace paths absent, both native
+bootstrap containers absent on the matching daemon and an empty exact
+installation-filtered inventory. Receipt hashes, target Git baseline/five files
+and all original evidence were preserved. Stopped, identity-checked immutable
+SQLite reads created no sidecars. Its target failure bundle was assembled before final cleanup and still
+records that earlier proof gap; later lifecycle/cleanup evidence must be read
+separately, not used to rewrite the failed bundle. The precise rejected response
+field remains unresolved. Exact model-alias equality is an offline hypothesis,
+not an observed provider response or proven cause. Native P0 qualification,
+same-process Docker Session repair, D/E baseline follow-ups, additional-provider
+and mixed-role campaigns remain separate and incomplete. No remote CI success,
+whole P0/P1 completion or public package release is implied.
+
+### Historical phase evidence
+
 The initial audit on 2026-09-05 inspected Phase3 baseline `c700de1fc357844113426d3352cf29b6ffeae0f1`. Phases4–6 are accepted by E4–E6. E7 binds the repaired runtime3293244, final accepted PR head `e413192bacf236ae243f350b4ade12f7fefbc650` and actual [PR #5](https://github.com/meyowu/agent-fleet-foundry/pull/5) merge `0cead7dcafcace07d64892c0ff41ed72939d706a`; accepted and merged trees equal `7b052436feb7c537391d4f421a8ee35468a93380`. Subsequent documentation-only main/package checks are a separate delivery record. Whole-phase metadata remains6 because live-provider/public-license gates remain unperformed; no complete public release is claimed. ExecPlans retain exact commands and failed attempts. Earlier snapshots and starting/baseline columns remain historical evidence and regression obligations, not current missing implementations.
 
 - **Baseline:** relevant code and tests exist; this ledger's initial audit did not rerun those suites.

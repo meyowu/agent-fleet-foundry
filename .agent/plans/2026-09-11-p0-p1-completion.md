@@ -302,6 +302,65 @@ other frozen interfaces, finite budgets and security assertions stay unchanged.
 Retain the failed candidate and verifier evidence; freeze and independently
 verify the repaired hashes before integration.
 
+Slice B exhaustive-gate repair, September12: all4198 collected identities were
+executed with no gaps/duplicates and548 unchanged source inputs, but one existing
+release-prerequisite unit fixture still supplies the removed direct-pytest model/
+credential variables instead of canonical selected-role JSON. Full result is
+4174 passed/23 skipped/1 failed; all three integration groups, the serial
+cancellation case and all static gates passed. Preserve canary-full-01 as FAIL.
+Add only `tests/unit/test_release_prerequisites.py` to B ownership: update its
+synthetic input fixture to the exact new selection contract, prove every required
+input remains necessary, and reject malformed/legacy-only metadata. Keep the
+ordinary network and model denial assertions. Do not change the seven accepted
+B implementation/test files, production code, gating function or limits.
+Freeze and independently verify this fixture-only repair before delivery.
+For this test-fixture-only correction, reconcile a fresh whole repaired module
+and current collection with the exhaustive run's other byte-identical modules;
+exclude the entire old module, not only its failed case. Independently prove
+the other547 source/test inputs unchanged and no importer of this test module.
+Run fresh static and post-documentation package gates. Label carried-forward
+cases as such, never as re-executed; the original exhaustive run stays FAIL.
+Any changed production/helper/source dependency invalidates this shortcut and
+requires full replay. The later combined baseline candidate still gets a fresh
+exhaustive run of every current identity before final delivery.
+
+Mixed-Canary fixture repair, September12: the single authorized attempt
+openai-mixed-live-01 ended NOT_PASSED in10.523s with complete cleanup. Explicit
+three-role profile set/bind succeeded, but the shipped catalog contains five
+roles. With no default, architect/researcher lack bindings; Workflow resolves
+the complete catalog before preflight/target Run creation and correctly raises
+CONFIG_INVALID. Independent path/ledger review (mixed-canary-diagnosis.BigTA9)
+found only the fake bootstrap and zero target Runs/model requests/bindings.
+This proves no target model dispatch, not API-key validity or live qualification.
+Retain the attempt as consumed; no automatic retry or model fallback.
+
+Freeze a test-fixture-only repair in `tests/live/test_provider_smoke.py` and
+`tests/unit/test_live_canary_selection.py`. Factor/reuse the actual public
+profile configuration sequence if needed. Explicitly bind the reviewed CoS
+profile as default for the two nonexecuted ancillary catalog roles, then preserve
+all three exact primary overrides (revision4). Assert the default mapping and
+the actual initialized five-role closure; do not remove roles from production
+resolution or relax missing-binding rejection. The canary may observe only its
+three execution-role kinds; defaults are configuration completeness, not new
+execution permission. Extend offline tests through real default FleetSpec and
+Workflow admission (offline controlled transport only), preserving per-role
+freeze, budgets, provider denial, cleanup and no-false-pass assertions. Root
+updates the guide to disclose this deterministic ancillary-default policy.
+Freeze both hashes; independently verify the repair and all actual importer
+tests. No further live attempt is authorized by an automatic fixture retry;
+root must record any additional finite attempt as a separate manual decision.
+
+After the exhaustive offline/static gate, root may run exactly one mixed-Harness
+OpenAI canary: CoS=PydanticAI, Engineer=OpenAI Agents SDK, Verifier=LangGraph,
+all explicitly bound to `openai:gpt-5-nano` and the one authorized dedicated
+OpenAI credential. Preserve the existing 12-invocation/24-request/32-tool/
+65,536-reported-token/600-active-second root envelope and 900-second launcher
+wall; one whole attempt only, with no automatic restart or fallback. This is
+a finite smoke, not a dollar spending cap or authorization for the complete
+qualification campaign. Credentials enter via hidden transient input in a
+trusted parent, reach only the selected child environment, and are never
+serialized. Preserve every failed/unknown result and exact cleanup evidence.
+
 Use the existing pinned environment, cleared credential-free environment for
 ordinary tests, and new private basetemp/JUnit paths for every run. Record exact
 expanded commands and terminal results in evidence; commands include:
@@ -334,6 +393,74 @@ independent verification never edits its candidate or weakens the oracle.
 
 ## Progress
 
+- [x] September12 final B documentation/package refresh: the exact updated
+  Foundry README, selection guide, known issues and acceptance ledger preserve
+  the distinction between offline infrastructure PASS and mixed live02 FAIL.
+  Credential-free `.venv/bin/python -B -m pytest -p pytest_asyncio.plugin -q
+  tests/integration/test_distribution.py`, with unique private basetemp/JUnit,
+  returned1passed/2.85s, exit0. Both rebuilt archives match current332 package
+  resources/current README; installed resource smoke passed. Evidence:
+  canary-final-package.j41UcnnR/results.xml. No production, dependency, schema
+  or workflow changes entered B. Final independent doc/diff readback and
+  staged GitHub delivery remain pending.
+- [x] September12 reconciled Slice B full acceptance (canary-full-03):4181
+  passed,23 explicitly optional skips,4204 exact collected/JUnit identities,
+  zero missing/extra/duplicate/failure/error records. All548 source inputs are
+  unchanged. Integration partitions249/264/251 and default-other3415/23 precede
+  both original serial cases (wall16.403791s and20.625948s). Six static gates
+  passed: Ruff472 files, mypy392, schemas, offline lock and whitespace. Independent
+  terminal readback also matched620 held files and both package archives'332
+  current resources plus current README. Original interrupted/full-failure
+  records remain separate; this is a new exhaustive replay, not their overwrite.
+- [x] September12 separate manual decision after that independent PASS: run
+  exactly one additional mixed-Harness canary (openai-mixed-live-02), using the
+  already reviewed selection digest0ed325d81f65ee619a0f114fee838e89972d7de57202a5347b034a8fc95a2e0d.
+  CoS=PydanticAI, Engineer=OpenAI Agents SDK, Verifier=LangGraph; all OpenAI nano.
+  Reuse only the owner-authorized key through hidden transient input. Keep the
+  exact12-invocation/24-request/32-tool/65536-reported-token/600-active-second
+  limits,900-second wall, one whole attempt, no fallback/retry/apply. This is
+  not a dollar cap or a full campaign. The first predispatch failure remains
+  consumed and retained. Inspect this attempt's actual result and exact cleanup
+  before any later decision; do not infer completion from process exit alone.
+- [x] September12 mixed live02 completed **NOT_PASSED**: one attempt from
+  09:24:18.047687Z to09:25:00.076977Z, launcher42.03s, pytest1failed/40.29s
+  with13 SDK deprecation warnings. Target run_a9580c06384644688ea9bf3ec1bed908
+  reached implementing: CoS completed one real request (4681input+4077output=
+  8758reported tokens), then Engineer failed with PROVIDER_FAILED,
+  provider_sdk/response_policy. Two invocations/two request reservations,
+  one unknown request/32768 unknown-token reservation, zero target tools,
+  no command evidence/patch/Verifier. Total charge remains unknown. All five
+  selected bindings persisted at revision4. Normal stop and cleanup report
+  complete, zero outstanding leases; independent terminal audit remains separate.
+  The scripted bootstrap's two Docker commands are not target evidence.
+- [x] September12 independent live02 terminal audit at09:35:07Z confirmed FAIL
+  for the target and complete later physical cleanup: all8 leases released
+  (2target/6bootstrap),3 workspace paths absent,2 retained native container
+  identities absent on the matching daemon, installation-filtered inventory
+  empty. All receipt hashes validate. Exact stopped SQLite admission and
+  immutable SELECT readback preserved database identity and created no sidecars.
+  Target Git baseline/five tracked files, original evidence and620 candidate
+  files remained unchanged. Keep the pre-cleanup failure bundle unchanged;
+  it does not become a successful delivery from later cleanup. Evidence:
+  mixed-live02-verifier.hpQt3D/VERDICT.md, alongside the original failed attempt.
+- [x] September12 read-only response diagnosis narrowed the matching guards to
+  SDK ModelBehaviorError, response identity/terminal-state/error validation,
+  and raw JSON/usage validation. Current evidence cannot identify which field
+  failed. Alias versus dated-response identity is only an offline hypothesis.
+  Keep exact identity, endpoint, body/header, budget and tool guards unchanged;
+  no live03 or automatic retry has occurred. A distinct bounded diagnostics
+  slice must precede any separately decided additional paid attempt.
+- [x] September12 continuation reconciled the independently merged Foundry PR9
+  (`09c5a64`) and the renamed GitHub remote. Preserve its public README, Apache
+  license and specification/link changes. The interrupted canary-full-02 has
+  only one terminal integration group (251 passes) and six passing static
+  checks; no terminal summary or after-freeze exists. Three frozen inputs
+  changed in PR9 (package metadata, CLI presentation, runner README), so this is
+  **interrupted**, not current full acceptance. No failed or partial evidence
+  is removed. A new canary-full-03 runs all default identities and six static
+  gates on the reconciled candidate, with the two unchanged timing-sensitive
+  cases serialized after the heavy groups. No other heavy test jobs run beside
+  it. Subsequent documentation changes require a fresh package smoke.
 - [x] September11 owner scope and staged GitHub delivery authorization captured.
 - [x] Fresh remote/local main identity and clean worktree confirmed.
 - [x] Separate read-only evaluation, Session and runtime investigations started.
@@ -376,6 +503,36 @@ independent verification never edits its candidate or weakens the oracle.
   readbacks; FIFO rejection took0.0893s. All seven file hashes were unchanged.
   Evidence: canary-reverify-B.6tQYRZ. Full/static/package gates and delivery are
   still pending; no live qualification is inferred.
+  The exhaustive run subsequently ended with the one obsolete prerequisite
+  fixture failure recorded in B's repair contract above. Its frozen replacement
+  SHAa2ddd60b passed10/0.04s for the writer and10/0.02s independently. Fresh
+  collection is4201; independent comparison confirms exactly one changed input
+  out of548 and the other547 unchanged. Evidence: release-prereq-B.qA9oW9 and
+  release-prereq-B-verify.qhKNQc. Complete the explicitly labeled source-closure
+  reconciliation and fresh documentation/package gate before delivery/live.
+  That reconciliation subsequently passed4178 with23 skips across4201 exact
+  identities:4167 carried-forward passes/23 skips, ten fresh prerequisite cases
+  and one fresh package case/4.19s. Six refreshed static gates passed, including
+  mypy392 files. This is an explicit composite, not a second full re-execution.
+  The first manually initiated mixed-Harness attempt then failed before target
+  dispatch (openai-mixed-live-01, started07:23:56UTC September12; launcher10.523s,
+  pytest1 failed/8.94s). The five-role initialized catalog lacked ancillary
+  bindings; production correctly rejected architect before creating a target
+  Run. Independent mixed-canary-diagnosis.BigTA9 found only fake bootstrap and
+  zero target model requests. Cleanup is complete. Preserve the consumed attempt;
+  it proves neither key validity nor mixed-Harness inference. The new two-file
+  fixture-repair contract above supersedes prior B acceptance for those bytes;
+  fresh independent and integrated gates are required, without guard relaxation.
+  The mixed-role repair is frozen at live-test30cefb0c / selection-testca7529eb.
+  Writer gate passed56 with1 live opt-in skip/14.31s and scoped statics. It uses
+  the same public setup helper in the live and offline cases, freezes all five
+  roles and proves the old revision3 no-default configuration fails before Run,
+  binding or invocation effects. Legacy revision1 remains covered. Evidence:
+  agent-fleet-mixed-canary-repair.rUT3xf, including retained intermediate errors.
+  A new exhaustive root candidate gate (canary-full-02) now replaces source-closure
+  reuse for these changed helper bytes. Its two original timing-sensitive cases
+  run once after heavy groups: cancellation and successful baseline Session;
+  no assertions/deadlines change. Source/docs stay frozen during this gate.
 - [ ] Slice C native qualification implementation assigned after the Session
   writer's file freeze; the production finalizer guards remain unchanged.
   Its latest retained native JUnit has20 passes/1.538s, but does not cover the
@@ -392,9 +549,104 @@ independent verification never edits its candidate or weakens the oracle.
   correct the test to assert exact result equality and one command lease.
   Final cohort will also assert Slice E's public observation body; no production
   retry semantics are changed and these failures are not counted as passes.
+  D-only independent static review then rejected three test-oracle issues:
+  installation-wide normal-Run cleanup, missing exact reviewed command-body
+  assertions, and rejecting legitimate business tracebacks inside JSON stdout.
+  Preserve the rejected cohort source as baseline-D-static-failed-01.py.
+  Repair only those test behaviors: exact public baseline recovery without
+  a Run sweeper; typed command reconstruction and exact executable/argv/cwd/
+  empty-environment/network-none checks before consent; CLI-stderr traceback
+  rejection plus strict JSON parsing and unchanged business-output assertions.
+  Re-review the repaired D bytes before final six-case execution. E production
+  bytes, failure semantics and resource boundaries stay unchanged.
+  Independent D-only re-review accepted the repaired cohort SHA13cd8489
+  with all three issues closed; the other five D-file hashes are unchanged.
+  This is static acceptance only. The integrated candidate passes Ruff and
+  mypy395 files; final Docker/default/package gates remain pending.
+  Six real Docker cases subsequently passed295.59s on the integrated553-input
+  candidate (baseline-cohort-docker-02). These normal-exit results remain valid,
+  but an additional exceptional-path review found that hard-killing the CLI
+  group cannot stop separately-sessioned Docker/Git clients. The test must not
+  infer whole-child quiescence or automatically invoke stopped-owner recovery
+  after its watchdog/interrupt. Freeze this D-only repair before delivery:
+  transfer sole ownership of the cohort test and its existing fixture unit-test
+  module to one writer; introduce an explicit hard-termination distinction,
+  preserve/reap only the owned CLI group, and fail with retained state without
+  automatic show/recover after unknown quiescence. Normal completed CLI paths
+  retain exact public recovery. Raise only the external test watchdog above the
+  product's300-second attempt ceiling with bounded cleanup grace (360 seconds);
+  do not alter product limits, Session's30-second assertion or result semantics.
+  Add offline watchdog/interrupt/no-recovery regressions without real commands;
+  then independently review and rerun the six-case cohort on repaired bytes.
+  Preserve all prior source hashes/results. No E production or B file changes.
+  The hard-stop repair is frozen: cohort e6185253, unit bef8f5da. Writer checks
+  passed13/0.83s with scoped Ruff/mypy. Evidence: baseline-D-hard-stop.2mJLbi.
+  Fresh independent review is running; root started a new exact-source six-case
+  Docker replay (baseline-cohort-docker-03). The earlier normal-path six passes
+  do not accept the changed exceptional paths.
+  Independent hard-stop review then found another concrete exception boundary:
+  communicate can return normally with a negative signal return code. The helper
+  left that owner KNOWN and could invoke show/recover after SIGTERM/SIGKILL.
+  Preserve baseline-D-hardstop-verify.M4dJdW as FAIL and the frozen e6185253 /
+  bef8f5da files until the in-flight normal cohort ends. Freeze the next two-file
+  repair: immediately mark any negative CLI return code UNKNOWN before output
+  parsing and fail the test; do not kill an already-reaped child or invoke public
+  show/recover. Regress both valid-JSON and empty-output signal exits, the full
+  helper/finally path and ordinary nonzero business observations. No production,
+  model, watchdog, recovery scope or existing result assertion changes.
+  Root takes sole ownership of this final D two-file repair after Docker-03
+  ended: six normal journeys passed210.24s, all553 inputs unchanged. Original
+  e6185253/bef8f5da sources are retained separately; physical readback may inspect
+  only that terminal evidence while the new test-only repair proceeds.
+  The new signal repair is frozen at cohort0a155070 / unit64f41ae7:23 offline
+  cases passed0.74s, Ruff470 files and mypy395 passed. Six signal/output pairs
+  exercise the actual helper and finally recovery boundary; four ordinary
+  exit-code controls preserve0/1/2/3 behavior. An initial scoped-mypy invocation
+  stopped before tests for import discovery and an incompatible list comparison;
+  its record is retained. The comparison was split without relaxing assertions,
+  and the required whole-source mypy command passed. Independent re-review and
+  final repaired-byte Docker execution remain pending.
 - [ ] Slice E's additive validated public observation field is assigned in an
   isolated worktree; it is the only production extension to the baseline cohort.
+  Its eight-file candidate is frozen (manifest02a5de2b):48 focused tests passed
+  in1045.10s; Ruff format/lint, mypy390 files, schema/offline lock/diff gates
+  passed. Independent corruption/identity/output/read-only verification is
+  pending; writer checks alone are not acceptance. Root overlaid all eight
+  exact hashes into the separate A+B+D+E cohort candidate. Its fixture/profile
+  check passed7/2.97s with6 explicit optional Docker skips (baseline-focused-03);
+  the corrected final real-Docker cohort has not run yet.
+  Independent E focused gate is FAIL:13 passed/1 failed in482.92s. The existing
+  successful Session journey hit its unchanged30-second completion-marker
+  deadline after baseline run, before output assertions/show. At failure the
+  durable execution was still executing with no observation/report, one consumed
+  authorization and three synthetic leases; the owned CLI child was killed and
+  reaped by test teardown. Root cause is unproved, not assumed to be CPU load.
+  Twelve corruption/identity probes and same-transaction/read-only checks passed.
+  Preserve this failure and all hashes. After B's full/serial jobs stop, permit
+  one isolated unchanged-case diagnostic with a new evidence directory and the
+  same30-second assertion; no timeout increase, assertion relaxation or automatic
+  retry. D final and combined baseline acceptance remain held pending diagnosis.
+  The one isolated unchanged Session diagnostic passed1/16.26s with its original
+  deadline and all output/show assertions. Durable state is observed, exit0,
+  retained output correct and all three leases released; original timeout cause
+  remains unproved. Evidence: baseline-E-isolated-diagnostic.snVPpX. Final
+  combined test orchestration defers this case, like the existing cancellation
+  regression, until heavy groups finish; neither test nor product timeout is
+  changed. Exact collection/JUnit reconciliation must still include both once.
+  Independent E functional verdict is PASS for the fourteen distinct focused
+  behaviors plus transaction/corruption/privacy invariants; its prior13/1FAIL
+  and unknown timeout cause remain explicit, with no stress/reliability claim.
 - [ ] Deliver each accepted slice through commit/push/merge and exact readback.
+- [x] Slice A delivered: commit8a06ce3362720f4222e5666fae42671e2c5781c7,
+  PR8 merged2026-09-12T06:36:48Z as3bcf735329d4af312c3fe58f408b3f10f901b29e.
+  Exact head/merge trees match; fetched local/main and remote/main agreed, with
+  a clean root worktree before the next branch. GitHub Actions returned0 runs
+  for both SHAs; every commit/merge used `[skip ci]`, with no workflow dispatch
+  or protection changes. This is local verification, not remote CI success.
+- [x] Root integrated all seven repaired Slice B files with exact verifier
+  hashes on a new delivery branch based on the accepted PR8 merge. Added the
+  public selection guide and preserved Slice A test/manifest hashes. The
+  exhaustive candidate gate uses the same combined A+B source/test bytes.
 - [ ] Finish all available P0/P1 acceptance and report residual external blockers.
 
 ## Discoveries
@@ -419,7 +671,14 @@ independent verification never edits its candidate or weakens the oracle.
 Slice A's five Session rejection/continuation cases and all applicable default
 and static gates have passed. Tests-only scope preserves every production byte,
 permission and validator. Its final documentation/package check passed1/8.69s;
-GitHub delivery is next. Slice B's repaired candidate passed independent offline
-verification, and its integrated exhaustive gate now also includes Slice A's
-exact frozen test/manifest bytes. Baseline D/E and native P0 status above remain
-separate; no full P0/P1, paid-model or remote-CI completion is claimed.
+GitHub PR8 is merged with exact tree/ref and zero-Actions readback as above.
+Slice B's repaired candidate passed independent offline
+verification, and its reconciled full03 gate passed4181/23 with4204 exact
+identities and548 unchanged source inputs, including Slice A's frozen tests.
+All six static gates and current-source package inspection passed. Final
+documentation/package refresh passed1/2.85s. GitHub delivery remains pending here.
+The actual mixed live02 attempt failed at the Engineer response-policy boundary,
+after a successful CoS request and before tools/patch/Verifier. Its unresolved
+usage is not zero cost, and its bootstrap is not target success. Baseline D/E,
+same-process Session repair F and native P0 status remain separate; no full
+P0/P1, mixed-Harness qualification or remote-CI completion is claimed.

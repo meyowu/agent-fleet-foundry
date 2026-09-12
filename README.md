@@ -292,12 +292,33 @@ and the [security model](docs/SECURITY_MODEL.md) before using sensitive code.
 
 ## Documentation
 
+- [Explicit live Canary selections](docs/LIVE_CANARY_SELECTION.md): bounded per-role
+  test configuration and its qualification limits.
 - [Known issues](docs/KNOWN_ISSUES.md): current operational limitations.
 - [Full user guide (简体中文)](docs/USER_GUIDE.md): model profiles, sessions, permissions and recovery.
 - [Architecture](docs/ARCHITECTURE.md) and [configuration](docs/CONFIG_AND_SCHEMAS.md).
 - [Contributing](CONTRIBUTING.md): local quality checks and contribution workflow.
 - [Development history](docs/DEVELOPMENT_HISTORY.md), [acceptance ledger](docs/MVP_ACCEPTANCE.md) and [roadmap](docs/IMPLEMENTATION_ROADMAP.md).
 - [Publication privacy review](docs/PUBLICATION_PRIVACY_REVIEW.md) and [release procedure](docs/RELEASE.md).
+
+## Current verification snapshot
+
+On 2026-09-12 the Canary-selection candidate passed the complete local offline
+suite: **4,181 passed, 23 skipped**, with all 4,204 test identities reconciled.
+The skips are 19 opt-in Docker, three fresh-install and one live-provider case;
+they are not passes. Formatting, lint, type checking (392 source files), generated
+schemas, offline lock validation and whitespace checks also passed. Exact commands,
+retained failures and evidence identities are in the [continuation plan](.agent/plans/2026-09-11-p0-p1-completion.md)
+and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-b--explicit-canary-selection-infrastructure-2026-09-12).
+
+A separate real OpenAI mixed-Harness attempt **did not pass**: CoS/PydanticAI
+completed one request, then Engineer/OpenAI Agents SDK failed response-policy
+validation. Verifier/LangGraph did not run; the target produced no command or
+patch evidence. One request's usage and the total charge remain unknown.
+This does not invalidate the earlier bounded PydanticAI-only qualification, but
+does not qualify mixed Harnesses or other providers. The same-process Docker
+Session issue and broader P0/P1 proof gaps also remain open; see known issues.
+No GitHub Actions success is claimed for these locally verified changes.
 
 ## License
 

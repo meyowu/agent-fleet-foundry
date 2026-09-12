@@ -6,12 +6,17 @@ import asyncio
 import base64
 import json
 import os
+import re
 import sqlite3
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
+from typing import Self
 from urllib.parse import quote, quote_plus
+
+from pydantic import BaseModel, ConfigDict, StrictInt, model_validator
 
 from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
@@ -19,10 +24,15 @@ from agent_fleet.adapters.repository.profile import StaticRepositoryProfiler
 from agent_fleet.adapters.system import UuidIdGenerator
 from agent_fleet.bootstrap import ApplicationContainer, build_container
 from agent_fleet.domain.errors import FleetError
-from agent_fleet.domain.models import RunStatus
+from agent_fleet.domain.model_profiles import validate_profile_configuration
+from agent_fleet.domain.models import RunStatus, RuntimeConfiguration
+from agent_fleet.domain.security import canonical_json_hash
 from agent_fleet.domain.workflow import is_terminal
+from agent_fleet.ports.secret_store import SecretRef
 
 EVIDENCE_DIRECTORY_ENV = "AGENT_FLEET_LIVE_EVIDENCE_DIR"
+SELECTION_ENV = "AGENT_FLEET_LIVE_SELECTION_JSON"
+SELECTION_ROLES = ("cos", "engineer", "verifier")
 ROOT_LIMITS = {
     "max_agent_invocations": 12,
     "max_model_requests": 24,
@@ -37,6 +47,170 @@ PROFILE_LIMITS = {
     "timeout_seconds": 120,
     "max_retries": 1,
 }
+
+_DEDICATED_CREDENTIAL_ENV = re.compile(r"FLEET_[A-Z][A-Z0-9_]*\Z")
+
+
+class LiveCanaryRoleSelection(BaseModel):
+    """Exact public model-profile inputs for one required canary role."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    runtime_name: str
+    provider_model: str
+    credential_ref: str
+
+    @model_validator(mode="after")
+    def validate_existing_configuration_admission(self) -> Self:
+        configuration = RuntimeConfiguration(
+            runtime_name=self.runtime_name,
+            provider_model=self.provider_model,
+            credential_ref=self.credential_ref,
+            **PROFILE_LIMITS,
+        )
+        validate_profile_configuration(configuration)
+        name = SecretRef.parse(self.credential_ref).name
+        if _DEDICATED_CREDENTIAL_ENV.fullmatch(name) is None:
+            raise ValueError("selected credential must use a dedicated FLEET_ variable")
+        return self
+
+    def configuration(self) -> RuntimeConfiguration:
+        return RuntimeConfiguration(
+            runtime_name=self.runtime_name,
+            provider_model=self.provider_model,
+            credential_ref=self.credential_ref,
+            **PROFILE_LIMITS,
+        )
+
+    @property
+    def provider_family(self) -> str:
+        provider = self.provider_model.partition(":")[0]
+        return "openai" if provider in {"openai", "openai-chat"} else provider
+
+
+class LiveCanarySelection(BaseModel):
+    """Strict, finite selection for exactly the three live canary roles."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: StrictInt
+    cos: LiveCanaryRoleSelection
+    engineer: LiveCanaryRoleSelection
+    verifier: LiveCanaryRoleSelection
+
+    @model_validator(mode="after")
+    def reject_cross_provider_shared_reference(self) -> Self:
+        if self.schema_version != 1:
+            raise ValueError("live canary selection schema version is unsupported")
+        roles = self.roles
+        for index, left_name in enumerate(SELECTION_ROLES):
+            left = roles[left_name]
+            for right_name in SELECTION_ROLES[index + 1 :]:
+                right = roles[right_name]
+                if (
+                    left.provider_family != right.provider_family
+                    and left.credential_ref == right.credential_ref
+                ):
+                    raise ValueError("cross-provider credential isolation failed")
+        return self
+
+    @property
+    def roles(self) -> dict[str, LiveCanaryRoleSelection]:
+        return {name: getattr(self, name) for name in SELECTION_ROLES}
+
+    @property
+    def canonical_json(self) -> str:
+        return json.dumps(
+            self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+
+    @property
+    def sha256(self) -> str:
+        return canonical_json_hash(self.model_dump(mode="json"))
+
+    def safe_projection(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "roles": {
+                role: {
+                    "runtime_name": selected.runtime_name,
+                    "provider_model": selected.provider_model,
+                }
+                for role, selected in self.roles.items()
+            },
+        }
+
+
+def default_live_canary_selection() -> LiveCanarySelection:
+    role = {
+        "runtime_name": "pydantic-ai",
+        "provider_model": "openai:gpt-5-nano",
+        "credential_ref": "env:FLEET_OPENAI_TEST_KEY",
+    }
+    return LiveCanarySelection.model_validate(
+        {"schema_version": 1, **{name: dict(role) for name in SELECTION_ROLES}}
+    )
+
+
+def parse_live_canary_selection(payload: bytes | str) -> LiveCanarySelection:
+    """Parse one bounded JSON object, rejecting duplicate keys and non-canonical shapes."""
+    encoded = payload.encode("utf-8") if isinstance(payload, str) else payload
+    if not encoded or len(encoded) > 16 * 1024:
+        raise ValueError("live canary selection exceeds its bounded JSON size")
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for name, value in pairs:
+            if name in result:
+                raise ValueError("live canary selection contains a duplicate field")
+            result[name] = value
+        return result
+
+    try:
+        value = json.loads(encoded, object_pairs_hook=unique_object)
+    except (TypeError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("live canary selection is invalid JSON") from error
+    return LiveCanarySelection.model_validate(value)
+
+
+def resolve_live_canary_credentials(
+    selection: LiveCanarySelection,
+    environment: Mapping[str, str],
+) -> dict[str, str]:
+    """Resolve only explicitly selected references and enforce provider-family isolation."""
+    resolved: dict[str, str] = {}
+    role_values: dict[str, str] = {}
+    for role, selected in selection.roles.items():
+        name = SecretRef.parse(selected.credential_ref).name
+        value = environment.get(name, "")
+        try:
+            encoded = value.encode("ascii")
+        except UnicodeEncodeError:
+            encoded = b""
+        if not 16 <= len(encoded) <= 16_384 or any(byte < 0x21 or byte > 0x7E for byte in encoded):
+            raise ValueError("selected credential is not ready")
+        resolved[name] = value
+        role_values[role] = value
+    for index, left_name in enumerate(SELECTION_ROLES):
+        left = selection.roles[left_name]
+        for right_name in SELECTION_ROLES[index + 1 :]:
+            right = selection.roles[right_name]
+            if (
+                left.provider_family != right.provider_family
+                and role_values[left_name] == role_values[right_name]
+            ):
+                raise ValueError("cross-provider credential isolation failed")
+    return resolved
+
+
+def selected_credential_forms(credentials: Mapping[str, str]) -> tuple[bytes, ...]:
+    return tuple(
+        sorted(
+            {form for value in credentials.values() for form in credential_forms(value)},
+            key=len,
+            reverse=True,
+        )
+    )
 
 
 def prepare_live_canary_fixture(destination: Path) -> Path:
@@ -257,6 +431,8 @@ class CanaryEvidence:
     forms: tuple[bytes, ...]
     directory: Path | None = None
     selected_model: str = ""
+    selection_sha256: str = ""
+    selected_roles: dict[str, object] = field(default_factory=dict)
     cli_observations: list[dict[str, object]] = field(default_factory=list)
     passed: bool = False
     finalized: bool = False
@@ -270,6 +446,8 @@ class CanaryEvidence:
             {
                 "assertions_passed": self.passed,
                 "selected_model": self.selected_model,
+                "selection_sha256": self.selection_sha256,
+                "selected_roles": self.selected_roles,
                 "root_limits": ROOT_LIMITS,
                 "profile_limits": PROFILE_LIMITS,
                 "cli_observations": self.cli_observations,

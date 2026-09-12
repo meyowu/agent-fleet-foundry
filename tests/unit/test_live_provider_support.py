@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from conftest import FleetHarness
@@ -15,6 +16,7 @@ from live_provider_support import (
     capture_disposable_evidence,
     cleanup_disposable_state,
     credential_forms,
+    default_live_canary_selection,
     require_secret_free,
     write_safe_json,
 )
@@ -112,6 +114,28 @@ def test_cleanup_before_init_does_not_create_state(tmp_path: Path) -> None:
     assert not root.exists()
     with pytest.raises(ValueError, match="stopped execution owner"):
         cleanup_disposable_state(root, owner_stopped=False)
+
+
+def test_evidence_binds_safe_selection_identity(tmp_path: Path) -> None:
+    selection = default_live_canary_selection()
+    directory = tmp_path / "private"
+    directory.mkdir(mode=0o700)
+    recorder = CanaryEvidence(
+        state_root=tmp_path / "absent-state",
+        repository=tmp_path / "absent-repository",
+        forms=credential_forms(_SYNTHETIC_SECRET),
+        directory=directory,
+        selected_model=selection.cos.provider_model,
+        selection_sha256=selection.sha256,
+        selected_roles=cast(dict[str, object], selection.safe_projection()["roles"]),
+        passed=True,
+    )
+    recorder.finish()
+    evidence = json.loads((directory / "canary-evidence.json").read_text())
+    assert evidence["assertions_passed"] is True
+    assert evidence["selection_sha256"] == selection.sha256
+    assert evidence["selected_roles"] == selection.safe_projection()["roles"]
+    assert "credential_ref" not in json.dumps(evidence)
 
 
 @pytest.mark.parametrize(
