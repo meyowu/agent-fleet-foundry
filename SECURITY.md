@@ -1,6 +1,6 @@
 # Security
 
-Agent Fleet separates proposals, authorization, execution and completion evidence.
+Agent Fleet Foundry separates proposals, authorization, execution and completion evidence.
 Read [the threat model](docs/SECURITY_MODEL.md), [data disclosure](docs/DATA_HANDLING.md)
 and [acceptance ledger](docs/MVP_ACCEPTANCE.md) before using it on sensitive code.
 Docker is not a VM boundary against a malicious host/kernel/daemon. FakeSandbox

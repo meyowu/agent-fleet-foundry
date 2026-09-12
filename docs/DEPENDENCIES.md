@@ -56,5 +56,6 @@ published by this work.
    limits. A passing test is not an independent dependency vulnerability audit.
 
 No automated CVE advisory scan or signed supply-chain attestation is claimed by
-the initial release evidence. Package publication also requires the separate owner
-license decision; dependency license metadata does not choose this project's license.
+the initial release evidence. This project uses owner-selected Apache-2.0;
+dependency license obligations remain separate. See [LICENSE](../LICENSE) and
+the [release procedure](RELEASE.md).

@@ -12,7 +12,7 @@ uv run mypy src tests
 uv run pytest -q
 ```
 
-Normal tests must not need Docker, a network connection, an API key, or a real model. Do not add a license, publish a package, push a branch, or contact an external service without explicit repository-owner direction.
+Normal tests must not need Docker, a network connection, an API key, or a real model. Contributions are licensed under [Apache-2.0](LICENSE). Never include API keys, private state or personal machine paths in a contribution. Publishing packages and changing repository visibility are maintainer actions.
 
 Use `uv sync --all-extras --frozen` for an unchanged checkout. Python3.12–3.14 and
 Git>=2.45 are supported inputs; the full workflow requires the documented local
@@ -42,3 +42,8 @@ PR jobs. Record actual checks, source identities, failed attempts and remaining
 limitations before claiming a phase accepted. Optional issue templates are deferred;
 use a sanitized ordinary issue with version/platform/reproduction/evidence, and
 follow SECURITY.md for confidential findings.
+
+Keep the homepage focused on setup and usage. Record development progress in
+`docs/DEVELOPMENT_HISTORY.md`, `docs/MVP_ACCEPTANCE.md` or the relevant ExecPlan.
+Before opening a PR, inspect `git diff --cached` and follow the
+[publication privacy review](docs/PUBLICATION_PRIVACY_REVIEW.md) for secret scans.

@@ -1,4 +1,4 @@
-# AGENTS.md — Agent Fleet contributor instructions
+# AGENTS.md — Agent Fleet Foundry contributor instructions
 
 ## Mission
 

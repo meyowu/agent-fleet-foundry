@@ -1,4 +1,4 @@
-# Architecture specification — Agent Fleet
+# Architecture specification — Agent Fleet Foundry
 
 ## 1. System overview
 

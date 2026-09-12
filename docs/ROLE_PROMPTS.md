@@ -1,4 +1,4 @@
-# Role prompt specification — Agent Fleet
+# Role prompt specification — Agent Fleet Foundry
 
 These are behavior specifications for role instruction files. They are not security enforcement. The control plane, ToolGateway, PermissionBroker, schemas, and sandbox remain authoritative.
 

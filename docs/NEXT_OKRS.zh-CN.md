@@ -1,8 +1,8 @@
-# Agent Fleet：整个系统的开发 OKR 与路线图
+# Agent Fleet Foundry：整个系统的开发 OKR 与路线图
 
 > 本文保留 2026-09-07 的目标设计与当时状态，不是当前功能清单。
 > 2026-09-10 的已实现功能、真实 E2E 结果和未完成项见
-> [README](../README.md#s1s3-development-status--2026-09-10-utc) 与
+> [README](DEVELOPMENT_HISTORY.md#s1s3-development-status--2026-09-10-utc) 与
 > [交付执行计划](../.agent/plans/2026-09-10-verified-foundations-merge.md)。
 > 合并已验证的基础版本不代表这些 OKR 已全部完成。
 

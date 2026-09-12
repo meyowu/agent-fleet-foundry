@@ -47,7 +47,7 @@ from agent_fleet.domain.trust import TrustMode
 app = typer.Typer(
     name="fleet",
     help=(
-        "Local-first Agent Fleet control plane with exact fake, Docker, or explicit "
+        "Local-first Agent Fleet Foundry control plane with exact fake, Docker, or explicit "
         "local-unsafe execution boundaries."
     ),
     no_args_is_help=False,
@@ -67,7 +67,7 @@ JsonFlag = Annotated[bool, typer.Option("--json", help="Emit a stable v1alpha1 J
 
 @app.command()
 def version(json_output: JsonFlag = False) -> None:
-    """Show the installed Agent Fleet package version."""
+    """Show the installed Agent Fleet Foundry package version."""
 
     _present(
         "fleet version",
@@ -862,7 +862,7 @@ def _present_error(
         error_console.print(
             Panel.fit(
                 Text(f"{error.code.value}\n{message}\n\n{remediation}{parent_note}"),
-                title="Agent Fleet error",
+                title="Agent Fleet Foundry error",
                 border_style="red",
             )
         )

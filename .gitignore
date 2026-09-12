@@ -13,3 +13,34 @@ output/playwright/
 .playwright-cli/
 dist/
 build/
+
+# Local credentials and environment files (only sanitized templates are shareable).
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+credentials.json
+credentials*.json
+secrets.yaml
+secrets.yml
+
+# Local Fleet state and audit output; .fleet/ project configuration stays versionable.
+.fleet-state/
+.agent-fleet/
+state.db
+state.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+.secrets.baseline
