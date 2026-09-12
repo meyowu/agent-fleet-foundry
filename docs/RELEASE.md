@@ -32,7 +32,14 @@ The default suite includes units, contracts, SQLite/CLI/workflow integration and
 fresh-process offline E2E. Report partitions as partitions, not extra test totals.
 Actual Docker, installed-distribution and live-provider cases are separate explicit
 opt-ins; a default skip is not their acceptance. The standalone adversarial script
-and full Docker suite must run and leave exact-scope cleanup evidence.
+and selected Docker suites must run and leave exact-scope cleanup evidence.
+The ordinary adversarial `--docker --image IMAGE` route explicitly excludes
+`tests/docker/test_business_baseline_cohort.py`, which needs its own prepared
+Python/Node image. Include it with `--baseline-cohort-image COHORT_IMAGE` in the
+same invocation; both normal Docker arguments remain required. Record selected
+and excluded paths from the report. Skipped, failed, errored or empty selected
+cases still fail the gate. The default CI Docker step uses that explicit exclusion;
+it does not claim six-repository cohort qualification. See [cohort guide](BASELINE_COHORT.md).
 
 ## Fresh installation and documented journey
 

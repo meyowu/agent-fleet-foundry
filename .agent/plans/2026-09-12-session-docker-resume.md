@@ -36,17 +36,20 @@ that same provider. The original Docker conversation test recreated the applicat
 container before each resume, so it did not cover this failure. The original
 failed public reproduction is recorded in `docs/KNOWN_ISSUES.md` and retained.
 
-The current candidate uses explicit exact restoration and covers both retained
+The delivered F slice uses explicit exact restoration and covers both retained
 and recreated providers. After independent physical03 acceptance, root integrated
 the identical reviewed F source/test bytes atop PR11 merge
 `5b09fea1c5fdb79066498496852adbb9e5239773` on
 `codex/p1-session-restore-delivery`. Preserved stash
 `4ad27af33ef7f5a5ae34cb8eb455d7b1afbef794` retains the pre-integration work.
-The current integrated full gate `session-current-full-01` passed4246/26,
+The historical F integrated full gate `session-current-full-01` passed4246/26,
 with4272 exact identities and all six static gates passed. Independent current
 full and physical readbacks passed at12:07Z. Final packaged-document refresh
-passed; terminal artifact review passed at12:48:11.175677Z. F GitHub delivery
-remains the final separate gate for this slice.
+passed; terminal artifact review passed at12:48:11.175677Z. F was delivered in
+PR12 at12:52:42Z with exact head/merge/tree and zero-Actions readback below.
+Its frozen README/guide/archive identities remain historical F evidence. The
+newer D/E candidate has separate current-source/document/package gates in
+`2026-09-12-baseline-delivery.md`; F results cannot substitute for those gates.
 
 ## Security impact
 
@@ -136,6 +139,17 @@ No force Git operations or broad Docker/process cleanup.
 
 ## Progress
 
+- [x] (2026-09-12T12:52:42Z) Normal exact-head
+  [PR #12](https://github.com/meyowu/agent-fleet-foundry/pull/12) delivery complete.
+  Head `b07382369f705b4d76661e17348c04e12dbbb245`, merge
+  `e45d7e34bb01de94bada6fdd6a0a718c94af2f37`, identical tree
+  `d02b0447ddabf20923f5b44f0eb44a0599150ea6`. Immediate guard readback had
+  protected=false, rules[], checks0 and statuses0. No admin bypass, rule changes
+  or branch deletion; `[skip ci]` on head/merge and Actions0 for both, not hosted
+  CI success. Exact readback retained in `session-github-delivery.json`.
+  Postmerge restore contracts passed22,211 deselected in0.28s; overlapping smoke,
+  not additional unique full-suite cases. Historical F packaged README/guide and
+  all archive hashes below remain frozen, not refreshed by newer D/E docs.
 - [x] (2026-09-12T12:48:11.175677Z) Final independent F acceptance PASS/read
   release. Exact sentence-only recheck f-final-sentence-recheck.PIEGQyGw passed8
   checks, preserving550 source/README/guide inputs and all prior artifact evidence.
@@ -153,7 +167,8 @@ No force Git operations or broad Docker/process cleanup.
   all four sdists0e1b4f547e10c3320d8bfabd8ded44fd7378ac653a0e24d9f53d94286b48e37c.
   Verifier-only projection/count/line-wrap failures remain retained; no candidate
   source, test, permission, timeout or archive change. Root's postrelease writes
-  are only factual PASS/delivery-pending bookkeeping in this plan, master and ledger.
+  were only factual PASS/delivery-pending bookkeeping in this plan, master and ledger;
+  the later exact Git delivery is recorded above.
 - [x] September12 final packaged README/guide correction recheck passed22 checks
   with548 source inputs unchanged; read release12:25:13.412513Z. Remaining
   non-packaged status records were then corrected without changing frozen README
@@ -280,7 +295,7 @@ No force Git operations or broad Docker/process cleanup.
   the stash and all prior physical/driver/asset failures and cleanup evidence.
 - [x] Current integrated full/default/static gate `session-current-full-01`
   passed4246/26 with independent exact-identity acceptance. Package refresh,
-  final independent artifact review and F GitHub delivery are separate;
+  final independent artifact review and F GitHub delivery were separately gated;
   G's historical4211/23 does not qualify this candidate.
 - [x] (2026-09-12T10:58:46Z) F3 six-asset driver recheck PASS/read release.
   Twelve fresh focused cases passed1.13s;21 actual InspectionService/current final
@@ -412,7 +427,8 @@ No force Git operations or broad Docker/process cleanup.
 - [x] Current Foundry README, user guide, known issues, ledger and plans distinguish
   independently passed full/static/physical gates from artifact/GitHub delivery.
 - [x] Final independent artifact review passed with exact retained evidence above.
-- [ ] Exact GitHub delivery; no whole-task completion claim before its readback.
+- [x] Exact GitHub delivery/readback completed as PR12 above. This completes F's
+  bounded delivery, not current D/E gates or all P0/P1 work.
 
 ## Discoveries
 
@@ -524,7 +540,7 @@ count increases by one; previous failures and raw evidence remain distinct.
 
 ## Outcomes
 
-The repaired candidate restores an exact retained preparation with the same
+The delivered F repair restores an exact retained preparation with the same
 open Git-shadow pin, or uses strict persisted-ID creation only when the provider
 map is absent. Fake and explicit local-unsafe implement the same port without a
 fallback. Local-unsafe no longer has an awaited gap between absence validation and
@@ -541,11 +557,15 @@ terminal completion, retained/recreated conversation completion followed only by
 explicit canonical apply, negative-case refusal, exact original-source boundaries
 and the bounded cleanup inventory above. No provider was called. Root integrated
 identical F source/test bytes atop PR11 merge5b09fea; the preserved stash and old
-evidence remain intact. Current integrated full/default/static gates passed4246/26
+evidence remain intact. Historical F integrated full/default/static gates passed4246/26
 with4272 exact identities/548 unchanged inputs; current standard Docker passed22,
 and a separate after-heavy serial replay passed2/24.66s. Independent full/static/
 source terminal readback passed at12:07:04.862044Z; current physical readback
 passed at12:07:33.940349Z. Standalone offline adversarial806 and final-doc
 distribution1/3.35s and fresh-install3/270.05s passed. Final independent artifact
 acceptance passed at12:48:11.175677Z after the exact un-packaged sentence correction.
-GitHub delivery remains pending. These results do not close all P0/P1 work.
+PR12 delivery completed at12:52:42Z with identical head/merge tree and zero Actions;
+postmerge22-contract smoke passed. All prior failures and the738-deleted-fixture
+evidence gap remain unchanged. F README/guide and archives retain their frozen
+historical identities; later D/E documentation does not update those packages.
+These results do not qualify current D/E gates or close all P0/P1 work.

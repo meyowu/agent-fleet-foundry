@@ -18,6 +18,7 @@ from agent_fleet.adapters.config.yaml import YamlConfigurationAdapter
 from agent_fleet.adapters.repository.git import GitRepositoryAdapter
 from agent_fleet.adapters.repository.profile import StaticRepositoryProfiler
 from agent_fleet.adapters.sandbox.docker import DockerSandboxProvider
+from agent_fleet.adapters.sandbox.process import ProcessResult
 from agent_fleet.adapters.system import UuidIdGenerator
 from agent_fleet.application.baseline import baseline_exit_code
 from agent_fleet.bootstrap import BaselineContainer, build_baseline_container
@@ -29,10 +30,13 @@ from agent_fleet.domain.baseline_resources import (
 )
 from agent_fleet.domain.errors import FleetError
 from agent_fleet.domain.models import Project, SandboxConfiguration
+from agent_fleet.domain.security import Redactor, sha256_bytes
 
 
 def business_fixture(
     tmp_path: Path,
+    *,
+    redactor: Redactor | None = None,
 ) -> tuple[BaselineContainer, Path, str, BaselineRecordingRunner]:
     repository = GitRepositoryAdapter(tmp_path, UuidIdGenerator())
     root = repository.create_canary_fixture(tmp_path / "project")
@@ -59,7 +63,7 @@ def business_fixture(
         ],
         cwd=root,
     )
-    container = build_baseline_container(tmp_path / "state")
+    container = build_baseline_container(tmp_path / "state", redactor=redactor)
     info = container.repository.inspect(root)
     now = container.state.clock.now()
     container.state.save_project(
@@ -82,6 +86,45 @@ def business_fixture(
     return container, root, command, runner
 
 
+def set_baseline_output(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: BaselineRecordingRunner,
+    *,
+    stdout: bytes,
+    stderr: bytes,
+    returncode: int = 0,
+    output_truncated: bool = False,
+) -> None:
+    original = runner.run
+    runner.start_returncode = returncode
+
+    async def controlled(
+        argv: tuple[str, ...],
+        *,
+        environment: dict[str, str],
+        cwd: str | None = None,
+        timeout_seconds: int,
+        max_output_bytes: int,
+    ) -> ProcessResult:
+        result = await original(
+            argv,
+            environment=environment,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+        )
+        if argv[1:4] == ("container", "start", "--attach"):
+            return ProcessResult(
+                returncode=returncode,
+                stdout=stdout,
+                stderr=stderr,
+                output_truncated=output_truncated,
+            )
+        return result
+
+    monkeypatch.setattr(runner, "run", controlled)
+
+
 @pytest.mark.asyncio
 async def test_registered_model_free_baseline_observes_and_never_replays(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -95,6 +138,7 @@ async def test_registered_model_free_baseline_observes_and_never_replays(
     before = container.repository.inspect(root)
     planned = await container.service.plan(root, command)
     assert planned.review.status == "ready"
+    assert planned.observation is None
     assert not any(argv[1:3] == ("container", "create") for argv, _ in runner.calls)
     with pytest.raises(FleetError):
         await container.service.run(planned.review.review_id, allow_once=False, review_sha256=None)
@@ -107,8 +151,9 @@ async def test_registered_model_free_baseline_observes_and_never_replays(
     assert completed.report.observed_exit_code == 0 and completed.report.cleanup_complete
     assert completed.report.target_applied is False
     assert completed.report.completion_assurance == "baseline_observation_only"
-    observation = container.store.observation(planned.review.baseline_id)
+    observation = completed.observation
     assert observation is not None and observation.stdout == "verification passed\n"
+    assert container.store.observation(planned.review.baseline_id) == observation
     assert observation.post_source_sha256 == planned.review.approved_source_sha256
     assert all(
         item.status == "released"
@@ -137,30 +182,75 @@ async def test_registered_model_free_baseline_observes_and_never_replays(
             assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
 
 
-@pytest.mark.parametrize("mode", ["nonzero", "timeout", "truncated"])
-async def test_observed_nonzero_is_distinct_from_unknown_output(tmp_path: Path, mode: str) -> None:
+@pytest.mark.parametrize("mode", ["nonzero", "timeout", "truncated", "redaction"])
+async def test_observed_nonzero_is_distinct_from_unknown_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
     container, root, command, runner = business_fixture(tmp_path)
     if mode == "nonzero":
         runner.start_returncode = 1
     elif mode == "timeout":
         runner.start_timed_out = True
-    else:
+    elif mode == "truncated":
         runner.start_output_truncated = True
+    else:
+        set_baseline_output(
+            monkeypatch,
+            runner,
+            stdout=b"\x1b" * 11_000,
+            stderr=b"",
+        )
     planned = await container.service.plan(root, command)
     result = await container.service.run(
         planned.review.review_id, allow_once=True, review_sha256=planned.review.digest
     )
     assert result.report is not None and result.report.cleanup_complete
-    observation = container.store.observation(planned.review.baseline_id)
+    observation = result.observation
     assert observation is not None
+    assert container.store.observation(planned.review.baseline_id) == observation
+    assert container.service.show(planned.review.baseline_id).observation == observation
     if mode == "nonzero":
         assert result.report.status == "observed" and observation.exit_code == 1
         assert baseline_exit_code(result) == 1
+    elif mode == "redaction":
+        assert result.report.status == "inconclusive" and observation.exit_code == 0
+        assert observation.redaction_truncated
+        assert len(observation.stdout.encode()) == 64_000
+        assert "\x1b" not in observation.stdout
+        assert baseline_exit_code(result) == 3
     else:
         assert result.report.status == "inconclusive" and observation.exit_code is None
         assert baseline_exit_code(result) == 3
     assert sum(argv[1:3] == ("container", "create") for argv, _ in runner.calls) == 1
     assert runner.listed_ids == []
+
+
+async def test_public_observation_contains_only_persisted_safe_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "fixture-secret-value"
+    container, root, command, runner = business_fixture(tmp_path, redactor=Redactor([secret]))
+    set_baseline_output(
+        monkeypatch,
+        runner,
+        stdout=f"before {secret} \x1b after\n".encode(),
+        stderr=b"assertion failure \x00\n",
+        returncode=1,
+    )
+    planned = await container.service.plan(root, command)
+    result = await container.service.run(
+        planned.review.review_id, allow_once=True, review_sha256=planned.review.digest
+    )
+    observation = result.observation
+    assert observation is not None
+    assert observation.stdout == "before <redacted:1> \\u001b after\n"
+    assert observation.stderr == "assertion failure \\u0000\n"
+    assert observation.stdout_sha256 == sha256_bytes(observation.stdout.encode())
+    assert observation.stderr_sha256 == sha256_bytes(observation.stderr.encode())
+    assert secret not in result.model_dump_json()
+    assert "\x1b" not in result.model_dump_json() and "\x00" not in result.model_dump_json()
+    assert result.report is not None and result.report.status == "observed"
+    assert baseline_exit_code(result) == 1
 
 
 @pytest.mark.parametrize("mutation", ["tracked", "assume_unchanged", "revoked"])

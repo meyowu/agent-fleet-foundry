@@ -28,6 +28,7 @@ source = Path(agent_fleet.__file__).resolve().parents[2]
 assert str(source) == os.environ['FLEET_TEST_SOURCE_ROOT']
 sys.path.insert(0, str(source / 'tests'))
 from contract.test_baseline_sandbox import BaselineRecordingRunner
+from agent_fleet.adapters.sandbox.process import ProcessResult
 import agent_fleet.bootstrap as bootstrap
 from agent_fleet.application.conversations import ConversationService
 from agent_fleet.cli.app import main
@@ -40,6 +41,19 @@ def build(*args, **kwargs):
     provider.runner = runner
     provider.docker_executable = '/usr/bin/docker'
     provider.uid = provider.gid = 1000
+    if os.environ.get('FLEET_TEST_BASELINE_NONZERO') == '1':
+        runner.start_returncode = 1
+        original_output_run = runner.run
+        async def failing_output(argv, **kwargs):
+            result = await original_output_run(argv, **kwargs)
+            if argv[1:4] == ('container', 'start', '--attach'):
+                return ProcessResult(
+                    returncode=1,
+                    stdout=b'session stdout\\n',
+                    stderr=b'session assertion stderr\\n',
+                )
+            return result
+        runner.run = failing_output
     if os.environ.get('FLEET_TEST_BASELINE_HOLD') == '1':
         runner.block_start = True
         original_run = runner.run
@@ -131,12 +145,62 @@ def test_real_session_plans_confirms_runs_and_exits_without_history_reentry(
         checkpoint = len(chat.output)
         chat.send("/baseline run")
         chat.read_until('"completion_assurance": "baseline_observation_only"', after=checkpoint)
+        run_output = chat.output[checkpoint:]
+        assert '"stdout": "verification passed\\n"' in run_output
+        assert '"stderr": ""' in run_output
         checkpoint = len(chat.output)
         chat.send("/baseline show")
         chat.read_until('"cleanup_complete": true', after=checkpoint)
+        show_output = chat.output[checkpoint:]
+        assert '"stdout": "verification passed\\n"' in show_output
+        assert '"stderr": ""' in show_output
         checkpoint = len(chat.output)
         chat.send(f"/confirm {matched.group(1)}")
         chat.read_until("consumed", after=checkpoint)
+        chat.send("/exit")
+        chat.finish()
+        current = counts(target)
+        assert current["baseline_owner_claims"] == current["baseline_dispatch_claims"] == 1
+        assert current["baseline_reports"] == 1
+        assert current["runs"] == current["conversation_turns"] == 0
+        assert "Traceback" not in chat.output
+        target.unchanged()
+    finally:
+        chat.close()
+
+
+def test_real_session_run_and_show_expose_retained_nonzero_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, command = fixture(tmp_path)
+    target.environment["FLEET_TEST_BASELINE_NONZERO"] = "1"
+    monkeypatch.setattr(interactive, "_HELD_FAKE_ENTRY", _ENTRY)
+    chat = interactive.InteractiveChat(target, held_role="baseline")
+    try:
+        chat.read_until("Type a goal")
+        checkpoint = len(chat.output)
+        chat.send(f"/baseline plan {command}")
+        chat.read_until('"confirmation_code":', after=checkpoint)
+        matched = re.search(r'"confirmation_code": "([0-9a-f]{16})"', chat.output[checkpoint:])
+        assert matched is not None
+        checkpoint = len(chat.output)
+        chat.send(f"/confirm {matched.group(1)}")
+        chat.read_until("Authorized only", after=checkpoint)
+        checkpoint = len(chat.output)
+        chat.send("/baseline run")
+        chat.read_until('"target_applied": false', after=checkpoint)
+        run_output = chat.output[checkpoint:]
+        assert '"stdout": "session stdout\\n"' in run_output
+        assert '"stderr": "session assertion stderr\\n"' in run_output
+        assert '"status": "observed"' in run_output
+        assert '"target_applied": false' in run_output
+        checkpoint = len(chat.output)
+        chat.send("/baseline show")
+        chat.read_until('"target_applied": false', after=checkpoint)
+        show_output = chat.output[checkpoint:]
+        assert '"stdout": "session stdout\\n"' in show_output
+        assert '"stderr": "session assertion stderr\\n"' in show_output
         chat.send("/exit")
         chat.finish()
         current = counts(target)

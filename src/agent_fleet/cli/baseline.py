@@ -78,6 +78,9 @@ def register_baseline_commands(
                         "report": view.report.model_dump(mode="json", by_alias=True)
                         if view.report
                         else None,
+                        "observation": view.observation.model_dump(mode="json", by_alias=True)
+                        if view.observation
+                        else None,
                         "recovery_scope_sha256": view.recovery_scope_sha256,
                     }
                 ),

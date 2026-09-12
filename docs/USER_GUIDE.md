@@ -30,10 +30,12 @@
 ## 不调用模型的项目基线检查（standalone CLI）
 
 `baseline` 用来观察项目现有检查命令的结果，不修代码，也不让 Agent 判断成功。
-当前工作版本已整合该独立 CLI，并通过隔离的离线验收；整合后的完整测试、安装包、
-真实 Docker 与跨项目冷启动验收要分别看 README 的最新记录。下面是使用方法，不是
-这些验收已经通过的证明。当前工作版本也支持下方的 Session `/baseline` 入口；
-该入口已通过独立离线验收，真实 Docker Session 与整合后的完整验收仍以 README 为准。
+独立 CLI 和下方的 Session `/baseline` 都能显示真实保留的有界观察输出。
+2026-09-12 的整合候选版完整离线结果为 4291 passed、32 skipped；另有六个生成
+Python/Node 仓库通过独立真实 Docker 观察验收，业务退出码为 0/2/1/0/1/1。
+这不是六个业务测试全部通过，也不是外部项目、冷启动或模型任务 campaign 的证明。
+精确源码身份、各独立/可选/安装包/Git 交付记录集中在 [D/E 验收账本](MVP_ACCEPTANCE.md#p1-d-and-p1-e--baseline-observations-2026-09-12)
+与 [cohort 说明](BASELINE_COHORT.md)；下面是操作接口，不自动授予执行权限。
 
 1. 先按下文完成项目注册和本地 runner 准备。项目必须是干净、已提交的 Git 仓库；
    Fleet 状态目录与仓库必须互不包含。现有 VerificationProfile 中应已有要运行的
@@ -65,6 +67,11 @@
    fleet baseline show BASELINE_OR_REVIEW_ID --json
    fleet baseline revoke REVIEW_ID --json
    ```
+
+   `run` 和 `show` 的 `data.observation` 包含保留的 `stdout` / `stderr`、退出码、
+   输出哈希及截断/解码标记；执行前为 `null`。这是已经限长、脱敏并转义控制字符的
+   输出，不是原始秘密数据。读取会校验它与 review/report 的身份和摘要；证据缺失
+   或不一致会报错，不能仅凭 `report.status` 认定完整。重复查看不会重新运行测试。
 
    `run`/`recover` 退出码0表示实际观察到命令退出0且证据/清理完整；1表示观察到非零
    退出；2表示参数、许可或准入拒绝；3表示结果不确定或仍需恢复。`show` 自身退出0
@@ -108,6 +115,8 @@ fleet chat .
 不能与普通任务并发执行。结果不确定时不自动重跑。退出后本地确认码和选择丢失，
 保留结果使用独立 `fleet baseline show`，恢复使用前述精确停止者审查命令；
 Session 没有新增 `/baseline recover`。输出仍是观察报告，不是业务正确性证明。
+`/baseline run` 和 `/baseline show` 同样包含上述 `observation`，可以在会话里查看
+实际保留的测试输出；非零退出不会被包装成测试通过。
 
 ### 1. 进入一个会话
 
@@ -128,7 +137,7 @@ fleet
 
 ### 2. 先审计划，再执行，再审补丁
 
-> 当前候选版已通过同进程 Docker Session 恢复的独立物理验证：22 个 Docker case 通过；整合版完整离线测试为 4246 passed、26 个明确的可选测试跳过，全部六项静态检查通过。恢复只复用精确匹配的 checkpoint、sandbox handle/spec 和已有资源绑定，不重复执行命令，也不放宽审批。历史失败仍保留；已处于 uncertain ownership 的旧 Run 仍需明确的 stopped-owner recovery。最终安装包和 GitHub 交付使用单独的验收记录；上述结果不代表 live-model 可靠性已通过。详见 [P1-F 验收记录](MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12) 和 [已知问题](KNOWN_ISSUES.md)。
+> 同进程 Docker Session 恢复已随 PR12 交付。其历史 F 验收为 22 个 Docker case 通过、完整离线 4246 passed/26 skipped；这些不是后续 D/E 候选版的验收计数。恢复只复用精确匹配的 checkpoint、sandbox handle/spec 和已有资源绑定，不重复执行命令，也不放宽审批。历史失败仍保留；已处于 uncertain ownership 的旧 Run 仍需明确的 stopped-owner recovery。上述结果不代表 live-model 可靠性已通过。详见 [P1-F 验收记录](MVP_ACCEPTANCE.md#p1-f--exact-docker-session-restoration-2026-09-12) 和 [已知问题](KNOWN_ISSUES.md)。
 
 默认裸入口和旧 one-shot 行为保持兼容。要让这个会话的新任务在 CoS 完成计划后、创建工作区或调度执行 Agent **之前**暂停，显式启动：
 
