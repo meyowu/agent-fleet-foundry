@@ -393,6 +393,27 @@ independent verification never edits its candidate or weakens the oracle.
 
 ## Progress
 
+- [x] September12 Slice G (separate diagnostics plan) passed independent repaired
+  code review, then current-B full offline4211/23 with4234 exact identities and
+  548 unchanged source inputs. Six static gates passed; final README/archive
+  refresh passed1/2.82s. Original diagnostic-classification and documentation
+  FAIL reports remain retained and repaired, not relabeled. Independent final
+  terminal/archive readback passed at11:19:00Z (sdk-final-verifier.xX3CAM):
+  all4234 identities,548 source inputs,332 archive/installed resources,115 schemas
+  and migration journal1–13 matched. Exact-head GitHub delivery remains pending.
+  No new live request; live02 remains failed/unknown usage. Session F and baseline
+  D/E current integration work continue separately, with native P0 still unqualified.
+- [x] September12 Slice B committed/pushed and normally merged as PR10 at
+  09:51:16Z. Head c2658508fc5df71bac8ae597bd7aade27475010f and merge
+  a96eb29c8139094164c99b6822da3d9f41a58c07 have identical tree
+  f6858f3d95b7580544775eb03e636418e4ea2feb. Final independent doc/archive
+  verdict PASS (b-final-doc-archive.rHCNbshz). Immediate premerge readback:
+  main09c5a64, unprotected, effective rules[], exact reviewed head, clean
+  mergeability, no check statuses; normal exact-head merge with no bypass.
+  Both commit messages include [skip ci]; Actions readback is0 for head and
+  merge, not hosted CI success. Local main fast-forwarded to the verified
+  remote merge. Postmerge credential-free provider-support/distribution smoke
+  passed18/13.67s; evidence canary-postmerge.TSRWTt15/results.xml.
 - [x] September12 final B documentation/package refresh: the exact updated
   Foundry README, selection guide, known issues and acceptance ledger preserve
   the distinction between offline infrastructure PASS and mixed live02 FAIL.
@@ -676,9 +697,16 @@ Slice B's repaired candidate passed independent offline
 verification, and its reconciled full03 gate passed4181/23 with4204 exact
 identities and548 unchanged source inputs, including Slice A's frozen tests.
 All six static gates and current-source package inspection passed. Final
-documentation/package refresh passed1/2.85s. GitHub delivery remains pending here.
+documentation/package refresh passed1/2.85s; PR10 is merged at a96eb29 with
+exact tree/ref/zero-Actions readback and18-pass postmerge smoke as above.
 The actual mixed live02 attempt failed at the Engineer response-policy boundary,
 after a successful CoS request and before tools/patch/Verifier. Its unresolved
 usage is not zero cost, and its bootstrap is not target success. Baseline D/E,
 same-process Session repair F and native P0 status remain separate; no full
 P0/P1, mixed-Harness qualification or remote-CI completion is claimed.
+
+Slice G adds only finite SDK response diagnostics while preserving original
+codes/categories/remediation/precedence and unknown accounting. Its independent
+code recheck and current full4211/23/static gates passed; final package1/2.82s
+passed with current README. Terminal independent delivery review passed at11:19Z;
+GitHub merge remains pending in `2026-09-12-sdk-response-diagnostics.md`.

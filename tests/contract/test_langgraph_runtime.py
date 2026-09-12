@@ -870,8 +870,14 @@ async def test_whole_batch_invalid_second_call_has_no_reservation_or_effect(
     [
         "missing-model",
         "wrong-model",
+        "alias-model",
+        "dated-model",
         "incomplete",
+        "status-missing",
+        "queued",
         "error",
+        "missing-object",
+        "missing-id",
         "bool-input",
         "missing-output",
         "small-total",
@@ -887,6 +893,10 @@ async def test_whole_batch_invalid_second_call_has_no_reservation_or_effect(
         "background",
         "parallel",
         "continuation",
+        "model-and-incomplete",
+        "model-and-invalid-usage",
+        "status-and-error",
+        "error-and-stored",
         "oversized-response",
     ],
 )
@@ -907,10 +917,22 @@ async def test_untrusted_raw_response_fails_without_effect_or_implicit_retry(
             del data["model"]
         elif fault == "wrong-model":
             data["model"] = "different"
+        elif fault == "alias-model":
+            data["model"] = "gpt-test-alias"
+        elif fault == "dated-model":
+            data["model"] = "gpt-test-2026-09-12"
         elif fault == "incomplete":
             data["status"] = "incomplete"
+        elif fault == "status-missing":
+            del data["status"]
+        elif fault == "queued":
+            data["status"] = "queued"
         elif fault == "error":
             data["error"] = {"message": "synthetic-hostile"}
+        elif fault == "missing-object":
+            del data["object"]
+        elif fault == "missing-id":
+            del data["id"]
         elif fault == "bool-input":
             data["usage"]["input_tokens"] = True
         elif fault == "missing-output":
@@ -937,6 +959,18 @@ async def test_untrusted_raw_response_fails_without_effect_or_implicit_retry(
             data["parallel_tool_calls"] = True
         elif fault == "continuation":
             data["previous_response_id"] = "previous-response"
+        elif fault == "model-and-incomplete":
+            data["model"] = "different"
+            data["status"] = "incomplete"
+        elif fault == "model-and-invalid-usage":
+            data["model"] = "different"
+            data["usage"]["total_tokens"] = 1
+        elif fault == "status-and-error":
+            data["status"] = "queued"
+            data["error"] = {"message": "synthetic-hostile"}
+        elif fault == "error-and-stored":
+            data["error"] = {"message": "synthetic-hostile"}
+            data["store"] = True
         elif fault == "oversized-response":
             return httpx2.Response(200, content=b" " * (2 * 1024 * 1024 + 1))
         elif fault == "duplicate-json":
@@ -956,10 +990,106 @@ async def test_untrusted_raw_response_fails_without_effect_or_implicit_retry(
     accounting.finish(RuntimeAttemptStatus.FAILED, error_code=observed.value.code)
     snapshot = ledger.reopen().snapshot(ledger.run.run_id)
     assert sends == snapshot.model_requests == 1 and snapshot.tool_calls == 0
+    response_recorded = fault in {"mixed-terminal", "unknown-tool"}
+    assert snapshot.unknown_requests == int(not response_recorded)
+    assert snapshot.unknown_tokens == (0 if response_recorded else 4096)
+    assert snapshot.reported_total_tokens == (15 if response_recorded else 0)
     assert snapshot.outstanding_requests == snapshot.reserved_tokens == 0
     assert all(client.is_closed for client in clients)
     assert observed.value.__context__ is observed.value.__cause__ is None
     assert not getattr(observed.value, "__notes__", None)
+    expected_messages = {
+        **dict.fromkeys(
+            (
+                "missing-model",
+                "wrong-model",
+                "alias-model",
+                "dated-model",
+                "model-and-incomplete",
+                "model-and-invalid-usage",
+            ),
+            "The LangGraph response model did not match the selected model.",
+        ),
+        **dict.fromkeys(
+            ("incomplete", "status-missing", "queued", "status-and-error"),
+            "The LangGraph response status was not completed.",
+        ),
+        **dict.fromkeys(
+            ("error", "error-and-stored"),
+            "The LangGraph response reported an error.",
+        ),
+        **dict.fromkeys(
+            (
+                "bool-input",
+                "missing-output",
+                "small-total",
+                "detail-string",
+                "detail-bool",
+            ),
+            "The LangGraph response usage did not satisfy the trusted contract.",
+        ),
+        **dict.fromkeys(
+            (
+                "missing-object",
+                "missing-id",
+                "stored",
+                "background",
+                "parallel",
+                "continuation",
+            ),
+            "The LangGraph response envelope did not satisfy the trusted contract.",
+        ),
+    }
+    assert observed.value.message == expected_messages.get(
+        fault, "The bounded LangGraph invocation did not satisfy its trusted contract."
+    )
+    if fault in expected_messages:
+        assert observed.value.code is ErrorCode.PROVIDER_FAILED
+        assert observed.value.details["runtime_diagnostic"] == {
+            "category": "provider_sdk",
+            "cause_category": "response_policy",
+        }
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected_total"),
+    [
+        ({"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, 0),
+        (
+            {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15,
+                "input_tokens_details": {"cached_tokens": 3, "cache_write_tokens": 2},
+                "output_tokens_details": {"reasoning_tokens": 1},
+            },
+            15,
+        ),
+    ],
+)
+async def test_raw_response_accepts_zero_and_nested_usage_without_extra_cost_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    usage: dict[str, object],
+    expected_total: int,
+) -> None:
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        data = payload([final_call(json.loads(received.content))])
+        data["usage"] = usage
+        return httpx2.Response(200, request=received, json=data)
+
+    clients = configure_transport(monkeypatch, respond)
+    result = await adapter().invoke(
+        request("cos"),
+        RuntimeInvocationServices(configuration=CONFIG, tools=EMPTY_RUNTIME_TOOL_CATALOG),
+    )
+    assert result.usage is not None and result.usage.total_tokens == expected_total
+    assert result.usage.provider_cost is None and result.usage.provider_currency is None
+    assert result.usage.tool_calls == 0
+    assert sends == 1 and all(client.is_closed for client in clients)
 
 
 @pytest.mark.parametrize(

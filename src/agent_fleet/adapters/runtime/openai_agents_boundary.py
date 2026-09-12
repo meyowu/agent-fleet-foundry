@@ -15,6 +15,7 @@ import threading
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from typing import Any, cast
 
 from agents import ModelSettings
@@ -47,15 +48,34 @@ _TRACE_LOCK = threading.Lock()
 _TRACE_PROVIDER: DefaultTraceProvider | None = None
 
 
+class _ResponsePolicyFailure(StrEnum):
+    SDK_PROCESSING = "The Agents SDK rejected response processing."
+    MODEL = "The Agents SDK response model did not match the selected model."
+    STATUS = "The Agents SDK response status was not completed."
+    ERROR = "The Agents SDK response reported an error."
+    JSON = "The Agents SDK response JSON was invalid."
+    USAGE = "The Agents SDK response usage did not satisfy the trusted contract."
+
+
+@dataclass(slots=True)
+class _ResponsePolicyNote:
+    """A request-local finite observation; never provider-controlled data."""
+
+    failure: _ResponsePolicyFailure | None = None
+
+
 def boundary_error(
     code: ErrorCode = ErrorCode.RUNTIME_OUTPUT_INVALID,
     *,
     category: str = "structured_output",
     cause: str = "unknown",
+    response_failure: _ResponsePolicyFailure | None = None,
 ) -> FleetError:
     return FleetError(
         code,
-        "The bounded Agents SDK invocation did not satisfy its trusted contract.",
+        response_failure.value
+        if response_failure is not None
+        else "The bounded Agents SDK invocation did not satisfy its trusted contract.",
         "Inspect the retained Fleet evidence; no automatic replay is authorized.",
         details={"runtime_diagnostic": {"category": category, "cause_category": cause}},
     )
@@ -299,19 +319,35 @@ class PinnedResponsesModel(OpenAIResponsesModel):
             # The pinned SDK rejects failed/incomplete HTTP response status in
             # this same fetch path before returning the typed response.
             mapped = boundary_error(
-                ErrorCode.PROVIDER_FAILED, category="provider_sdk", cause="response_policy"
+                ErrorCode.PROVIDER_FAILED,
+                category="provider_sdk",
+                cause="response_policy",
+                response_failure=_ResponsePolicyFailure.SDK_PROCESSING,
             )
         except Exception as error:
             mapped = safe_error(error)
         if mapped is not None:
             raise detach_error(mapped) from None
-        if (
-            getattr(response, "model", None) != self._fleet_expected_model
-            or getattr(response, "status", None) != "completed"
-            or getattr(response, "error", None) is not None
-        ):
+        if getattr(response, "model", None) != self._fleet_expected_model:
             raise boundary_error(
-                ErrorCode.PROVIDER_FAILED, category="provider_sdk", cause="response_policy"
+                ErrorCode.PROVIDER_FAILED,
+                category="provider_sdk",
+                cause="response_policy",
+                response_failure=_ResponsePolicyFailure.MODEL,
+            )
+        if getattr(response, "status", None) != "completed":
+            raise boundary_error(
+                ErrorCode.PROVIDER_FAILED,
+                category="provider_sdk",
+                cause="response_policy",
+                response_failure=_ResponsePolicyFailure.STATUS,
+            )
+        if getattr(response, "error", None) is not None:
+            raise boundary_error(
+                ErrorCode.PROVIDER_FAILED,
+                category="provider_sdk",
+                cause="response_policy",
+                response_failure=_ResponsePolicyFailure.ERROR,
             )
         return response
 
@@ -374,18 +410,22 @@ class RawUsageReceipt:
         self._active = False
         self._observed = False
         self._usage: UsageRecord | None = None
+        self._note: _ResponsePolicyNote | None = None
 
     @contextmanager
-    def request(self) -> Iterator[None]:
-        if self._active or self._observed or self._usage is not None:
+    def request(self) -> Iterator[_ResponsePolicyNote]:
+        if self._active or self._observed or self._usage is not None or self._note is not None:
             raise boundary_error(ErrorCode.INTERNAL_ERROR)
+        note = _ResponsePolicyNote()
         self._active = True
+        self._note = note
         try:
-            yield
+            yield note
         finally:
             self._active = False
             self._observed = False
             self._usage = None
+            self._note = None
 
     async def observe(self, response: Any) -> None:
         if not self._active or self._observed:
@@ -407,6 +447,9 @@ class RawUsageReceipt:
             )
         except (ValueError, TypeError):
             payload = None
+            json_invalid = True
+        else:
+            json_invalid = False
         # Keep only scalar facts. Neither provider error strings nor body bytes
         # become receipt state, logs, persisted artifacts, or SDK continuation.
         self._usage = raw_usage_record(payload.get("usage") if type(payload) is dict else None)
@@ -414,8 +457,16 @@ class RawUsageReceipt:
             # Reject before the SDK's typed parser/serializer can coerce values
             # or emit warnings containing untrusted usage strings. The outer
             # durable owner records this request conservatively as unknown.
+            response_failure = (
+                _ResponsePolicyFailure.JSON if json_invalid else _ResponsePolicyFailure.USAGE
+            )
+            assert self._note is not None
+            self._note.failure = response_failure
             raise boundary_error(
-                ErrorCode.PROVIDER_FAILED, category="provider_sdk", cause="response_policy"
+                ErrorCode.PROVIDER_FAILED,
+                category="provider_sdk",
+                cause="response_policy",
+                response_failure=response_failure,
             )
 
     def consume(self) -> UsageRecord:
@@ -584,6 +635,7 @@ class FleetSDKModel(Model):
         response: ModelResponse | None = None
         usage: UsageRecord | None = None
         request_error: BaseException | None = None
+        response_note: _ResponsePolicyNote | None = None
         try:
             remaining = min(
                 float(self.configuration.timeout_seconds),
@@ -591,7 +643,7 @@ class FleetSDKModel(Model):
                 if self.accounting
                 else float(self.configuration.timeout_seconds),
             )
-            with self.gate.request(), self.raw_usage.request():
+            with self.gate.request(), self.raw_usage.request() as response_note:
                 async with asyncio.timeout(remaining):
                     response = await self.wrapped.get_response(
                         system_instructions,
@@ -614,7 +666,15 @@ class FleetSDKModel(Model):
             if isinstance(request_error, asyncio.CancelledError):
                 raise asyncio.CancelledError() from None
             if isinstance(request_error, Exception):
-                raise detach_error(safe_error(request_error)) from None
+                mapped = safe_error(request_error)
+                if (
+                    mapped.code is ErrorCode.PROVIDER_FAILED
+                    and response_note is not None
+                    and response_note.failure is not None
+                ):
+                    mapped.message = response_note.failure.value
+                    mapped.args = (mapped.message,)
+                raise detach_error(mapped) from None
             raise request_error
         assert response is not None
         assert usage is not None
@@ -622,7 +682,10 @@ class FleetSDKModel(Model):
             self.accounting.record_response(reservation, usage)
         if usage.total_tokens is None:
             raise boundary_error(
-                ErrorCode.PROVIDER_FAILED, category="provider_sdk", cause="response_policy"
+                ErrorCode.PROVIDER_FAILED,
+                category="provider_sdk",
+                cause="response_policy",
+                response_failure=_ResponsePolicyFailure.USAGE,
             )
         self.input_tokens += usage.input_tokens or 0
         self.output_tokens += usage.output_tokens or 0

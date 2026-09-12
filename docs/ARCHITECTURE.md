@@ -128,6 +128,19 @@ under the same reservation. Actual-SDK offline qualification is distinct from
 live-provider qualification; README and the active plan bind acceptance to exact
 snapshots, including corrected configuration/schema admission.
 
+Response-policy failures use fixed trusted messages in the existing CLI error
+and durable `run.failed` event. Agents SDK distinguishes response processing,
+model, status, error, JSON and usage checks; LangGraph distinguishes its envelope,
+model, status, error and usage checks without changing shared JSON parsing.
+The raw-response observer passes only an optional finite enum in a fresh
+request-local note. The receipt clears its pointer on context exit; the current
+request retains only its local note for message projection, and the next request
+gets a new empty note. Original error code/category/remediation,
+validation order and unknown-usage accounting remain authoritative; a note may
+replace only a `PROVIDER_FAILED` message, never timeout, approval or cancellation.
+No new exception-chain traversal or provider values enter these messages.
+`agent.failed` retains its existing restricted diagnostic projection.
+
 The Gateway catalog derives a bounded, conservative read-path schema hint from
 the immutable task scope, without filesystem discovery or new authority. Supported
 ASCII prefixes narrow ordinary model choices; unsupported/broad scopes retain the
