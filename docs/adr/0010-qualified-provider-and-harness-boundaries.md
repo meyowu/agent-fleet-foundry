@@ -28,9 +28,19 @@ can deduplicate it; SDK callbacks only return single-use results after Fleet has
 executed the authorized effects. SDK approval is never user permission.
 
 For Agents SDK0.22.1, external action schemas use strict wire mode and original
-local validators. Terminal output proposals explicitly use non-strict wire mode
-because the SDK strict converter rejects existing bounded-dictionary output fields.
-The original output schema and strict local Pydantic/role validation are unchanged.
+local validators. Engineer execution-kind ImplementationReport proposals use
+strict wire mode with the original closed, seven-required-field schema; the pinned
+SDK must preserve its schema exactly. Other terminal proposals retain explicit
+non-strict wire mode because bounded-dictionary output fields such as
+ScopeDecision.role_selections are incompatible with the SDK strict converter.
+This is a fixed execution-kind policy, never a try-strict-then-fallback algorithm.
+The original output schemas and strict local Pydantic/role validation are unchanged,
+including semantic constraints that strict generation alone cannot establish.
+Known local terminal-schema failures expose only a fixed stage message; earlier
+malformed-envelope failures retain their separate existing projection. Neither path
+reads provider error data or turns a passing tool into an accepted final report.
+The September12 Engineer-terminal ExecPlan records candidate acceptance separately;
+this decision alone does not establish live compatibility or explain live05's cause.
 No dynamic fallback or malformed-output acceptance is permitted. Native tools,
 handoffs, hosted sessions, streaming and SDK checkpoint export remain excluded.
 

@@ -81,6 +81,21 @@ def boundary_error(
     )
 
 
+def terminal_schema_error() -> FleetError:
+    """Identify only the trusted local terminal parser stage with fixed text."""
+    return FleetError(
+        ErrorCode.RUNTIME_OUTPUT_INVALID,
+        "The bounded Agents SDK terminal output did not satisfy its trusted schema.",
+        "Inspect the retained Fleet evidence; no automatic replay is authorized.",
+        details={
+            "runtime_diagnostic": {
+                "category": "output_schema",
+                "cause_category": "schema_validation",
+            }
+        },
+    )
+
+
 def safe_error(error: Exception) -> FleetError:
     """Project outside the exception handler; never retain raw SDK error chains."""
     if isinstance(error, FleetError):
@@ -488,6 +503,7 @@ class FleetSDKModel(Model):
         max_steps: int,
         tool_names: frozenset[str],
         terminal_names: frozenset[str],
+        strict_tool_names: frozenset[str],
         redactor: Redactor,
         gate: SingleSendGate,
         raw_usage: RawUsageReceipt,
@@ -498,6 +514,7 @@ class FleetSDKModel(Model):
         self.request_limit = min(configuration.max_requests, max_steps)
         self.tool_names = tool_names
         self.terminal_names = terminal_names
+        self.strict_tool_names = strict_tool_names
         self.redactor = redactor
         self.gate = gate
         self.raw_usage = raw_usage
@@ -596,7 +613,7 @@ class FleetSDKModel(Model):
             or any(
                 not isinstance(tool, FunctionTool)
                 or tool.needs_approval is not True
-                or tool.strict_json_schema is not (tool.name not in self.terminal_names)
+                or tool.strict_json_schema is not (tool.name in self.strict_tool_names)
                 for tool in tools
             )
             or frozenset(tool.name for tool in tools) != self.tool_names

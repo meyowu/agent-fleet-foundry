@@ -32,6 +32,7 @@ from agent_fleet.adapters.runtime.openai_agents_boundary import (
     initialize_no_export_tracing,
     require_sdk_policy,
     safe_error,
+    terminal_schema_error,
 )
 from agent_fleet.adapters.runtime.openai_client import (
     open_openai_client,
@@ -239,6 +240,9 @@ class OpenAIAgentsRuntimeAdapter:
         terminals: dict[str, Any] = {output_name: output_type}
         if kind is AgentRole.COS and isinstance(request.input.get("organization_context"), dict):
             terminals["submit_fleet_patch"] = FleetPatch
+        strict_terminal_names = (
+            frozenset({output_name}) if kind is AgentRole.ENGINEER else frozenset()
+        )
         definitions = tuple(
             RuntimeToolDefinition.model_validate(item.model_dump(mode="json"))
             for item in services.tools.definitions
@@ -296,10 +300,10 @@ class OpenAIAgentsRuntimeAdapter:
                 params_json_schema=schema.model_json_schema(),
                 on_invoke_tool=passive.invoke,
                 needs_approval=True,
-                # Explicit terminal transport policy, never an automatic fallback:
-                # existing output dictionaries cannot use SDK strict conversion.
-                # Fleet validates the original output model after interruption.
-                strict_json_schema=False,
+                # Explicit execution-kind policy, never an automatic fallback.
+                # Only the closed Engineer report is SDK-strict compatible;
+                # Fleet always validates the original model after interruption.
+                strict_json_schema=name in strict_terminal_names,
                 timeout_behavior="raise_exception",
             )
             for name, schema in terminals.items()
@@ -313,6 +317,7 @@ class OpenAIAgentsRuntimeAdapter:
             max_steps=request.max_steps,
             tool_names=frozenset(names) | frozenset(terminals),
             terminal_names=frozenset(terminals),
+            strict_tool_names=frozenset(names) | strict_terminal_names,
             redactor=self._redactor,
             gate=gate,
             raw_usage=raw_usage,
@@ -394,9 +399,15 @@ class OpenAIAgentsRuntimeAdapter:
                     raise boundary_error()
             receipts: tuple[CompletedReceipt, ...]
             if pending[0].call.name in terminals:
-                terminal_output = terminals[pending[0].call.name].model_validate_json(
-                    pending[0].arguments_json, strict=True
-                )
+                terminal_error: FleetError | None = None
+                try:
+                    terminal_output = terminals[pending[0].call.name].model_validate_json(
+                        pending[0].arguments_json, strict=True
+                    )
+                except ValidationError:
+                    terminal_error = terminal_schema_error()
+                if terminal_error is not None:
+                    raise terminal_error from None
                 if (
                     isinstance(terminal_output, SpecialistReport)
                     and terminal_output.role != request.role

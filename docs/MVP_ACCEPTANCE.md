@@ -4,6 +4,57 @@ This is a living review ledger, not a release declaration or a user guide. It ma
 
 ## Evidence boundary and update rules
 
+### P1-H — Engineer terminal contract, 2026-09-12
+
+The closed seven-field Engineer ImplementationReport uses strict terminal wire
+mode with unchanged schema and local semantic validators. CoS/FleetPatch and
+other execution kinds retain their existing non-strict compatibility policy;
+there is no try-strict/fallback. Known local terminal-validation failure exposes
+only a fixed stage-specific message, with unchanged codes/categories/accounting.
+Earlier malformed call envelopes retain the generic message. No raw failure data,
+permissions, model selection, prompt, dependency or retry policy was changed.
+
+Current full offline gate:4296 passed/32 opt-in skips,4328 exact collected/JUnit
+identities, zero missing/extra/duplicate/failure/error and554 unchanged inputs.
+Six statics passed:format483, lint, mypy396, generated schemas, lock99, whitespace.
+Two unchanged sensitive cases ran serially after all heavy/static jobs; their
+passes and the129 focused cases are already included in the full count.
+Fresh independent full/source readback released at15:50:12.047570 UTC, verdict
+SHA256 `9bba86a1c8c2d29322e7839a20bb8819d202dedfc28bb91d7c8289c4f9b186ff`.
+An earlier independent focused trial deleted six temporary fixture roots; that
+gap remains recorded. The identical retained rerun passed129 cases and8 probes,
+with70 preserved SQLite fixtures independently read back and unchanged.
+
+Separate optional gates all stopped normally with zero failures/errors/skips:
+
+| Gate | Current result |
+| --- | --- |
+| Package | 1 passed/3.393s; wrapper5.841281891s. |
+| Offline adversarial | 806 passed/337.403s; wrapper341.045727015s. |
+| Standard Docker | 22 passed/424.20s; wrapper427.190111876s. |
+| Generated Python/Node Docker cohort | 6 passed/395.95s; wrapper398.767834187s; actual business exits0/2/1/0/1/1. |
+| Fresh installation | 3 passed/369.93s; wrapper373.496671915s. |
+
+All556 applicable source/README/guide inputs remain unchanged; counts overlap
+other gates and are not added to4296. Package, adversarial and exact-scope physical
+readback independently passed. The latter checks five standard plus six cohort
+journals, real command and CompletionGate evidence, and scoped cleanup, not
+daemonwide absence or native P0 write safety. Original cohort PID was not captured;
+normal Popen/wait exit is retained, without an independent exact-PID absence claim.
+Fresh-installed/public-journey independent review passed at16:18:16.251035 UTC;
+verdict SHA256 `87e60322f8367f4433ce9f72c6a3526186c311e55caf063ec9c93d2f5b0b0c7a`.
+Six archives match the current accepted pair; three installs each match332
+runtime/resources,115 schemas and80 locked distribution metadata entries. Six
+immutable journals,10 CompletionGate decisions,18 code receipts and215 artifacts
+validate; exact public replay/apply/revoke/rollback and scoped cleanup pass.
+These are two seeded offline installs and one public fake-runtime/real-Docker
+journey, not three live-model cold starts. Git delivery remains pending at this
+pre-publication record. Exact commands, original failures, retained evidence
+and final outcomes are recorded in the
+[H ExecPlan](../.agent/plans/2026-09-12-engineer-terminal-contract.md).
+This slice does not diagnose live05's exact invalid payload or qualify a new live
+path; native P0 and the broader original campaigns remain incomplete.
+
 ### P1 — six real public-repository readiness observations, 2026-09-12
 
 Six immutable original Python/Node repositories were each acquired and statically
