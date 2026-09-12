@@ -326,18 +326,29 @@ and the [security model](docs/SECURITY_MODEL.md) before using sensitive code.
 
 ## Current verification snapshot
 
-The 2026-09-12 baseline-observation candidate, built on
-[PR #12](https://github.com/meyowu/agent-fleet-foundry/pull/12), passed the complete local
-offline suite: **4,291 passed, 32 skipped**, with all 4,323 test identities reconciled
-and all 554 source inputs unchanged. The skips are 28 opt-in Docker cases
-(including the six baseline cohort cases), three fresh-install and one live-provider
-case; they are not passes. Formatting (479 files), lint, type checking (396 source files),
-generated schemas, offline lock validation (99 packages) and whitespace checks
-also passed. Independent full/source/static readback confirmed these results.
-The original two timing-sensitive cases ran serially after all heavy
-groups stopped; their passes are included in 4,291, not added to it.
+The current Engineer terminal-contract candidate sends its unchanged, closed
+ImplementationReport schema in strict wire mode. Other terminal compatibility
+modes and all local semantic validation remain unchanged. A fixed local
+terminal-schema error message distinguishes that stage from malformed call
+envelopes without exposing raw provider error data. Focused actual-SDK offline
+tests passed **129 cases**, with independent retained-fixture verification.
+This is not a claim that the latest live failure has been diagnosed or fixed.
 
-A separate current-source real-Docker cohort passed **six cases in 437.84 seconds**,
+The current full local offline suite passed **4,296 tests, with 32 skipped**;
+all 4,328 test identities reconcile and all 554 source inputs stayed unchanged.
+Independent full/source/static readback passed. The skips are 28 opt-in Docker cases
+(including the six baseline cohort cases), three fresh-install and one live-provider
+case; they are not passes. Formatting (483 files), lint, type checking (396 source files),
+generated schemas, offline lock validation (99 packages) and whitespace checks
+also passed. The focused and full counts overlap and must not be added.
+The original two timing-sensitive cases ran serially after all heavy
+groups stopped; their passes are included in 4,296, not added to it.
+Exact separate Docker, adversarial, package/installation and Git delivery results
+are maintained in the [living plan](.agent/plans/2026-09-12-engineer-terminal-contract.md)
+and [acceptance ledger](docs/MVP_ACCEPTANCE.md#p1-h--engineer-terminal-contract-2026-09-12).
+These offline results do not qualify a live Provider/Harness combination.
+
+A historical PR #13 baseline-source real-Docker cohort passed **six cases in 437.84 seconds**,
 with independent evidence and exact-scope cleanup readback. The generated Python
 and Node repositories produced actual business exit codes **0/2/1/0/1/1**. All six
 observations were verified, but only two business checks passed. These are six
@@ -356,10 +367,25 @@ the current count. OpenAI Agents SDK and LangGraph provide fixed response-failur
 messages without changing validation, error codes, permissions, retries or
 unknown-usage accounting.
 
-A separate real OpenAI mixed-Harness attempt **did not pass**: CoS/PydanticAI
-completed one request, then Engineer/OpenAI Agents SDK failed response-policy
-validation. Verifier/LangGraph did not run; the target produced no command or
-patch evidence. One request's usage and the total charge remain unknown.
+[PR #15](https://github.com/meyowu/agent-fleet-foundry/pull/15) separately delivered
+six pinned **real public-repository static observations**: five incomplete
+inspections and one complete inspection, all environments still unverified and
+all business baselines unchecked. A distinct 61-case readiness regression and
+independent evidence readback passed; no target code or model ran. See the
+[real-repository report](docs/PUBLIC_REPOSITORY_READINESS.md) for exact discovery
+limitations. These are not six passing business projects or cold starts.
+
+The latest completed real OpenAI mixed-Harness attempt (live05, delivered-source
+PR #13) **did not pass**: CoS/PydanticAI used `openai:gpt-5-nano`, with Engineer/
+OpenAI Agents SDK and the uninvoked Verifier/LangGraph explicitly assigned
+`openai:gpt-4.1-nano-2025-04-14`. Five requests reported **17,487 tokens** with
+zero unknown requests. Three Engineer tools ran, including one real Docker pytest
+command that passed, but structured-output validation failed before an accepted
+Engineer report or independent Verifier result. The original bundle remains
+inconclusive and the target patch unapplied; later proven resource cleanup does
+not promote that bundle. The exact invalid field/stage was not retained, and the
+actual charge is unconfirmed. Earlier failed/unknown attempts remain recorded in
+the [canary plan](.agent/plans/2026-09-12-low-cost-harness-canary.md).
 This does not invalidate the earlier bounded PydanticAI-only qualification, but
 does not qualify mixed Harnesses or other providers. Native P0 finalization remains
 `NOT_GO`; actual external-repository, cold-start and provider/Harness campaigns

@@ -44,6 +44,7 @@ from agent_fleet.domain.errors import ApprovalRequiredError, ErrorCode, FleetErr
 from agent_fleet.domain.models import (
     AgentRole,
     FleetPatch,
+    ImplementationReport,
     RuntimeConfiguration,
     RuntimeCredentialCheck,
     RuntimeToolDefinition,
@@ -157,9 +158,19 @@ async def test_actual_sdk_typed_output_and_explicit_transport(
         assert body.get("stream", False) is False and body["parallel_tool_calls"] is False
         assert body["max_output_tokens"] == 4096
         assert all(
-            tool["strict"] is (not tool["name"].startswith("submit_")) for tool in body["tools"]
+            tool["strict"]
+            is (
+                not tool["name"].startswith("submit_")
+                or tool["name"] == "submit_implementation_report"
+            )
+            for tool in body["tools"]
         )
         assert all(tool["type"] == "function" for tool in body["tools"])
+        if kind is AgentRole.ENGINEER:
+            terminal = next(
+                tool for tool in body["tools"] if tool["name"] == "submit_implementation_report"
+            )
+            assert terminal["parameters"] == ImplementationReport.model_json_schema()
         assert not {"conversation", "previous_response_id", "prompt"} & body.keys()
         return output(received, [final_call(body, kind, role)])
 
@@ -1056,10 +1067,40 @@ async def test_partial_tool_batch_failure_is_not_resumed_or_replayed(
     assert all(client.is_closed for client in clients)
 
 
-def test_terminal_compatibility_is_explicit_and_preserves_original_schema() -> None:
+def test_terminal_compatibility_is_explicit_and_preserves_original_schemas() -> None:
+    passive = boundary.PassiveResults()
+    report_schema = ImplementationReport.model_json_schema()
+    report_original = json.dumps(
+        report_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    assert sha256_bytes(report_original.encode()) == (
+        "4194ebb884afc68a653cd6781eb1e304b8a4eefec403c68edae3323c086c743e"
+    )
+    report = FunctionTool(
+        name="submit_implementation_report",
+        description="Bounded output.",
+        params_json_schema=report_schema,
+        on_invoke_tool=passive.invoke,
+        needs_approval=True,
+        strict_json_schema=True,
+    )
+    assert report.needs_approval is True and report.strict_json_schema is True
+    assert (
+        json.dumps(
+            report.params_json_schema,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        == report_original
+    )
+    assert (
+        json.dumps(report_schema, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        == report_original
+    )
+
     schema = ScopeDecision.model_json_schema()
     original = json.dumps(schema, sort_keys=True)
-    passive = boundary.PassiveResults()
     with pytest.raises(UserError):
         FunctionTool(
             name="submit_scope_decision",
@@ -1080,6 +1121,141 @@ def test_terminal_compatibility_is_explicit_and_preserves_original_schema() -> N
     assert terminal.needs_approval is True and terminal.strict_json_schema is False
     assert json.dumps(terminal.params_json_schema, sort_keys=True) == original
     assert json.dumps(schema, sort_keys=True) == original
+
+
+@pytest.mark.parametrize(
+    "fault", ["valid", "missing-field", "object-criterion-results", "duplicate-artifact-ids"]
+)
+async def test_engineer_terminal_contract_after_successful_action_is_stage_specific(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+) -> None:
+    tools = make_action_tools()
+    budget = persist_action_tools(tmp_path, tools)
+    accounting = budget.begin_attempt(tools.invocation)
+    submitted = expected_output(AgentRole.ENGINEER, "engineer").model_dump(mode="json")
+    if fault == "missing-field":
+        del submitted["summary"]
+    elif fault == "object-criterion-results":
+        submitted["criterion_results"] = [{"criterion_id": "canary"}]
+    elif fault == "duplicate-artifact-ids":
+        artifact_id = "art_" + "a" * 32
+        submitted["evidence_artifact_ids"] = [artifact_id, artifact_id]
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        body = json.loads(received.content)
+        terminal = next(
+            tool for tool in body["tools"] if tool["name"] == "submit_implementation_report"
+        )
+        assert terminal["strict"] is True
+        assert terminal["parameters"] == ImplementationReport.model_json_schema()
+        if sends == 1:
+            assert tools.gateway.calls == []
+            return output(
+                received,
+                [
+                    call(
+                        "workspace_write_file",
+                        {
+                            "path": "src/canary_calc/core.py",
+                            "content": "synthetic candidate\n",
+                            "reason": "Exercise one authorized effect.",
+                        },
+                        "write-once",
+                    )
+                ],
+            )
+        assert sends == 2 and len(tools.gateway.calls) == 1
+        returned = [item for item in body["input"] if item.get("type") == "function_call_output"]
+        assert len(returned) == 1 and returned[0]["call_id"] == "write-once"
+        return output(
+            received,
+            [call("submit_implementation_report", submitted, "terminal-once")],
+        )
+
+    clients = configure_transport(monkeypatch, respond)
+    services = RuntimeInvocationServices(
+        configuration=_CONFIG, tools=tools.catalog, accounting=accounting
+    )
+    if fault == "valid":
+        result = await adapter().invoke(tools.invocation, services)
+        assert result.output == expected_output(AgentRole.ENGINEER, "engineer")
+        assert result.usage is not None
+        assert result.usage.requests == 2 and result.usage.total_tokens == 30
+        assert result.usage.tool_calls == 1
+        accounting.finish(RuntimeAttemptStatus.COMPLETED)
+    else:
+        with pytest.raises(FleetError) as caught:
+            await adapter().invoke(tools.invocation, services)
+        assert caught.value.code is ErrorCode.RUNTIME_OUTPUT_INVALID
+        assert caught.value.message == (
+            "The bounded Agents SDK terminal output did not satisfy its trusted schema."
+        )
+        assert caught.value.details["runtime_diagnostic"] == {
+            "category": "output_schema",
+            "cause_category": "schema_validation",
+        }
+        assert caught.value.remediation == (
+            "Inspect the retained Fleet evidence; no automatic replay is authorized."
+        )
+        assert caught.value.__cause__ is caught.value.__context__ is None
+        accounting.finish(RuntimeAttemptStatus.FAILED)
+    snapshot = budget.snapshot(tools.run.run_id)
+    assert snapshot.model_requests == 2 and snapshot.reported_total_tokens == 30
+    assert snapshot.unknown_requests == snapshot.outstanding_requests == 0
+    assert snapshot.reserved_tokens == 0 and snapshot.tool_calls == 1
+    assert sends == 2 and len(tools.gateway.calls) == len(tools.catalog.records) == 1
+    assert tools.catalog.records[0].side_effect_committed is True
+    assert all(client.is_closed for client in clients)
+
+
+async def test_invalid_terminal_call_envelope_keeps_generic_stage_diagnostic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tools = make_action_tools()
+    budget = persist_action_tools(tmp_path, tools)
+    accounting = budget.begin_attempt(tools.invocation)
+    sends = 0
+
+    def respond(received: httpx2.Request) -> httpx2.Response:
+        nonlocal sends
+        sends += 1
+        body = json.loads(received.content)
+        invalid = final_call(body, AgentRole.ENGINEER, "engineer")
+        invalid["call_id"] = "invalid call id"
+        return output(received, [invalid])
+
+    clients = configure_transport(monkeypatch, respond)
+    with pytest.raises(FleetError) as caught:
+        await adapter().invoke(
+            tools.invocation,
+            RuntimeInvocationServices(
+                configuration=_CONFIG, tools=tools.catalog, accounting=accounting
+            ),
+        )
+    assert caught.value.code is ErrorCode.RUNTIME_OUTPUT_INVALID
+    assert caught.value.message == (
+        "The bounded Agents SDK invocation did not satisfy its trusted contract."
+    )
+    assert caught.value.details["runtime_diagnostic"] == {
+        "category": "output_schema",
+        "cause_category": "schema_validation",
+    }
+    assert caught.value.remediation == (
+        "Inspect the retained Fleet evidence; no automatic replay is authorized."
+    )
+    assert caught.value.__cause__ is caught.value.__context__ is None
+    accounting.finish(RuntimeAttemptStatus.FAILED)
+    snapshot = budget.snapshot(tools.run.run_id)
+    assert snapshot.model_requests == 1 and snapshot.reported_total_tokens == 15
+    assert snapshot.unknown_requests == snapshot.outstanding_requests == 0
+    assert snapshot.reserved_tokens == snapshot.tool_calls == 0
+    assert sends == 1 and tools.gateway.calls == [] and tools.catalog.records == ()
+    assert all(client.is_closed for client in clients)
 
 
 async def test_raw_usage_receipt_is_request_scoped_and_consumed_once() -> None:
